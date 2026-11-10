@@ -16,7 +16,10 @@
 // row's latest recorded month is carried forward, month by month, to the end
 // of its Comm Start - End window (the Projected tab's "being paid" rule).
 // Only months after that latest one are projected, never a gap before it,
-// and Setup rows never are: a one-time line doesn't repeat.
+// and Setup rows never are: a one-time line doesn't repeat. A row whose
+// first recorded month comes after its Comm Start Date started paying late,
+// so its projection runs that many months past the Comm End Date too (the
+// same move the Expected term makes).
 //
 // Expected: what the Deals page expects, summed over every deal whose BFO
 // opp name matches, spread over each deal's term:
@@ -155,8 +158,19 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
   }
   const plans = (deals || []).map((deal) => dealPlan(deal, rows, firstActual));
 
+  // Last month a Recurring row's projection runs to: its Comm End Date,
+  // pushed out by however many months its first payment came late.
+  for (const it of items) {
+    it.projectTo = it.win.last;
+    for (let n = it.win.first; n <= it.win.last; n++) {
+      const idx = ((n % 12) + 12) % 12;
+      if (it.placed[idx] !== n) continue;
+      if (asNumber(it.row?.[MONTHS[idx]]) || asNumber(it.row?.[`${MONTHS[idx]} Revenue`])) { it.projectTo = it.win.last + (n - it.win.first); break; }
+    }
+  }
+
   let first = null, last = null;
-  for (const w of [...items.map((it) => it.win), ...plans.map((p) => p.win).filter(Boolean)]) {
+  for (const w of [...items.map((it) => (isSetupRow(it.row) ? it.win : { first: it.win.first, last: it.projectTo })), ...plans.map((p) => p.win).filter(Boolean)]) {
     if (first == null || w.first < first) first = w.first;
     if (last == null || w.last > last) last = w.last;
   }
@@ -202,7 +216,7 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
         if (v != null) latest = { n, v };
       }
       if (!latest) return out;
-      for (let n = latest.n + 1; n <= it.win.last; n++) out.set(n, latest.v);
+      for (let n = latest.n + 1; n <= it.projectTo; n++) out.set(n, latest.v);
       return out;
     });
     return line((m) => per.map((p) => p.get(m.n)));

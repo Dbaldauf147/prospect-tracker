@@ -69,16 +69,17 @@ eq(bfoMatchState(100, 130, bfoOkSignature(100, 120)), 'mismatch', 'marked OK lap
 const cmp = bfoComparisons('revenue', d.revenue, d.months);
 eq([cmp.length, cmp[0].key, cmp[0].actual, cmp[0].expected], [3 * 13, 'revenue:setup:2026-07', null, 1000], 'comparisons cover every line, month and total');
 
-// Projected: a Recurring row's latest month carried to its window's end.
-// Willco-shaped: Nov 2025 - Oct 2026, nothing in Nov, Dec..Jul recorded.
+// Projected: a Recurring row's latest month carried to its window's end,
+// pushed out by how late the first payment came. Willco-shaped: Nov 2025 -
+// Oct 2026, nothing in Nov, Dec..Jul recorded, so it runs to Nov 2026.
 const willco = {
   'Project Name': 'Willco Construction 1st Amendment', 'Comm Start Date': '11/1/2025', 'Comm End Date': '10/31/2026',
   'December Revenue': 6310, 'January Revenue': 4000, 'June Revenue': 3800, 'July Revenue': 3550,
   December: 568, January: 360, June: 342, July: 320,
 };
 const pw = buildBfoSchedule([willco], { today });
-eq(pw.revenue.projected.cells, [null, null, null, null, null, null, null, null, null, 3550, 3550, 3550], 'projected revenue: only after the latest recorded month, to the window end');
-eq([pw.commission.projected.cells[9], pw.commission.projected.total], [320, 960], 'projected commission carries the latest month');
+eq(pw.revenue.projected.cells, [null, null, null, null, null, null, null, null, null, 3550, 3550, 3550, 3550], 'projected revenue: only after the latest recorded month, to the pushed-out end');
+eq([pw.commission.projected.cells[9], pw.commission.projected.total], [320, 1280], 'projected commission carries the latest month');
 eq(pw.revenue.actual.recurring.cells[9], null, 'actual cells stay recorded-only');
 const ps = buildBfoSchedule([{ ...setupRow }], { today });
 eq(ps.revenue.projected.total, 0, 'setup rows are never projected');
@@ -105,6 +106,12 @@ const lateS = buildBfoSchedule([late], { deals: [{ Commission: 1200, 'Recurring 
 const lr = lateS.revenue.expected.recurring;
 eq([lateS.months[0].label, lr.cells[0], lr.cells[1], lateS.months[lr.cells.lastIndexOf(1000)].label, lr.total], ['Nov 2025', null, 1000, 'Nov 2026', 12000], 'expected term moves to start with the first recorded month');
 eq(lateS.commission.expected.recurring.cells.slice(0, 2), [null, 100], 'expected commission starts with actuals too');
+// Paid a month late, so projection runs a month past Comm End (Nov 2026),
+// to the end of the moved Expected term.
+const lp = lateS.revenue.projected;
+eq([lateS.months[lp.cells.length - 1].label, lp.cells[lp.cells.length - 1], lp.cells[lp.cells.length - 2], lp.cells[3]], ['Nov 2026', 4000, 4000, 4000], 'projection runs to the moved term end');
+const lateNoDeal = buildBfoSchedule([late], { today });
+eq(lateNoDeal.months[lateNoDeal.months.length - 1].label, 'Nov 2026', 'columns cover the pushed-out projection without a deal');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -300,7 +300,7 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
               <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.match }}>Green</span> Actual meets or beats Expected
               <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.mismatch, cursor: 'default' }}>Red</span> Actual is below Expected: click a red cell to mark it OK
               <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.ok }}>✓ OK</span> marked OK
-              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.projected }}>Projected</span> nothing recorded yet: the row's latest month carried to its Comm End Date
+              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.projected }}>Projected</span> nothing recorded yet: the row's latest month carried to its term end
               <span style={{ flex: 1 }} />
               {allReds.length > 0 && (
                 <button type="button" onClick={() => toggleOk(allReds, true)} style={{ ...smallBtn, fontSize: '0.7rem', padding: '3px 9px' }}>
