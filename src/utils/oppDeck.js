@@ -21,6 +21,7 @@ import { companiesMatch } from './listFlags.js';
 import { splitPeOwners } from './peOwners.js';
 import { isActiveOppStage, activeStageRank } from './oppStages.js';
 import { textToBulletItems } from './nextSteps.js';
+import { OPP_PROGRESS_OPTIONS } from './oppProgressLabel.js';
 
 // ---- picking the opps ------------------------------------------------
 
@@ -157,8 +158,10 @@ export function groupScope(items, { categories = [], renames = {} } = {}) {
  * One opp as the fields its slide shows. `contactInfo(name, account)`
  * returns { title } for a tagged contact when the caller knows one;
  * `categories` and `renames` bucket the scope (see groupScope).
+ * `statusFor(record)` returns the opp's Progressing / Stalled / On Hold
+ * label (oppProgressLabel.js), or '' for none.
  */
-export function oppSlideContent(entry, { contactInfo = () => null, categories = [], renames = {} } = {}) {
+export function oppSlideContent(entry, { contactInfo = () => null, categories = [], renames = {}, statusFor = () => '' } = {}) {
   const r = entry.record || {};
   const account = entry.account || cell(r, 'Account');
   const scope = cell(r, 'Scope');
@@ -204,12 +207,20 @@ export function oppSlideContent(entry, { contactInfo = () => null, categories = 
     via: entry.via,
     owner: entry.owner || '',
     stage: deckStage(cell(r, 'Stage')),
+    status: deckStatus(statusFor(r)),
     scopeItems: scopeGroups.flatMap(g => g.items),
     scopeGroups,
     contacts,
     nextSteps,
     facts,
   };
+}
+
+// The company card's Status label as the deck shows it: { value, label }
+// or null when none is set (or the value isn't one we know).
+export function deckStatus(value) {
+  const opt = OPP_PROGRESS_OPTIONS.find(o => o.value === value);
+  return opt ? { value: opt.value, label: opt.label } : null;
 }
 
 // ---- OOXML ------------------------------------------------------------
@@ -240,6 +251,13 @@ const C = {
   mist: 'F2F2F2',
   mint: 'E3F6E7',
   white: 'FFFFFF',
+};
+
+// The Status label's pill colours, matching the company card's.
+const STATUS_COLORS = {
+  progressing: { fill: 'DCFCE7', line: '86EFAC', text: '166534' },
+  stalled: { fill: 'FEE2E2', line: 'FCA5A5', text: '991B1B' },
+  'on-hold': { fill: 'FEF3C7', line: 'FCD34D', text: '92400E' },
 };
 
 function run(text, { sz = 1100, b = false, i = false, color = C.body } = {}) {
@@ -363,7 +381,18 @@ export function oppSlideShapes(content) {
   // Under the title (the company): who owns it, for a portfolio company.
   if (content.via !== 'direct' && content.owner) {
     const sub = [run(`Owned by ${content.owner}`, { sz: 1200, color: C.grey })];
-    shapes.push(shape(nextId(), 'Owner', { x: L.left, y: L.subY, w: L.width, h: 0.28, paras: [para(sub, { after: 0, sz: 1200 })], textBox: true }));
+    shapes.push(shape(nextId(), 'Owner', { x: L.left, y: L.subY, w: L.width - (content.status ? 1.4 : 0), h: 0.28, paras: [para(sub, { after: 0, sz: 1200 })], textBox: true }));
+  }
+
+  // Top right, above the stage track: the opp's Status label.
+  if (content.status) {
+    const col = STATUS_COLORS[content.status.value];
+    const w = 1.25;
+    shapes.push(shape(nextId(), 'Status', {
+      x: L.left + L.width - w, y: L.subY, w, h: 0.28, geom: 'roundRect', adj: 50000,
+      fill: col.fill, line: col.line, anchor: 'ctr',
+      paras: [para([run(content.status.label, { sz: 1000, b: true, color: col.text })], { algn: 'ctr', after: 0, sz: 1000 })],
+    }));
   }
 
   shapes.push(...stageTrack(content, nextId));
@@ -473,7 +502,8 @@ const rowH = (lines) => Math.max(OVERVIEW.minRowH, lines * OVERVIEW.lineH + OVER
 const NEXT_COLS = [
   { label: 'Account', w: 1.95 },
   { label: 'Stage', w: 1.0 },
-  { label: 'Next step', w: 4.585 },
+  { label: 'Status', w: 0.95 },
+  { label: 'Next step', w: 3.635 },
   { label: 'Waiting on', w: 1.6 },
 ];
 // Waiting on us reads green, on the client amber.
@@ -483,12 +513,12 @@ export function deckNextStep(c) {
   return steps.find(s => !s.onHold) || steps[0] || null;
 }
 function nextStepRow(c) {
-  const [wAccount, wStage, wStep, wWaiting] = NEXT_COLS.map(col => col.w);
+  const [wAccount, wStage, wStatus, wStep, wWaiting] = NEXT_COLS.map(col => col.w);
   const sz = OVERVIEW.sz;
   const step = deckNextStep(c);
   const waiting = step?.waitingOn || '';
   const stepText = step ? `${step.onHold ? 'ON HOLD  ' : ''}${step.text}` : '';
-  const lines = Math.max(1, cellLines(c.account, wAccount), cellLines(c.stage, wStage), cellLines(stepText, wStep), cellLines(waiting, wWaiting));
+  const lines = Math.max(1, cellLines(c.account, wAccount), cellLines(c.stage, wStage), cellLines(c.status?.label || '', wStatus), cellLines(stepText, wStep), cellLines(waiting, wWaiting));
   const stepCell = !step
     ? tp([run('No next steps recorded', { sz, i: true, color: C.lightGrey })])
     : step.onHold
@@ -497,9 +527,12 @@ function nextStepRow(c) {
   const waitingCell = waiting
     ? tp([run(waiting, { sz, b: true, color: OURS.test(waiting) ? C.quartzGreen : 'B45309' })])
     : tp([run('-', { sz, color: C.lightGrey })]);
+  const statusCell = c.status
+    ? tp([run(c.status.label, { sz, b: true, color: STATUS_COLORS[c.status.value].text })])
+    : tp([run('-', { sz, color: C.lightGrey })]);
   return {
     h: rowH(lines),
-    cells: [tp([run(c.account, { sz, b: true })]), tp([run(c.stage, { sz })]), stepCell, waitingCell],
+    cells: [tp([run(c.account, { sz, b: true })]), tp([run(c.stage, { sz })]), statusCell, stepCell, waitingCell],
   };
 }
 
@@ -582,9 +615,10 @@ function fillContentSlide(proto, title, bodyXml) {
  *   contactInfo see oppSlideContent
  *   categories  getServiceCategories(settings), to bucket the scope
  *   renames     settings.serviceRenames
+ *   statusFor   see oppSlideContent
  *   date        the date printed on the cover
  */
-export async function buildOppDeck({ JSZip, template, company, entries, contactInfo, categories, renames, date = new Date() }) {
+export async function buildOppDeck({ JSZip, template, company, entries, contactInfo, categories, renames, statusFor, date = new Date() }) {
   const zip = await JSZip.loadAsync(template);
   const read = (p) => zip.file(p).async('string');
 
@@ -597,7 +631,7 @@ export async function buildOppDeck({ JSZip, template, company, entries, contactI
     read('ppt/slides/slide1.xml'),
   ]);
 
-  const contents = entries.map(e => oppSlideContent(e, { contactInfo, categories, renames }));
+  const contents = entries.map(e => oppSlideContent(e, { contactInfo, categories, renames, statusFor }));
   // Cover: the company, the deck's name in the subtitle slot, and today's
   // date as its own line under it (the layout has no date placeholder).
   const when = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });

@@ -11,7 +11,7 @@
 // Set OPP_DECK_OUT=path.pptx to keep the built deck for a visual check.
 import { readFile, writeFile } from 'node:fs/promises';
 import JSZip from 'jszip';
-import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope, deckNextStep } from '../src/utils/oppDeck.js';
+import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope, deckNextStep, deckStatus } from '../src/utils/oppDeck.js';
 import { getServiceCategories } from '../src/utils/serviceCategoriesStore.js';
 
 let passed = 0, failed = 0;
@@ -88,6 +88,8 @@ const template = await readFile(new URL('../src/assets/se-opps-template.pptx', i
 const bytes = await buildOppDeck({
   JSZip, template, company: 'Harbor Peak Capital & Co', entries: picked,
   contactInfo: () => ({ title: 'Director' }), date: new Date(2026, 9, 22),
+  // Status labels as the company card saves them, keyed by opp id.
+  statusFor: (r) => ({ 2: 'stalled', 4: 'on-hold', 5: 'progressing' })[r._id] || '',
 });
 if (process.env.OPP_DECK_OUT) await writeFile(process.env.OPP_DECK_OUT, bytes);
 const out = await JSZip.loadAsync(bytes);
@@ -154,8 +156,17 @@ check('service names: the pull through label is dropped',
   // who it is waiting on; no Due column and no tally line.
   const next = await out.file(`ppt/${targets[1]}`).async('string');
   check('next steps: its own slide, right after the cover', [next.includes('Next steps table'), next.includes('Next steps across the portfolio')], [true, true]);
-  check('next steps: Account, Stage, Next step, Waiting on only',
-    ['>Account<', '>Stage<', '>Next step<', '>Waiting on<', '>Due<'].map(h => next.includes(h)), [true, true, true, true, false]);
+  check('next steps: Account, Stage, Status, Next step, Waiting on only',
+    ['>Account<', '>Stage<', '>Status<', '>Next step<', '>Waiting on<', '>Due<'].map(h => next.includes(h)), [true, true, true, true, true, false]);
+  check('next steps: each opp\'s Status label', ['>Stalled<', '>On Hold<', '>Progressing<'].map(h => next.includes(h)), [true, true, true]);
+  // targets: cover, next steps, then opps 1, 2, 7, 4, 5.
+  const slideFor = async (i) => out.file(`ppt/${targets[i]}`).async('string');
+  check('opp slide: Status pill when set, none when not', [
+    (await slideFor(3)).includes('name="Status"') && (await slideFor(3)).includes('>Stalled<'),
+    (await slideFor(5)).includes('>On Hold<'),
+    (await slideFor(2)).includes('name="Status"'),
+  ], [true, true, false]);
+  check('deckStatus: known labels only', [deckStatus('on-hold'), deckStatus('bogus'), deckStatus('')], [{ value: 'on-hold', label: 'On Hold' }, null, null]);
   check('next steps: the step and who it waits on', [next.includes('Follow up on proposal'), next.includes('>Sam<')], [true, true]);
   check('next steps: no tally line', /waiting on .*team|with Schneider/i.test(next), false);
   check('next step: first not on hold, else the first, else none', [
