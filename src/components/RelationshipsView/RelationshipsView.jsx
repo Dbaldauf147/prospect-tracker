@@ -12,7 +12,7 @@
 // formatting, and both sort by score. Ticking a contact draws its own line
 // on the chart next to the average.
 
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
@@ -28,6 +28,30 @@ import {
 import { RelationshipBadge, ScorePill, TrendArrow } from '../Relationship/RelationshipBadge';
 import { LogActivityModal } from '../Relationship/LogActivityModal';
 import { reviewContact, reviewAccount, reviewCounts, reviewPriority, reviewStatus } from '../../utils/relationshipReview';
+import { useContactEditSettings } from '../../hooks/useContactEditSettings';
+import { companyPopupTarget } from '../../utils/companyLookup';
+
+// The contact popup, the same one every other contacts page opens. Loaded on
+// the first name click: most visits here never open one.
+const ContactEditModal = lazy(() =>
+  import('../ProspectModal/ProspectModal').then(m => ({ default: m.ContactEditModal })),
+);
+
+// A contact's name as a link that opens their popup. It stops the click so
+// the row's own click (drawing the contact on the chart) doesn't fire too.
+function ContactNameLink({ contact, onOpen }) {
+  const label = contactName(contact) || contact.email;
+  return (
+    <button
+      type="button"
+      title="Open contact"
+      onClick={(e) => { e.stopPropagation(); onOpen(contact); }}
+      style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, cursor: 'pointer', color: '#2563EB', textAlign: 'left' }}
+      onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline'; }}
+      onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none'; }}
+    >{label}</button>
+  );
+}
 
 const POINTS = 27; // one a fortnight, a year back
 const STEP_DAYS = 14;
@@ -130,6 +154,34 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
   // The day the page was opened. Fixed for the visit, so the scores are a
   // pure function of the data (a logged activity still re-scores at once).
   const [nowMs] = useState(() => Date.now());
+
+  // The contact whose popup is open, straight off the clicked row: the rows
+  // carry the HubSpot record, so there is nothing to look up.
+  const [editingContact, setEditingContact] = useState(null);
+  const openContact = useCallback((c) => { if (c) setEditingContact(c); }, []);
+  const closeContact = useCallback(() => setEditingContact(null), []);
+  // A `silent` save is the popup's tag autosave, which must not close it.
+  const saveContact = useCallback((_u, opts) => { if (!opts?.silent) setEditingContact(null); }, []);
+  // "Company ↗" in the popup: close the contact, open its company.
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setEditingContact(null);
+    onSelectProspect(target);
+  }, [prospects, onSelectProspect]);
+  const contactEditSettings = useContactEditSettings({ settings, updateSettings });
+  // Colleagues at the open contact's company (for Reports To) and the
+  // account's email domains: the same lookups the other pages hand the popup.
+  const editCompanyKey = String(editingContact?.company || '').trim().toLowerCase();
+  const editCompanyContacts = useMemo(() => (
+    editCompanyKey ? (contacts || []).filter(c => String(c?.company || '').trim().toLowerCase() === editCompanyKey) : []
+  ), [editCompanyKey, contacts]);
+  const editEmailDomains = useMemo(() => {
+    if (!editCompanyKey) return [];
+    const matched = (prospects || []).find(p => String(p.company || '').trim().toLowerCase() === editCompanyKey);
+    return matched?.emailDomain ? String(matched.emailDomain).split(/[\n;,]+/).map(x => x.trim()).filter(Boolean) : [];
+  }, [editCompanyKey, prospects]);
+  const editCompanyNames = useMemo(() => (prospects || []).map(p => p.company).filter(Boolean), [prospects]);
 
   // Everyone with activity, their touches and today's score.
   const scored = useMemo(() => {
@@ -248,7 +300,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
         />
       ),
     },
-    { key: 'name', label: 'Name', defaultWidth: 170, getSortValue: r => contactName(r.contact).toLowerCase(), getFilterValue: r => contactName(r.contact), exportValue: r => contactName(r.contact), render: r => <span style={{ fontWeight: 600 }}>{contactName(r.contact) || r.contact.email}</span> },
+    { key: 'name', label: 'Name', defaultWidth: 170, getSortValue: r => contactName(r.contact).toLowerCase(), getFilterValue: r => contactName(r.contact), exportValue: r => contactName(r.contact), render: r => <ContactNameLink contact={r.contact} onOpen={openContact} /> },
     { key: 'company', label: 'Company', defaultWidth: 170, getSortValue: r => companyOf(r.contact).toLowerCase(), getFilterValue: r => companyOf(r.contact), exportValue: r => companyOf(r.contact), render: r => companyOf(r.contact) || <span style={{ color: '#CBD5E1' }}>-</span> },
     { key: 'score', label: 'Score', defaultWidth: 190, getSortValue: r => r.result.score, getFilterValue: r => r.result.tier.label, exportValue: r => r.result.score, render: r => <RelationshipBadge result={r.result} /> },
     { key: 'tier', label: 'Tier', defaultWidth: 90, getSortValue: r => r.result.score, getFilterValue: r => r.result.tier.label, exportValue: r => r.result.tier.label, render: r => r.result.tier.label },
@@ -261,7 +313,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
     { key: 'consistency', label: 'Consistency', defaultWidth: 90, getSortValue: r => r.result.components.consistency, exportValue: r => r.result.components.consistency, render: r => r.result.components.consistency },
     { key: 'opportunity', label: 'Opps', defaultWidth: 70, getSortValue: r => r.result.components.opportunity, exportValue: r => r.result.components.opportunity, render: r => r.result.components.opportunity },
     { key: 'touches', label: 'Activities (12 mo)', defaultWidth: 110, getSortValue: r => r.result.touchCount, exportValue: r => r.result.touchCount, render: r => r.result.touchCount },
-  ], [picked]);
+  ], [picked, openContact]);
 
   const reviewColumns = useMemo(() => [
     {
@@ -275,7 +327,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
         );
       },
     },
-    { key: 'name', label: 'Name', defaultWidth: 160, getSortValue: r => contactName(r.contact).toLowerCase(), getFilterValue: r => contactName(r.contact), exportValue: r => contactName(r.contact), render: r => <span style={{ fontWeight: 600 }}>{contactName(r.contact) || r.contact.email}</span> },
+    { key: 'name', label: 'Name', defaultWidth: 160, getSortValue: r => contactName(r.contact).toLowerCase(), getFilterValue: r => contactName(r.contact), exportValue: r => contactName(r.contact), render: r => <ContactNameLink contact={r.contact} onOpen={openContact} /> },
     { key: 'company', label: 'Company', defaultWidth: 150, getSortValue: r => companyOf(r.contact).toLowerCase(), getFilterValue: r => companyOf(r.contact), exportValue: r => companyOf(r.contact), render: r => companyOf(r.contact) || <span style={{ color: '#CBD5E1' }}>-</span> },
     { key: 'score', label: 'Now', defaultWidth: 170, getSortValue: r => r.result.score, getFilterValue: r => r.result.tier.label, exportValue: r => r.result.score, render: r => <RelationshipBadge result={r.result} compact /> },
     ADDED_COLUMN,
@@ -304,7 +356,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
       },
     },
     { key: 'nextStep', label: 'Next step', defaultWidth: 340, getFilterValue: r => r.review.nextStep, exportValue: r => r.review.nextStep, render: r => <span style={{ fontSize: '0.72rem', color: '#334155', whiteSpace: 'normal' }}>{r.review.nextStep}</span> },
-  ], []);
+  ], [openContact]);
 
   // The account review: the contact review's columns, with the account's
   // name, size and the contact the status hangs on in place of the person.
@@ -548,6 +600,22 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
       )}
 
       {logging && <LogActivityModal contacts={contacts || []} onClose={() => setLogging(false)} />}
+
+      {editingContact && (
+        <Suspense fallback={null}>
+          <ContactEditModal
+            contact={editingContact}
+            onSave={saveContact}
+            onClose={closeContact}
+            onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
+            {...contactEditSettings}
+            companyContacts={editCompanyContacts}
+            allContacts={contacts || []}
+            emailDomains={editEmailDomains}
+            companyNames={editCompanyNames}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
