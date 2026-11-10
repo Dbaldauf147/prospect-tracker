@@ -20,7 +20,7 @@ import { CommissionsProjectedView } from './CommissionsProjectedView';
 import { projectCommissionRow } from '../../utils/commissionProjection';
 import { readCommissionsFile, isCommissionsFileName } from '../../utils/commissionsMonthFile';
 import { recordCommissionUpload, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
-import { normBfoKey, bfoAllGreen, BFO_OK_SETTINGS_KEY } from '../../utils/commissionBfoSchedule';
+import { normBfoKey, bfoAllGreen, BFO_OK_SETTINGS_KEY, BFO_WATCH_SETTINGS_KEY } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { CommissionBfoModal } from './CommissionBfoModal';
@@ -1469,6 +1469,10 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     return out;
   }, [data, bfoOkMarks, dealsVersion]);
 
+  // BFO opps flagged "To watch" in the popup: yellow rows, own subtab.
+  const watchMap = settings?.[BFO_WATCH_SETTINGS_KEY];
+  const watchedBfoKeys = useMemo(() => new Set(Object.keys(watchMap || {})), [watchMap]);
+
   const rows = useMemo(
     () => data.map((r, i) => ({
       ...r,
@@ -1485,8 +1489,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       __onOpenBfo: setBfoModal,
       __bfoGroup: bfoGroups.get(normBfoKey(r?.[BFO_NAME_KEY])) ?? null,
       __bfoGreen: greenBfoKeys.has(normBfoKey(r?.[BFO_NAME_KEY])),
+      __bfoWatched: watchedBfoKeys.has(normBfoKey(r?.[BFO_NAME_KEY])),
     })),
-    [data, selectedIds, duplicateIds, flaggedDuplicateIds, bfoGroups, greenBfoKeys]
+    [data, selectedIds, duplicateIds, flaggedDuplicateIds, bfoGroups, greenBfoKeys, watchedBfoKeys]
   );
 
   // The BFO opp popup: every roster row with the clicked BFO Name (ignored
@@ -1544,6 +1549,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     () => rows.reduce((n, r) => n + (paymentStatusFor(r).state === 'active' ? 1 : 0), 0),
     [rows],
   );
+  const watchCount = useMemo(() => rows.reduce((n, r) => n + (r.__bfoWatched ? 1 : 0), 0), [rows]);
 
   // Projected subtab: the rows being paid now plus the ones not paid yet,
   // each with its 12-month projection. Read off `data`, not `rows`, so a
@@ -1563,6 +1569,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   const filtered = useMemo(() => {
     let base = rows;
     if (subtab === 'activelyPaid') base = base.filter(r => paymentStatusFor(r).state === 'active');
+    if (subtab === 'toWatch') base = base.filter(r => r.__bfoWatched);
     if (showOnlyMissing) base = base.filter(isMissingAccountName);
     else if (showOnlyMissingBfo) base = base.filter(isMissingBfoName);
     else if (showOnlyDuplicates) base = base.filter(r => r.__isDuplicate);
@@ -1821,6 +1828,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           {[
             { key: 'all', label: 'All', count: rows.length },
             { key: 'activelyPaid', label: 'Actively Paid', count: activeCount },
+            { key: 'toWatch', label: 'To Watch', count: watchCount },
             { key: 'monthly', label: 'Monthly', count: null },
             { key: 'projected', label: 'Projected', count: projectedItems.length },
           ].map(t => {
@@ -1832,6 +1840,8 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
                 onClick={() => setSubtab(t.key)}
                 title={t.key === 'activelyPaid'
                   ? 'Commissions still paying out (Payment Status: Active): the same set as the green Active only button'
+                  : t.key === 'toWatch'
+                    ? 'Rows of the BFO opps flagged To watch in the BFO popup (click a BFO Name to flag or unflag one)'
                   : t.key === 'monthly'
                     ? 'Commission and revenue totals by month. Drop a commissions Excel file on a month to add it.'
                     : t.key === 'projected'
@@ -2037,14 +2047,17 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             // Ignored rows grey out (wins if a row is both). A duplicate
             // Project Name gets a fuchsia tint + left accent so it reads as
             // "flagged, still here" rather than an error. A row whose BFO
-            // opp checks out in the BFO popup (all green) tints green.
+            // opp checks out in the BFO popup (all green) tints green; one
+            // flagged To watch in the popup tints yellow (wins over green).
             rowStyle={(row) => row.__ignored
               ? { opacity: 0.45, background: '#F8FAFC', color: '#64748B' }
               : row.__isDuplicate
                 ? { background: '#FDF4FF', boxShadow: 'inset 3px 0 0 #C026D3' }
-                : row.__bfoGreen
-                  ? { background: '#DCFCE7' }
-                  : undefined}
+                : row.__bfoWatched
+                  ? { background: '#FEF9C3' }
+                  : row.__bfoGreen
+                    ? { background: '#DCFCE7' }
+                    : undefined}
             rowClassName={(row) => (row.__bfoGroup != null ? `${BFO_GROUP_CLASS}${row.__bfoGroup}` : undefined)}
             onFilteredRowsChange={onTableFilteredRowsChange}
             settings={settings}

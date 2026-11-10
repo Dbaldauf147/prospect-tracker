@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fmtCurrency, asNumber } from '../../utils/dealsFormat';
 import {
   buildBfoSchedule, normBfoKey, bfoOkSignature, bfoComparisonStates, bfoActualTotal, BFO_OK_SETTINGS_KEY,
+  BFO_WATCH_SETTINGS_KEY, bfoWatchPatch,
 } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
@@ -222,6 +223,11 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
   const stateOf = (key) => comparisons.get(key)?.state || 'none';
   const allReds = [...comparisons.keys()].filter((k) => stateOf(k) === 'mismatch');
   const okCount = [...comparisons.keys()].filter((k) => stateOf(k) === 'ok').length;
+  const watching = !!settings?.[BFO_WATCH_SETTINGS_KEY]?.[bfoKey];
+  const toggleWatch = () => {
+    if (!updateSettings || !bfoKey) return;
+    updateSettings((cur) => bfoWatchPatch(cur, bfoKey, !watching));
+  };
   // Built on the current settings (function form), so marks saved since this
   // rendered aren't overwritten. Clearing drops the key; marks that no longer
   // hold (amounts changed) are pruned on every write.
@@ -282,12 +288,31 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
                 .filter(Boolean).join(' · ')}
             </div>
           </div>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
+          {bfoKey && updateSettings && (
+            <button
+              type="button"
+              onClick={toggleWatch}
+              aria-pressed={watching}
+              title={watching
+                ? 'On the To Watch subtab, its rows tinted yellow. Click to stop watching.'
+                : 'Add this opp to the Commissions To Watch subtab and tint its rows yellow'}
+              style={{
+                border: `1px solid ${watching ? '#CA8A04' : '#CBD5E1'}`,
+                background: watching ? '#FEF08A' : '#fff',
+                color: watching ? '#713F12' : '#334155',
+                borderRadius: 5, fontSize: '0.74rem', fontWeight: 600, fontFamily: 'inherit',
+                padding: '4px 10px', cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >{watching ? '✓ Watching' : '+ To watch'}</button>
+          )}
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
             style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', color: '#64748B', cursor: 'pointer', lineHeight: 1, padding: '0 4px' }}
           >×</button>
+          </span>
         </div>
 
         <div style={{ padding: '0.1rem 1.1rem 0.8rem', overflow: 'auto' }}>
