@@ -277,6 +277,28 @@ export function bfoWatchPatch(cur, bfoKey, watch, now = new Date()) {
   return { [BFO_WATCH_SETTINGS_KEY]: all };
 }
 
+// The Commission Ticket link saved against each BFO opp in its popup:
+// { <bfoKey>: 'https://...' }. Same function-form patch as the watch
+// flags, so a link saved on another machine isn't overwritten.
+export const BFO_TICKET_SETTINGS_KEY = 'commissionBfoTicket';
+
+export function bfoTicketPatch(cur, bfoKey, url) {
+  const all = { ...(cur?.[BFO_TICKET_SETTINGS_KEY] || {}) };
+  const clean = String(url || '').trim();
+  if (clean) all[bfoKey] = clean; else delete all[bfoKey];
+  return { [BFO_TICKET_SETTINGS_KEY]: all };
+}
+
+// A pasted ticket address as something a link can open: a bare
+// "jira.example.com/..." gets https:// in front. Only http(s) is linked;
+// anything else (javascript:, file:) is shown as text instead.
+export function ticketHref(url) {
+  const s = String(url || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return /^[a-z][a-z0-9+.-]*:/i.test(s) ? '' : `https://${s}`;
+}
+
 export function bfoOkSignature(actual, expected) {
   return `${Math.round(actual || 0)}|${Math.round(expected || 0)}`;
 }
