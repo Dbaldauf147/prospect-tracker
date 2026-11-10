@@ -333,12 +333,38 @@ export function makeRosterGates({
     bucket.companies.add(key);
     collectClientDomains(p, bucket.domains);
   }
+  // The accounts that are NOT flagged, for the domain fallback below.
+  const flaggedKeys = new Set([...excluded.cancelling.companies, ...excluded.untracked.companies]);
+  const unflaggedKeys = rows
+    .filter(p => {
+      const key = String(p?.company || '').trim().toLowerCase();
+      return key && !flaggedKeys.has(key);
+    })
+    .map(p => rosterMatchKey(p.company));
+  // Whether a contact's Company text names an account that isn't flagged.
+  // Depends on the name alone, so remembered per set of gates.
+  const namesUnflaggedByName = new Map();
+  const namesUnflaggedAccount = (company) => {
+    let hit = namesUnflaggedByName.get(company);
+    if (hit === undefined) {
+      const k = rosterMatchKey(company);
+      hit = unflaggedKeys.some(a => rosterKeysMatch(a, k));
+      namesUnflaggedByName.set(company, hit);
+    }
+    return hit;
+  };
   const matchesSet = (c, set) => {
     if (set.companies.size === 0 && set.domains.size === 0) return false;
     const company = String(c?.company || '').trim().toLowerCase();
     if (company && set.companies.has(company)) return true;
     const domain = accountDomain(c);
-    return !!domain && set.domains.has(domain);
+    if (!domain || !set.domains.has(domain)) return false;
+    // The email domain is only a fallback for when the Company text doesn't
+    // say where the contact works. A flagged account that shares a domain
+    // with a working one (a Blackstone fund marked Don't Track, with
+    // blackstone.com as its website) must not take a contact whose Company
+    // names the working account (Blackstone) off every roster.
+    return !company || !namesUnflaggedAccount(company);
   };
   // Which flag takes this contact out, or '' when nothing does. One string
   // rather than a predicate per flag, so a caller can gate and attribute in
