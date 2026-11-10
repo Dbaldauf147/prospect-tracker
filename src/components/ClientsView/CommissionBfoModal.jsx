@@ -224,6 +224,21 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
 // `bfoName`: the BFO Name clicked. `rows`: every roster row with that BFO
 // Name, ignored ones included (they're counted, then left out). `opp`: the
 // linked Opps record, if any.
+// One labelled box in the popup's header.
+function HeaderBox({ label, value, strong = false, nowrap = false }) {
+  const text = String(value || '').trim();
+  return (
+    <div title={text || undefined} style={{ minWidth: 0, border: '1px solid #E2E8F0', borderRadius: 6, background: '#F8FAFC', padding: '0.3rem 0.55rem' }}>
+      <div style={{ fontSize: '0.6rem', color: '#64748B', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em' }}>{label}</div>
+      <div style={{
+        fontSize: strong ? '0.85rem' : '0.78rem', fontWeight: strong ? 700 : 500, color: text ? '#1E293B' : '#94A3B8',
+        lineHeight: 1.3, marginTop: 1, wordBreak: 'break-word',
+        ...(nowrap ? { whiteSpace: 'nowrap' } : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }),
+      }}>{text || '-'}</div>
+    </div>
+  );
+}
+
 export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, updateSettings }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -297,13 +312,14 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
   };
 
   const account = String(opp?.['Account'] || live[0]?.['Account Name'] || '').trim();
+  // The rest of the opp, on one small line under the boxes.
   const facts = [
     account,
-    opp?.['Scope'] ? `Scope: ${opp['Scope']}` : '',
     opp?.['Stage'] ? `Stage: ${opp['Stage']}` : '',
-    toISODate(opp?.['Close Date']) ? `Close date: ${formatDateDisplay(opp['Close Date'])}` : '',
     asNumber(opp?.['Quoted Amount']) ? `Quoted ${fmtCurrency(opp['Quoted Amount'])}` : '',
   ].filter(Boolean);
+  const scope = String(opp?.['Scope'] || '').trim();
+  const closeDate = toISODate(opp?.['Close Date']) ? formatDateDisplay(opp['Close Date']) : '';
 
   // The Project Name each of this opp's commission rows carries in the
   // commission file, once each, so the popup can be matched to the file.
@@ -326,19 +342,19 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
         style={{ background: '#fff', borderRadius: 8, width: 'min(1800px, 98vw)', maxHeight: '97vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', padding: '0.6rem 1.1rem', borderBottom: '1px solid #E2E8F0' }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: '0.7rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>BFO opp</div>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#1E293B', marginTop: 2 }}>{bfoName}</div>
-            <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.2rem' }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            {/* The four things the popup is matched by, side by side. Each
+                value stops at two lines; the box's hover has the rest. */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1.6fr) max-content', gap: '0.5rem' }}>
+              <HeaderBox label="BFO name" value={bfoName} strong />
+              <HeaderBox label={`Project name${projectNames.length > 1 ? 's' : ''}`} value={projectNames.join(' · ')} />
+              <HeaderBox label="Scope" value={scope} />
+              <HeaderBox label="Close date" value={closeDate} nowrap />
+            </div>
+            <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: '0.3rem' }}>
               {[...facts, `${live.length} commission row${live.length === 1 ? '' : 's'}`, ignored ? `${ignored} ignored row${ignored === 1 ? '' : 's'} left out` : '']
                 .filter(Boolean).join(' · ')}
             </div>
-            {projectNames.length > 0 && (
-              <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '0.2rem', wordBreak: 'break-word' }}>
-                <span style={{ color: '#64748B', fontWeight: 600 }}>Commission file project name{projectNames.length === 1 ? '' : 's'}:</span>{' '}
-                {projectNames.join(' · ')}
-              </div>
-            )}
           </div>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
           {bfoKey && updateSettings && (
