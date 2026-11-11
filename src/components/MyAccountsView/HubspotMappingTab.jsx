@@ -784,7 +784,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
               >{bulkLabel(shownSuggested.length)}</button>
             )}
             <button type="button" onClick={exportHubspotImportFile} disabled={exportingImport}
-              title="Download an Excel file to import into HubSpot (Companies, Update existing companies only, Create a list from this import). Import: one row per HubSpot Company ID, or the domain when there is no ID. Review: accounts to check first, with why. Reference: every column, one row per account. Every account goes in, active and inactive, whatever is filtered on screen."
+              title="Download an Excel file to import into HubSpot (Companies, Update existing companies only, Create a list from this import). One sheet: a row per HubSpot Company ID, or the domain when there is no ID. Every account goes in, active and inactive, whatever is filtered on screen."
               style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#fff', color: '#1D4ED8', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: exportingImport ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
             >{'\u21E9'} {exportingImport ? 'Building...' : 'Export HubSpot Import File'}</button>
           </>
