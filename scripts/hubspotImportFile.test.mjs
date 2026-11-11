@@ -9,8 +9,9 @@
 //   * IDs are written as text (no 5.85E+10, no rounding), and the header
 //     row is frozen on every sheet,
 //   * domains are lowercase, without http(s)://, www., path or slash,
-//   * an account with no ID goes in by domain, or, with no domain either,
-//     only onto Review,
+//   * an account with no ID goes in by its Record ID in the portal export
+//     when it's there, else by domain, else with just its Tracker Name, so
+//     every account handed in is on the sheet,
 //   * Review says why: no ID, Name-only match, a Possible Match or
 //     Hubspot Duplicates, several IDs, a HubSpot name that differs,
 //   * inactive accounts are in; Only in HubSpot rows are not.
@@ -70,7 +71,16 @@ eq(imp.filter(r => r['Tracker Name'] === 'Acme Realty').map(r => r.Name), ['Acme
 eq(imp.filter(r => r['Record ID'] === '60000000004').length, 1, 'an ID two accounts share is on Import once');
 eq(new Set(imp.map(r => r['Record ID']).filter(Boolean)).size, imp.filter(r => r['Record ID']).length, 'no Record ID repeats');
 eq(imp.find(r => r['Tracker Name'] === 'Gamma Group'), { 'Record ID': '', 'Company Domain Name': 'gamma.io', Name: '', 'Tracker Name': 'Gamma Group' }, 'no ID: goes in by normalized domain, Record ID blank');
-eq(imp.some(r => r['Tracker Name'] === 'Delta'), false, 'no ID and no domain: left off Import');
+eq(imp.find(r => r['Tracker Name'] === 'Delta'), { 'Record ID': '', 'Company Domain Name': '', Name: '', 'Tracker Name': 'Delta' }, 'no ID and no domain: still on Import, Tracker Name only');
+{
+  // An account missing from Dan's export but in the portal's goes in by
+  // the portal's Record ID; one that isn't there falls back as before.
+  const portal = { Delta: { id: '70000000001', name: 'Delta Holdings' } };
+  const withPortal = buildHubspotImportSheets(mapping, { reference, portalMatch: (a) => portal[a.company] || null });
+  eq(withPortal.importRows.find(r => r['Tracker Name'] === 'Delta'), { 'Record ID': '70000000001', 'Company Domain Name': '', Name: 'Delta Holdings', 'Tracker Name': 'Delta' }, 'portal match: Record ID from the portal export');
+  eq(withPortal.importRows.find(r => r['Tracker Name'] === 'Gamma Group')['Company Domain Name'], 'gamma.io', 'portal miss: domain as before');
+  eq(withPortal.reviewRows.find(r => r['Tracker Name'] === 'Delta').Reason.includes('found in the HubSpot portal export'), true, 'portal match: Review says so');
+}
 eq(imp.some(r => r['Record ID'] === '60000000005'), false, 'Only in HubSpot rows are left out');
 eq(sheets.counts.accounts, 7, 'every account counted, the inactive one too');
 eq(sheets.referenceRows.length, 7, 'Reference: one row per account');
@@ -78,7 +88,7 @@ eq(sheets.referenceRows.find(r => r['My Accounts'] === 'Acme Realty')['HubSpot C
 eq(sheets.referenceRows.find(r => r['My Accounts'] === 'Delta')['Account Status'], 'Old Client', 'Reference: inactive account is there');
 
 // Review reasons.
-eq(rev['Delta'].Reason.includes('No HubSpot Company ID and no domain available'), true, 'Review: no ID, nothing available');
+eq(rev['Delta'].Reason.includes('No HubSpot Company ID and no domain'), true, 'Review: no ID, nothing available');
 eq(rev['Gamma Group'].Reason.includes('No HubSpot Company ID, imported by domain gamma.io'), true, 'Review: no ID, domain used');
 eq(rev['Acme Realty'].Reason.includes('3 HubSpot Company IDs: 58451545973, 59011786264, 59006173215'), true, 'Review: several IDs listed');
 eq(rev['Acme Realty']['HubSpot Company ID(s)'], '58451545973, 59011786264, 59006173215', 'Review: IDs cell lists them all');
