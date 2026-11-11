@@ -3442,6 +3442,11 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             if (cid == null) return;
             updateSettings(metInPersonUpdate(cid, met));
           }}
+          contactConnected={settings?.contactConnected || {}}
+          onSaveConnected={(cid, on) => {
+            if (!updateSettings) return;
+            updateSettings({ contactConnected: { ...(settings?.contactConnected || {}), [cid]: !!on } });
+          }}
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={(cid, invited) => {
             if (cid == null) return;
