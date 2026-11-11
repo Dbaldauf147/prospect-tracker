@@ -7,6 +7,7 @@ import { ColumnPresets } from '../common/ColumnPresets';
 import { apiFetch } from '../../utils/apiFetch';
 import { hasMetInPersonTag, metInPersonState, normalizeMetState, metInPersonUpdate, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
+import { makeCompanyMappingCheck } from '../../utils/companyMapping';
 import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagRecordKeyFor, recordForVerdict, sameTagRecord, planTagEdit, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
 import { contactEditPropsEqual, contactTagString } from '../../utils/contactEditProps';
 import { createTagWriter } from '../../utils/tagWriteQueue';
@@ -2324,6 +2325,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return m;
   }, [prospects]);
   const companyStatus = statusByCompany.get(normalizeCompanyName(f.company)) || '';
+  // Whether the Company maps to a Table View company. An unmapped one keeps
+  // the contact off the Client / Key / Key Prospect rosters and off the
+  // company's own popup, so it gets a warning with the likeliest matches.
+  // Only once there are prospects to map against: an empty list means they
+  // haven't loaded, not that nothing maps.
+  const companyMappingCheck = useMemo(() => makeCompanyMappingCheck(prospects), [prospects]);
+  const companyMapping = (prospects || []).length
+    ? companyMappingCheck(f.company, f.email)
+    : { mapped: true, blank: false, suggestions: [] };
 
   const inputStyle = { width: '100%', padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' };
   const labelStyle = { fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '3px' };
@@ -2939,6 +2949,35 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                 </>
               );
             })()}
+            {/* Not while the pick list is open: mid-typing, every prefix
+                is "unmapped". A blank Company only warns when the email
+                domain says which company it should be. */}
+            {!companyOpen && !companyMapping.mapped && (!companyMapping.blank || companyMapping.suggestions.length > 0) && (
+              <div
+                data-company-unmapped
+                role="status"
+                style={{ marginTop: 4, padding: '0.3rem 0.55rem', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.7rem', color: '#78350F', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem 0.4rem' }}
+              >
+                <span>
+                  <span aria-hidden="true">⚠️ </span>
+                  {companyMapping.blank
+                    ? 'No Company. '
+                    : <><strong>Not mapped:</strong> no Table View company is called &quot;{(f.company || '').trim()}&quot;, so its status and Client / Key rosters don&apos;t apply. </>}
+                  {companyMapping.suggestions.length > 0 ? 'Did you mean' : 'Pick one from the list, or add the company on the Table View.'}
+                </span>
+                {companyMapping.suggestions.map(sg => (
+                  <button
+                    key={sg.name}
+                    type="button"
+                    onClick={() => { set('company', sg.name); commitCompany(sg.name); }}
+                    title={sg.via === 'domain'
+                      ? `${sg.name} claims this contact's email domain. Click to use it.`
+                      : `Closest Table View name. Click to use it.`}
+                    style={{ fontSize: '0.68rem', padding: '0.1rem 0.5rem', border: '1px solid #F59E0B', borderRadius: 999, background: '#fff', color: '#92400E', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+                  >{sg.name}</button>
+                ))}
+              </div>
+            )}
           </div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Company</label><input style={inputStyle} value={f.oldCompany} onChange={e => set('oldCompany', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 2' }}>
