@@ -14,7 +14,7 @@
 //   * a Client that isn't a Customer in HubSpot is flagged, and so is a
 //     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, pastedSheetRows, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows, splitNameList } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, pastedSheetRows, pickHubspotCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows, splitNameList } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -172,6 +172,23 @@ eq(hubspotOnlyOwnedRows(buildHubspotMapping([], compactMappingCompanies([{ 'Comp
   eq(buildHubspotMapping([{ id: 'pnc', company: 'PNC Bank' }], hs).find(x => x.account?.id === 'pnc').hubspot.length, 0, 'hubspot names: none without them');
   eq(splitNameList('A, B;\n C\n\n'), ['A', 'B', 'C'], 'splitNameList: lines, commas, semicolons');
   eq(splitNameList(['X', ' ']), ['X'], 'splitNameList: array');
+}
+
+// The HubSpot Company cell's picker: name starts with it first, then a word
+// in the name, then anywhere, then the website; nothing typed gives the
+// possible matches.
+{
+  const cos = [
+    { id: '1', name: 'The Hartford', domain: 'thehartford.com' },
+    { id: '2', name: 'Hartford Investment Management', domain: 'hartfordinvestments.com' },
+    { id: '3', name: 'Acme Realty', domain: 'acme.com' },
+    { id: '4', name: 'Shartford Co', domain: '' },
+    { id: '5', name: 'Zeta', domain: 'hartford-zeta.com' },
+  ];
+  eq(pickHubspotCompanies(cos, 'hartford').map(c => c.id), ['2', '1', '4', '5'], 'picker: ranked starts-with, word, anywhere, website');
+  eq(pickHubspotCompanies(cos, '  ACME ').map(c => c.id), ['3'], 'picker: case and spaces ignored');
+  eq(pickHubspotCompanies(cos, '', { suggestedIds: ['1', '9'] }).map(c => c.id), ['1'], 'picker: empty query gives possible matches');
+  eq(pickHubspotCompanies(cos, 'h', { limit: 2 }).length, 2, 'picker: limit');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

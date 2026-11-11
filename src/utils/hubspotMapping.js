@@ -378,3 +378,28 @@ export function otherOwners(row, ownerName = '') {
 export function ownedByOthersRows(mapping = [], ownerName = '') {
   return (mapping || []).filter(r => r.status === MAPPING_STATUS.matched && r.account && otherOwners(r, ownerName).length > 0);
 }
+
+// The HubSpot Company cell's picker: the HubSpot companies whose name or
+// website has what was typed, best first (name starts with it, then a word
+// in the name does, then anywhere in the name, then the website), at most
+// `limit`. Case, punctuation and extra spaces don't count. With nothing
+// typed, the row's possible matches (suggestedIds, in their order).
+export function pickHubspotCompanies(companies = [], query = '', { suggestedIds = [], limit = 30 } = {}) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9.]+/g, ' ').trim();
+  const q = norm(query);
+  if (!q) {
+    const byId = new Map(companies.map(c => [String(c.id), c]));
+    return suggestedIds.map(id => byId.get(String(id))).filter(Boolean).slice(0, limit);
+  }
+  const ranked = [];
+  for (const c of companies) {
+    const name = norm(c.name);
+    const rank = name.startsWith(q) ? 0
+      : (` ${name}`).includes(` ${q}`) ? 1
+      : name.includes(q) ? 2
+      : norm(c.domain).includes(q) ? 3 : -1;
+    if (rank >= 0) ranked.push([rank, name, c]);
+  }
+  ranked.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1]));
+  return ranked.slice(0, limit).map(x => x[2]);
+}
