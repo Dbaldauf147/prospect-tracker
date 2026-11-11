@@ -16,7 +16,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { onMyBook, reportingTier } from '../../utils/tierSource';
 import { accountHasDecisionMaker, decisionMakerCompanies, makeAccountContactIndex } from '../../utils/decisionMakerCoverage';
-import { rosterCompaniesMatch } from '../../utils/contactRosters';
+import { rosterCompaniesMatch, makeClientAccountLookup } from '../../utils/contactRosters';
 
 const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
 const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
@@ -104,6 +104,13 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
     return map;
   }, [myTierAccounts, accountsWithOpps, oppAccountsArr]);
 
+  // Who belongs to a Client account. Keeping Client rows out of
+  // myTierAccounts isn't enough on its own: a contact whose company is
+  // spelled a little differently from the Client can still near-match some
+  // other Tier 1-3 row (a duplicate, say) and land here. Same rule as the
+  // roster gates in contactRosters.
+  const clientAccountOf = useMemo(() => makeClientAccountLookup(prospects), [prospects]);
+
   // Contact selector: Decision Maker at a Tier 1 / Tier 2 / Tier 3 account on
   // my CDM whose company has no opps yet. Hide / Left / Schneider are
   // excluded as they are everywhere else in the roster pages.
@@ -115,6 +122,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
     if (!tags.includes('decision maker')) return false;
     const company = String(c.company || '').trim();
     if (!company) return false;
+    if (clientAccountOf(c)) return false;
     const lc = company.toLowerCase();
     const direct = tierAccountStatus.get(lc);
     if (direct) return !direct.hasOpp;
@@ -129,7 +137,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
       }
     }
     return false;
-  }, [tierAccountStatus, myTierAccounts]);
+  }, [tierAccountStatus, myTierAccounts, clientAccountOf]);
 
   // Set of lowercase company strings (taken from passing-the-selector
   // HubSpot contacts) representing Tier 1 / Tier 2 / Tier 3 accounts that DO
