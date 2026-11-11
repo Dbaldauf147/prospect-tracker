@@ -82,6 +82,7 @@
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/c/:id/:l", "destination": "/api/track-click?id=:id&l=:l" },
     { "source": "/((?!assets/).*)", "destination": "/index.html" }
   ]
 }

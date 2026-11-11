@@ -5,6 +5,7 @@
 // this endpoint can only ever send the recipient to a URL that was in
 // the email we sent — it is not an open redirect.
 // GET /api/track-click?id=<trackingId>&l=<index>
+// GET /c/<trackingId>/<index>  (short form, rewritten here by vercel.json)
 
 import { recordEvent, requestMeta, resolveClickUrl, trackingBaseUrl } from './_lib/tracking.js';
 
