@@ -14,7 +14,7 @@
 //   * a Client that isn't a Customer in HubSpot is flagged, and so is a
 //     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, pastedSheetRows, pickExportFromZip, pickHubspotCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows, splitNameList } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, pastedSheetRows, pickExportFromZip, pickHubspotCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows, splitNameList, hubspotCompaniesForAccount } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -195,6 +195,19 @@ eq(hubspotOnlyOwnedRows(buildHubspotMapping([], compactMappingCompanies([{ 'Comp
 eq(pickExportFromZip(['readme.txt', 'other.csv', 'dan-s-company-export.csv']), 'dan-s-company-export.csv', 'zip: the company export wins');
 eq(pickExportFromZip(['__MACOSX/._x.csv', 'folder/report.xlsx']), 'folder/report.xlsx', 'zip: else the first spreadsheet, macOS copies skipped');
 eq(pickExportFromZip(['notes.txt']), '', 'zip: no spreadsheet');
+
+// The company popup's read of the mapping for one account.
+{
+  const data = { companies: compactMappingCompanies([
+    { 'Company name': 'American Homes 4 Rent', 'Company ID': '71', 'Company Domain Name': 'amh.com' },
+    { 'Company name': 'Something Else', 'Company ID': '72' },
+  ]), links: { linked: '72' } };
+  eq(hubspotCompaniesForAccount({ id: 'a', company: 'American Homes 4 Rent' }, data), [{ id: '71', name: 'American Homes 4 Rent', how: 'name' }], 'popup: name match');
+  eq(hubspotCompaniesForAccount({ id: 'b', company: 'AH4R', emailDomain: 'first.last@amh.com' }, data).map(c => c.how), ['website'], 'popup: email domain match');
+  eq(hubspotCompaniesForAccount({ id: 'linked', company: 'Zed' }, data).map(c => c.id), ['72'], 'popup: your link wins');
+  eq(hubspotCompaniesForAccount({ id: 'c', company: 'Zed' }, data), [], 'popup: no match');
+  eq(hubspotCompaniesForAccount({ id: 'c', company: 'Zed' }, null), [], 'popup: no export');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
