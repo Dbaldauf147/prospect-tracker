@@ -33,3 +33,21 @@ console.log('PASS  procurement DM filter');
   assert.equal(isOpenTopicDecisionMaker(cap, { 10: { 'Capital Planning': { status: 'notsold' } } }, 'Capital Planning'), false);
   console.log('PASS  ESG / CAP DM filter');
 }
+
+// PE ESG: the ESG rule, at Private Equity firms only.
+{
+  const { DM_TOPICS, isPeCompany, matchesDmTopic } = await import('../src/utils/procurementDmFilter.js');
+  const peEsg = DM_TOPICS.find(t => t.key === 'peEsg');
+  const esg = { id: 11, dans_tags: 'ESG; Decision Maker' };
+  assert.equal(isPeCompany({ type: 'Private Equity' }), true);
+  assert.equal(isPeCompany({ type: 'Owner Operator', vertical: 'private equity' }), true, 'the vertical counts too');
+  assert.equal(isPeCompany({ type: 'Portfolio Company' }), false, 'a portfolio company is not the firm');
+  assert.equal(isPeCompany(null), false);
+  assert.equal(matchesDmTopic(esg, { type: 'Private Equity' }, {}, peEsg), true);
+  assert.equal(matchesDmTopic(esg, { type: 'Developer' }, {}, peEsg), false, 'not a PE firm');
+  assert.equal(matchesDmTopic(esg, null, {}, peEsg), false, 'no company record');
+  assert.equal(matchesDmTopic(esg, { type: 'Private Equity' }, { 11: { ESG: { status: 'sold' } } }, peEsg), false, 'ESG Sold leaves them out');
+  assert.equal(matchesDmTopic({ id: 12, dans_tags: 'Procurement; Decision Maker' }, { type: 'Private Equity' }, {}, peEsg), false, 'needs the ESG tag');
+  assert.equal(matchesDmTopic(esg, null, {}, DM_TOPICS.find(t => t.key === 'esg')), true, 'plain ESG ignores the company');
+  console.log('PASS  PE ESG DM filter');
+}

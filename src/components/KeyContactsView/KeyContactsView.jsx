@@ -17,7 +17,7 @@ import { formatAum, statusColor } from '../../utils/formatters';
 import { STATUSES } from '../../data/enums';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { tagValuesOf, anyValueSelected } from '../../utils/tagColumnFilter';
-import { DM_TOPICS, isOpenTopicDecisionMaker } from '../../utils/procurementDmFilter';
+import { DM_TOPICS, matchesDmTopic } from '../../utils/procurementDmFilter';
 import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
@@ -1937,7 +1937,7 @@ function KeyContactsViewInner({
   });
   useEffect(() => { try { localStorage.setItem(lsKey('only-dm-topics'), dmTopics.join(',')); } catch { /* storage off */ } }, [dmTopics]);
   const toggleDmTopic = (key) => setDmTopics(cur => cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key]);
-  const matchesDmTopics = (c, keys) => keys.some(k => isOpenTopicDecisionMaker(c.raw || c, tagReviewMap, DM_TOPICS.find(t => t.key === k).tag));
+  const matchesDmTopics = (c, keys) => keys.some(k => matchesDmTopic(c.raw || c, c.prospect, tagReviewMap, DM_TOPICS.find(t => t.key === k)));
   // A page with the Company Vertical column starts sorted by it. The saved
   // sort is written on first visit, so a page that already had one is moved
   // onto Vertical once (sticky flag), after which a re-sort sticks.
@@ -4349,7 +4349,7 @@ function KeyContactsViewInner({
               type="button"
               aria-pressed={on}
               onClick={() => toggleDmTopic(t.key)}
-              title={`Show only contacts tagged both ${t.tag} and Decision Maker whose own ${t.tag} tag status is not Sold or Not sold. Light several to see anyone matching any of them.`}
+              title={`Show only contacts tagged both ${t.tag} and Decision Maker whose own ${t.tag} tag status is not Sold or Not sold${t.peOnly ? ', at companies whose Type or Vertical is Private Equity' : ''}. Light several to see anyone matching any of them.`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5, padding: '0.2rem 0.6rem', fontSize: '0.7rem', fontWeight: 600,
                 borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',

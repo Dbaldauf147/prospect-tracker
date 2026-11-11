@@ -13,11 +13,31 @@ import { tagKey, findTagRecord, tagRecordFrom } from './contactTagReview.js';
 import { rawTagsOf } from './tagColumnFilter.js';
 
 // The buttons, in the order they show. `tag` is the dans_tags value.
+// `peOnly` narrows a button to contacts whose company is a PE firm (see
+// isPeCompany): "PE ESG" is the ESG DMs at the firms themselves.
 export const DM_TOPICS = [
   { key: 'procurement', label: 'Procurement', tag: 'Procurement' },
   { key: 'esg', label: 'ESG', tag: 'ESG' },
+  { key: 'peEsg', label: 'PE ESG', tag: 'ESG', peOnly: true },
   { key: 'cap', label: 'CAP', tag: 'Capital Planning' },
 ];
+
+/**
+ * A Private Equity firm: the company card's Type, or its Vertical, says
+ * Private Equity. Portfolio companies are not PE firms (they're owned by
+ * one), so they don't count.
+ */
+export function isPeCompany(prospect) {
+  const pe = (v) => String(v ?? '').trim().toLowerCase() === 'private equity';
+  return !!prospect && (pe(prospect.type) || pe(prospect.vertical));
+}
+
+/** One button's test for one contact row, with its company record. */
+export function matchesDmTopic(contact, prospect, reviewMap, topic) {
+  if (!topic) return false;
+  if (topic.peOnly && !isPeCompany(prospect)) return false;
+  return isOpenTopicDecisionMaker(contact, reviewMap, topic.tag);
+}
 
 function tagsOf(contact) {
   return new Set(rawTagsOf(contact).split(';').map(t => tagKey(t.trim())).filter(Boolean));
