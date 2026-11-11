@@ -94,6 +94,12 @@ export function normProjectName(v) {
 }
 
 const isBlank = (v) => v == null || String(v).trim() === '';
+// Excel's accounting format shows an empty or zero month as a lone dash
+// ("-", " $ - "), and that is what a paste carries for a month that hasn't
+// billed yet. Sitting on file it means "nothing here yet", so a later paste
+// with the real figure fills it like a blank cell instead of losing to it
+// (Willco's August/September stayed "-" under the default fill mode).
+const isPlaceholder = (v) => /^\$?\s*[-\u2013]+\s*$/.test(String(v ?? '').trim());
 // Cell-level "same value?" — trimmed, internal whitespace collapsed, case
 // folded, so a re-paste that only differs in spacing is a duplicate rather
 // than a contradiction.
@@ -244,7 +250,7 @@ function overlay(base, addition, dupeMode) {
       if (v && typeof v === 'object') row[k] = { ...(row[k] && typeof row[k] === 'object' ? row[k] : {}), ...v };
       continue;
     }
-    if (isBlank(row[k])) { row[k] = v; filled++; written.push(k); continue; }
+    if (isBlank(row[k]) || (isPlaceholder(row[k]) && !isPlaceholder(v))) { row[k] = v; filled++; written.push(k); continue; }
     if (sameValue(row[k], v)) {
       // A repeat still tells us where the value lives. Record it for a cell
       // that has no source yet (one imported before sources were tracked),
