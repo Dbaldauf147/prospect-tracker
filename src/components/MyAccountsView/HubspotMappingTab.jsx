@@ -200,7 +200,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     if (!data.companies.length) return [];
     const withNames = accounts.map(a => {
       const p = byId.get(a.id);
-      return p ? { ...a, goesBy: a.goesBy || p.goesBy, aliases: a.aliases || p.aliases, website: a.website || p.website, emailDomain: a.emailDomain || p.emailDomain } : a;
+      return p ? { ...a, goesBy: a.goesBy || p.goesBy, aliases: a.aliases || p.aliases, hubspotCompanyNames: a.hubspotCompanyNames || p.hubspotCompanyNames, website: a.website || p.website, emailDomain: a.emailDomain || p.emailDomain } : a;
     });
     return buildHubspotMapping(withNames, data.companies, { links: data.links, tracker: prospects || [] });
   }, [accounts, prospects, byId, data]);

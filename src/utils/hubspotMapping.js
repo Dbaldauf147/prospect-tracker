@@ -67,7 +67,15 @@ export function compactMappingCompanies(rows) {
 
 const accountDomain = (a) => domainKey(a.website) || domainKey(a.emailDomain);
 
-const accountNames = (a) => [a.company, a.goesBy, ...(Array.isArray(a.aliases) ? a.aliases : [])]
+// A list field kept as one string, a name per line (Also Known As,
+// HubSpot Company Name(s)); commas and semicolons split it too. An array
+// is taken as it is.
+export const splitNameList = (v) => (Array.isArray(v) ? v : String(v || '').split(/[\n;,]+/))
+  .map(s => String(s || '').trim()).filter(Boolean);
+
+// The account's own names plus the names it carries in HubSpot, so an
+// account whose HubSpot record is called something else still matches.
+const accountNames = (a) => [a.company, a.goesBy, ...(Array.isArray(a.aliases) ? a.aliases : []), ...splitNameList(a.hubspotCompanyNames)]
   .map(normalizeCompany).filter(Boolean);
 
 // Words that say what kind of firm it is rather than which one, so two
