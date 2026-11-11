@@ -11,12 +11,12 @@
 // substatus, which reads as Hold Off) sit on the Inactive chip of their own
 // and are left out of All and the other chips.
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { domainKey } from '../../utils/seHubspotExisting';
-import { compactMappingCompanies, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE, otherOwners, ownedByOthersRows } from '../../utils/hubspotMapping';
+import { compactMappingCompanies, pastedSheetRows, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE, otherOwners, ownedByOthersRows } from '../../utils/hubspotMapping';
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -120,19 +120,48 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     catch (err) { setError(`Couldn't save: ${err.message}`); }
   };
 
-  const upload = async (file) => {
-    if (!file) return;
+  // A file and a paste land the same way: the rows replace the export,
+  // and your links stay.
+  const loadRows = async (readRows, source) => {
     setBusy(true); setError('');
     try {
-      const companies = compactMappingCompanies(await readSheet(file));
-      if (!companies.length) throw new Error('No companies found. The file needs a Company name column.');
-      await save({ ...data, companies, meta: { file: file.name, at: new Date().toISOString() } });
+      const companies = compactMappingCompanies(await readRows());
+      if (!companies.length) throw new Error(`No companies found. The ${source === 'paste' ? 'pasted rows need a header row with' : 'file needs'} a Company name column.`);
+      await save({ ...data, companies, meta: { file: source === 'paste' ? 'rows pasted from Excel' : source, at: new Date().toISOString() } });
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy(false);
     }
   };
+  const upload = (file) => { if (file) loadRows(() => readSheet(file), file.name); };
+
+  // Ctrl/Cmd+V anywhere on the Mapping subtab takes rows copied from Excel
+  // (header row included) as the export. Only when the last click was on
+  // the subtab itself, so a paste in a company popup or report over it
+  // (rendered outside rootRef) is left alone; skipped while a text box
+  // has focus so the search boxes paste normally, and for text that isn't
+  // a table (no tabs).
+  const rootRef = useRef(null);
+  const clickedInside = useRef(true);
+  const pasteRef = useRef(null);
+  pasteRef.current = (e) => {
+    if (e.defaultPrevented || subtab !== 'mapping' || busy || !clickedInside.current) return;
+    const ae = document.activeElement;
+    const tag = ae?.tagName?.toLowerCase() || '';
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || ae?.isContentEditable) return;
+    const rows = pastedSheetRows(e.clipboardData?.getData('text/plain') || '');
+    if (!rows.length) return;
+    e.preventDefault();
+    loadRows(() => rows, 'paste');
+  };
+  useEffect(() => {
+    const onPaste = (e) => pasteRef.current?.(e);
+    const onDown = (e) => { clickedInside.current = !!rootRef.current?.contains(e.target); };
+    document.addEventListener('paste', onPaste);
+    document.addEventListener('pointerdown', onDown, true);
+    return () => { document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', onDown, true); };
+  }, []);
 
   const link = (accountId, hubspotId) => {
     const links = { ...data.links };
@@ -605,7 +634,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     );
   }
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+    <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
       {subtabBar}
       {mapping.length > 0 && mappedPct != null && (
         <button
@@ -687,12 +716,12 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       >
         <input type="file" accept=".csv,.xlsx,.xls" disabled={busy} style={{ display: 'none' }}
           onChange={e => { upload(e.target.files?.[0]); e.target.value = ''; }} />
-        <strong style={{ color: '#0F172A' }}>Drop your HubSpot companies export here</strong>, or click to choose it (CSV or Excel).
+        <strong style={{ color: '#0F172A' }}>Drop your HubSpot companies export here</strong>, click to choose it (CSV or Excel), or copy the rows in Excel (header row included) and paste them anywhere on this page with Ctrl+V.
         {' '}It needs Company name. Add Company Domain Name (or Website URL) to the export and accounts match by website first, then by name; Company ID, Company owner, Lifecycle Stage, Target Account and the activity dates come along when they&apos;re there.
         <div style={{ marginTop: 4, color: '#64748B' }}>
-          {busy ? 'Reading the file...'
+          {busy ? 'Reading...'
             : !loaded ? 'Loading...'
-            : m.at ? `${fmt(data.companies.length)} HubSpot companies, from ${m.file} (${new Date(m.at).toLocaleString()}). Drop a newer export to replace it.`
+            : m.at ? `${fmt(data.companies.length)} HubSpot companies, from ${m.file} (${new Date(m.at).toLocaleString()}). Drop or paste a newer export to replace it.`
             : 'No export yet.'}
         </div>
       </label>
