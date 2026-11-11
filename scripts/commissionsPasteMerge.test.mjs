@@ -145,6 +145,17 @@ ok(!PERIOD_KEYS.has('Account Name') && !PERIOD_KEYS.has('%'), 'identity and look
   eq(touched, [0, 2], 'only the rows added or merged are reported as touched');
 }
 
+// --- a dash on file is Excel's empty month, so a real figure fills it ---------
+{
+  const existing = [{ 'Project Name': 'Willco', 'July': '319.50', 'August': '-', 'September Revenue': ' $ - ', 'October': '400' }];
+  const { next, summary } = planCommissionsPaste(existing, [
+    { 'Project Name': 'Willco', 'July': '319.50', 'August': '315.00', 'September Revenue': '3,500.00', 'October': '-' },
+  ]);
+  eq([next[0].August, next[0]['September Revenue'], next[0].October], ['315.00', '3,500.00', '400'],
+    'fill mode: a dash on file takes the pasted figure, a pasted dash never wipes a real one');
+  eq([summary.filledCells, summary.conflictCells], [2, 1], 'the dash cells count as filled, not kept');
+}
+
 // --- nothing at all ---------------------------------------------------------
 {
   const { next, summary } = planCommissionsPaste(undefined, undefined);
