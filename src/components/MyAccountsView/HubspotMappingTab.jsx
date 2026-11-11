@@ -29,7 +29,7 @@ import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, hubsp
 import { HubspotAgents } from './HubspotAgents';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
 import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
-import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName } from '../../utils/hubspotImportFile';
+import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName, buildHubspotCreateRows, buildHubspotCreateWorkbook, hubspotCreateFileName } from '../../utils/hubspotImportFile';
 
 // Which subtab of the page is open (Mapping or Agents), per viewer.
 const SUBTAB_KEY = 'hubspot-mapping-subtab';
@@ -641,6 +641,68 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   // screen, after the chips, the search and the column filters. With
   // nothing filtered that is every account on the All chip.
   const [exportingImport, setExportingImport] = useState(false);
+  // An account with no ID in this export may still be in the portal under
+  // someone else: the whole portal's companies export (the HubSpot tab's
+  // existing-records drop) says so, with its Record ID. Read per export.
+  const loadPortalMatch = async () => {
+    const portal = await loadSeHubspot().catch(() => null);
+    const match = portal?.companies?.length
+      ? companyMatcher(portal.companies, { overrides: portal.overrides || {}, me: [cdmName].filter(Boolean) })
+      : null;
+    const portalMatch = match
+      ? (account) => {
+        const p = byId.get(account.id) || {};
+        const names = [...splitNameList(account.aliases || p.aliases), ...splitNameList(account.hubspotCompanyNames || p.hubspotCompanyNames)];
+        return match({ ...account, goesBy: account.goesBy || p.goesBy, website: account.website || p.website, emailDomain: account.emailDomain || p.emailDomain, aliases: names }).company;
+      }
+      : null;
+    return { portal, portalMatch };
+  };
+  const downloadWorkbook = async (wb, name) => {
+    const buf = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // The second file: the companies on screen HubSpot doesn't have yet, to
+  // create them (utils/hubspotImportFile.js buildHubspotCreateRows). Rows
+  // with a HubSpot company are counted out up front; the portal export is
+  // checked when the file is built.
+  const [exportingCreate, setExportingCreate] = useState(false);
+  const [createNote, setCreateNote] = useState('');
+  const shownUnmatchedCount = useMemo(() => shownRows.filter(r => r?.account && !(r.hubspot || []).length).length, [shownRows]);
+  const exportHubspotCreateFile = async () => {
+    if (exportingCreate) return;
+    setExportingCreate(true); setError(''); setCreateNote('');
+    try {
+      if (!shownUnmatchedCount) throw new Error('Every company on screen is already in HubSpot.');
+      const { portal, portalMatch } = await loadPortalMatch();
+      const takenDomains = [...(data.companies || []), ...(portal?.companies || [])].map(c => c.domain).filter(Boolean);
+      const { rows, skipped } = buildHubspotCreateRows(shownRows, {
+        portalMatch, takenDomains, owner: settings?.workEmail || 'daniel.baldauf@se.com', info: (a) => byId.get(a.id),
+      });
+      const left = skipped.inPortal + skipped.domainTaken;
+      const why = [
+        skipped.inPortal ? `${fmt(skipped.inPortal)} already in the HubSpot portal export` : '',
+        skipped.domainTaken ? `${fmt(skipped.domainTaken)} with a domain HubSpot already has` : '',
+        skipped.sameDomain ? `${fmt(skipped.sameDomain)} sharing a domain with another row` : '',
+      ].filter(Boolean).join(', ');
+      if (!rows.length) throw new Error(`Nothing to create: ${why || 'every company on screen is already in HubSpot'}.`);
+      const { Workbook } = await import('exceljs');
+      await downloadWorkbook(buildHubspotCreateWorkbook(Workbook, rows), hubspotCreateFileName());
+      setCreateNote(`${fmt(rows.length)} new ${rows.length === 1 ? 'company' : 'companies'} in the file${left || skipped.sameDomain ? `. Left out: ${why}` : ''}.${portal?.companies?.length ? '' : ' No HubSpot portal export on the HubSpot tab, so only your own export was checked.'}`);
+    } catch (err) {
+      setError(`Couldn't build the new companies file: ${err.message}`);
+    } finally {
+      setExportingCreate(false);
+    }
+  };
   const shownAccountCount = useMemo(() => shownRows.filter(r => r?.account).length, [shownRows]);
   const exportHubspotImportFile = async () => {
     if (exportingImport) return;
@@ -648,31 +710,10 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     try {
       const reference = columns.map(c => ({ label: c.label, value: c.exportValue || c.getFilterValue || (() => '') }));
       if (!shownAccountCount) throw new Error('No My Accounts companies on screen. Clear a filter and try again.');
-      // An account with no ID in this export may still be in the portal under
-      // someone else: look it up in the whole portal's companies export (the
-      // HubSpot tab's existing-records drop) for its Record ID.
-      const portal = await loadSeHubspot().catch(() => null);
-      const match = portal?.companies?.length
-        ? companyMatcher(portal.companies, { overrides: portal.overrides || {}, me: [cdmName].filter(Boolean) })
-        : null;
-      const portalMatch = match
-        ? (account) => {
-          const p = byId.get(account.id) || {};
-          const names = [...splitNameList(account.aliases || p.aliases), ...splitNameList(account.hubspotCompanyNames || p.hubspotCompanyNames)];
-          return match({ ...account, goesBy: account.goesBy || p.goesBy, website: account.website || p.website, emailDomain: account.emailDomain || p.emailDomain, aliases: names }).company;
-        }
-        : null;
+      const { portalMatch } = await loadPortalMatch();
       const sheets = buildHubspotImportSheets(shownRows, { reference, portalMatch });
       const { Workbook } = await import('exceljs');
-      const buf = await buildHubspotImportWorkbook(Workbook, sheets).xlsx.writeBuffer();
-      const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = hubspotImportFileName();
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await downloadWorkbook(buildHubspotImportWorkbook(Workbook, sheets), hubspotImportFileName());
     } catch (err) {
       setError(`Couldn't build the import file: ${err.message}`);
     } finally {
@@ -869,6 +910,11 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
               title="Download an Excel file to import into HubSpot (Companies, Update existing companies only, Create a list from this import). One sheet, a row for every company on screen: its HubSpot Company ID (from this export, else the HubSpot tab's portal export), else its domain, else just its name for HubSpot to flag as not found. Only the My Accounts companies on screen go in: filter the table first to export just those."
               style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#fff', color: '#1D4ED8', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: exportingImport ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
             >{'\u21E9'} {exportingImport ? 'Building...' : `Export HubSpot Import File (${fmt(shownAccountCount)})`}</button>
+            <button type="button" onClick={exportHubspotCreateFile} disabled={exportingCreate}
+              title="Download an Excel file to CREATE the companies on screen that HubSpot doesn't have yet (Import: Companies, Create new companies only). Left out: anything with a HubSpot company here, anything found in the HubSpot tab's portal export, and any domain HubSpot already has. Columns: Name, Company Domain Name, Website URL, Company owner (you), and Tracker Name for reading (leave it unmapped). Filter the table first to export just some."
+              style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #15803D', background: '#fff', color: '#15803D', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: exportingCreate ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
+            >{'\u21E9'} {exportingCreate ? 'Building...' : `Export New Companies for HubSpot (${fmt(shownUnmatchedCount)})`}</button>
+            {createNote && <span style={{ fontSize: '0.68rem', color: '#475569' }}>{createNote}</span>}
           </>
         )}
       </div>
