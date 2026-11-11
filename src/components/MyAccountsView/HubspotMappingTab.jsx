@@ -15,8 +15,9 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
-import { domainKey } from '../../utils/seHubspotExisting';
-import { compactMappingCompanies, pastedSheetRows, pickExportFromZip, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE, otherOwners, ownedByOthersRows } from '../../utils/hubspotMapping';
+import { domainKey, companyMatcher } from '../../utils/seHubspotExisting';
+import { loadSeHubspot } from '../../utils/seHubspotStore';
+import { compactMappingCompanies, pastedSheetRows, pickExportFromZip, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE, otherOwners, ownedByOthersRows, splitNameList } from '../../utils/hubspotMapping';
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -647,7 +648,21 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     try {
       const reference = columns.map(c => ({ label: c.label, value: c.exportValue || c.getFilterValue || (() => '') }));
       if (!shownAccountCount) throw new Error('No My Accounts companies on screen. Clear a filter and try again.');
-      const sheets = buildHubspotImportSheets(shownRows, { reference });
+      // An account with no ID in this export may still be in the portal under
+      // someone else: look it up in the whole portal's companies export (the
+      // HubSpot tab's existing-records drop) for its Record ID.
+      const portal = await loadSeHubspot().catch(() => null);
+      const match = portal?.companies?.length
+        ? companyMatcher(portal.companies, { overrides: portal.overrides || {}, me: [cdmName].filter(Boolean) })
+        : null;
+      const portalMatch = match
+        ? (account) => {
+          const p = byId.get(account.id) || {};
+          const names = [...splitNameList(account.aliases || p.aliases), ...splitNameList(account.hubspotCompanyNames || p.hubspotCompanyNames)];
+          return match({ ...account, goesBy: account.goesBy || p.goesBy, website: account.website || p.website, emailDomain: account.emailDomain || p.emailDomain, aliases: names }).company;
+        }
+        : null;
+      const sheets = buildHubspotImportSheets(shownRows, { reference, portalMatch });
       const { Workbook } = await import('exceljs');
       const buf = await buildHubspotImportWorkbook(Workbook, sheets).xlsx.writeBuffer();
       const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
@@ -851,7 +866,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
               >{bulkLabel(shownSuggested.length)}</button>
             )}
             <button type="button" onClick={exportHubspotImportFile} disabled={exportingImport}
-              title="Download an Excel file to import into HubSpot (Companies, Update existing companies only, Create a list from this import). One sheet: a row per HubSpot Company ID, or the domain when there is no ID. Only the My Accounts companies on screen go in: filter the table first to export just those."
+              title="Download an Excel file to import into HubSpot (Companies, Update existing companies only, Create a list from this import). One sheet, a row for every company on screen: its HubSpot Company ID (from this export, else the HubSpot tab's portal export), else its domain, else just its name for HubSpot to flag as not found. Only the My Accounts companies on screen go in: filter the table first to export just those."
               style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#fff', color: '#1D4ED8', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: exportingImport ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
             >{'\u21E9'} {exportingImport ? 'Building...' : `Export HubSpot Import File (${fmt(shownAccountCount)})`}</button>
           </>

@@ -57,7 +57,17 @@ const accountDomain = (a) => normalizeDomain(a?.website) || normalizeDomain(a?.e
  * `reference` is [{ label, value(row) }], the tab's columns, for the
  * Reference sheet and for the Review sheet's cells.
  */
-export function buildHubspotImportSheets(mapping = [], { reference = [] } = {}) {
+//
+// `portalMatch(account)`, when given, looks an account up in the whole
+// portal's companies export (seHubspotExisting.companyMatcher): an account
+// with no ID in Dan's own export may still be a HubSpot record somebody
+// else owns, and its Record ID is what the import needs.
+//
+// Every account handed in gets at least one row, so the file holds every
+// company the button counted. One with no ID and no domain goes in with
+// just its Tracker Name: HubSpot can't match it, and lists it as an error
+// row on the import, which says plainly which accounts aren't in HubSpot.
+export function buildHubspotImportSheets(mapping = [], { reference = [], portalMatch = null } = {}) {
   const accountRows = (mapping || []).filter(r => r?.account)
     .slice().sort((x, y) => trim(x.account.company).localeCompare(trim(y.account.company)));
   const refValue = (r, label) => {
@@ -84,8 +94,16 @@ export function buildHubspotImportSheets(mapping = [], { reference = [] } = {}) 
         importRows.push({ 'Record ID': id, 'Company Domain Name': '', Name: trim(c.name), 'Tracker Name': tracker });
       }
     } else {
+      const portal = portalMatch ? portalMatch(r.account) : null;
+      const portalId = realId(portal?.id);
       const domain = accountDomain(r.account);
-      if (domain) {
+      if (portalId) {
+        if (!seenIds.has(portalId)) {
+          seenIds.add(portalId);
+          importRows.push({ 'Record ID': portalId, 'Company Domain Name': '', Name: trim(portal.name), 'Tracker Name': tracker });
+        }
+        reasons.push(`Not in your export, found in the HubSpot portal export as ${trim(portal.name) || portalId} (${portalId})`);
+      } else if (domain) {
         if (!seenDomains.has(domain)) {
           seenDomains.add(domain);
           importRows.push({ 'Record ID': '', 'Company Domain Name': domain, Name: '', 'Tracker Name': tracker });
@@ -93,7 +111,8 @@ export function buildHubspotImportSheets(mapping = [], { reference = [] } = {}) 
         reasons.push(`No HubSpot Company ID, imported by domain ${domain}`);
       } else {
         noIdNoDomain += 1;
-        reasons.push('No HubSpot Company ID and no domain available, left off Import');
+        importRows.push({ 'Record ID': '', 'Company Domain Name': '', Name: '', 'Tracker Name': tracker });
+        reasons.push('No HubSpot Company ID and no domain: HubSpot cannot match this row');
       }
     }
 
