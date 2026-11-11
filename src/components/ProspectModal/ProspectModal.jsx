@@ -183,6 +183,7 @@ import { PeOwnerField } from './PeOwnerField';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { selectDeckOpps } from '../../utils/oppDeck';
 import { holdOffMissingSubstatus } from '../../utils/reportingStatus';
+import { splitNameList } from '../../utils/hubspotMapping';
 import oppDeckTemplateUrl from '../../assets/se-opps-template.pptx?url';
 
 // The notes editor is fetched the first time an opportunity's notes open,
@@ -843,7 +844,7 @@ const EMPTY = {
   // read as an answer.
   deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
   rank: '', tier: 'Tier 3', substatus: '',
-  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', goesBy: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
+  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', hubspotCompanyNames: '', goesBy: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
@@ -10398,6 +10399,52 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         }
                         e.target.value = '';
                       }}
+                      style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
+                    />
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* The name(s) this company goes by in HubSpot, when that isn't
+                the Company name (e.g. "PNC Financial Services" for PNC Bank,
+                or two HubSpot records for one account). Hubspot Mapping
+                matches the export against these too. */}
+            <div className={styles.tallField}>
+              <label className={styles.label}>HubSpot Company Name(s)</label>
+              {(() => {
+                const names = splitNameList(fields.hubspotCompanyNames);
+                const add = (raw) => {
+                  const val = String(raw || '').trim();
+                  if (val && !names.some(n => n.toLowerCase() === val.toLowerCase())) {
+                    set('hubspotCompanyNames', [...names, val].join('\n'));
+                  }
+                };
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+                    {names.map((n, i) => (
+                      <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '999px', fontSize: '0.72rem', color: '#9A3412' }}>
+                        {n}
+                        <button
+                          type="button"
+                          aria-label={`Remove ${n}`}
+                          onClick={() => set('hubspotCompanyNames', names.filter((_, j) => j !== i).join('\n'))}
+                          style={{ background: 'none', border: 'none', color: '#FDBA74', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                        >&times;</button>
+                      </span>
+                    ))}
+                    <input
+                      type="text"
+                      placeholder={names.length === 0 ? 'Name as it appears in HubSpot' : '+ Add HubSpot name'}
+                      title="The company's name in HubSpot, if it differs from the Company name. Add more than one if the account has several HubSpot records. Press Enter to add."
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && e.target.value.trim()) {
+                          e.preventDefault();
+                          add(e.target.value);
+                          e.target.value = '';
+                        }
+                      }}
+                      onBlur={e => { add(e.target.value); e.target.value = ''; }}
                       style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
                     />
                   </div>

@@ -14,7 +14,7 @@
 //   * a Client that isn't a Customer in HubSpot is flagged, and so is a
 //     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, pastedSheetRows, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, pastedSheetRows, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows, splitNameList } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -158,6 +158,20 @@ eq(hubspotOnlyOwnedRows(buildHubspotMapping([], compactMappingCompanies([{ 'Comp
     [['11', 'Acme Realty', 'acme.com', 'Dan Baldauf'], ['12', 'Blue Owl', '', '']], 'paste: read by the export headers');
   eq(pastedSheetRows('just some words'), [], 'paste: text that is not a table gives no rows');
   eq(pastedSheetRows(''), [], 'paste: empty');
+}
+
+// HubSpot Company Name(s) on the popup: an account whose HubSpot record
+// goes by another name matches through it (a name per line, or commas).
+{
+  const hs = compactMappingCompanies([
+    { 'Company name': 'PNC Financial Services', 'Company ID': '91' },
+    { 'Company name': 'PNC Real Estate', 'Company ID': '92' },
+  ]);
+  const r = buildHubspotMapping([{ id: 'pnc', company: 'PNC Bank', hubspotCompanyNames: 'PNC Financial Services\nPNC Real Estate' }], hs);
+  eq(r.find(x => x.account?.id === 'pnc').hubspot.map(c => c.id), ['91', '92'], 'hubspot names: both records match');
+  eq(buildHubspotMapping([{ id: 'pnc', company: 'PNC Bank' }], hs).find(x => x.account?.id === 'pnc').hubspot.length, 0, 'hubspot names: none without them');
+  eq(splitNameList('A, B;\n C\n\n'), ['A', 'B', 'C'], 'splitNameList: lines, commas, semicolons');
+  eq(splitNameList(['X', ' ']), ['X'], 'splitNameList: array');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
