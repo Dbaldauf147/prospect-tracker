@@ -20,6 +20,7 @@
 import { normalizeCompany } from './companyNorm.js';
 import { domainKey } from './seHubspotExisting.js';
 import { matchesCdm } from './cdmMatch.js';
+import { parseTsv } from './parseTsv.js';
 
 const clean = (v) => {
   const s = String(v ?? '').replace(/\s+/g, ' ').trim();
@@ -39,6 +40,16 @@ function pick(row, ...labels) {
  * sheet_to_json gives them) as compact records. HubSpot's "(No value)"
  * cells read as blank; a row without a name is dropped.
  */
+// Rows copied out of Excel (or Sheets) and pasted on the subtab, read into
+// the same { header: value } objects a dropped export gives readSheet. The
+// copy has to start at the header row. Text with no tab in it isn't a
+// table, so it gives no rows and a stray paste is ignored.
+export function pastedSheetRows(text) {
+  if (!String(text || '').includes('\t')) return [];
+  const { headers, rows } = parseTsv(text);
+  return rows.map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? '']).filter(([h]) => h)));
+}
+
 export function compactMappingCompanies(rows) {
   return (rows || []).map((r, i) => ({
     id: pick(r, 'Company ID', 'Record ID', 'Record ID - Company') || `row-${i + 1}`,

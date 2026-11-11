@@ -14,7 +14,7 @@
 //   * a Client that isn't a Customer in HubSpot is flagged, and so is a
 //     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, pastedSheetRows, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -146,6 +146,18 @@ eq(hubspotOnlyOwnedRows(buildHubspotMapping([], compactMappingCompanies([{ 'Comp
   eq(otherOwners(mp.find(r => r.account?.id === 'o'), 'Dan Baldauf'), ['Sam Ouimet'], 'the other owner is named');
   eq(otherOwners(mp.find(r => r.account?.id === 'm'), 'Dan'), [], 'a first name alone still reads as you');
   eq(ownedByOthersRows(mp, ''), [], 'no CDM name, no report');
+}
+
+// Rows pasted from Excel read like a dropped export: header row first,
+// a quoted multi-line cell stays one cell, text with no tabs is ignored.
+{
+  const text = 'Record ID\tCompany name\tCompany Domain Name\tCompany owner\r\n11\tAcme Realty\tacme.com\tDan Baldauf\r\n12\t"Blue\nOwl"\t\t\r\n';
+  const rows = pastedSheetRows(text);
+  eq(rows.length, 2, 'paste: two data rows');
+  eq(compactMappingCompanies(rows).map(c => [c.id, c.name, c.domain, c.owner]),
+    [['11', 'Acme Realty', 'acme.com', 'Dan Baldauf'], ['12', 'Blue Owl', '', '']], 'paste: read by the export headers');
+  eq(pastedSheetRows('just some words'), [], 'paste: text that is not a table gives no rows');
+  eq(pastedSheetRows(''), [], 'paste: empty');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
