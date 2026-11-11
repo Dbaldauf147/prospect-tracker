@@ -14,7 +14,9 @@ import { rawTagsOf } from './tagColumnFilter.js';
 
 // The buttons, in the order they show. `tag` is the dans_tags value.
 // `peOnly` narrows a button to contacts whose company is a PE firm (see
-// isPeCompany): "PE ESG" is the ESG DMs at the firms themselves.
+// isPeCompany): "PE ESG" is the ESG DMs at the firms themselves. It also
+// leaves out anyone whose own Private Equity tag is answered No in the
+// contact popup: Dan has said PE isn't theirs, whatever the firm is.
 export const DM_TOPICS = [
   { key: 'procurement', label: 'Procurement', tag: 'Procurement' },
   { key: 'esg', label: 'ESG', tag: 'ESG' },
@@ -36,7 +38,15 @@ export function isPeCompany(prospect) {
 export function matchesDmTopic(contact, prospect, reviewMap, topic) {
   if (!topic) return false;
   if (topic.peOnly && !isPeCompany(prospect)) return false;
+  if (topic.peOnly && hasPeAnsweredNo(contact, reviewMap)) return false;
   return isOpenTopicDecisionMaker(contact, reviewMap, topic.tag);
+}
+
+/** The contact's own Private Equity tag is answered No? */
+export function hasPeAnsweredNo(contact, reviewMap) {
+  const cid = contact?.id ?? contact?.vid;
+  if (cid == null || !reviewMap) return false;
+  return tagRecordFrom(findTagRecord(reviewMap[cid], 'Private Equity')).answer === 'no';
 }
 
 function tagsOf(contact) {

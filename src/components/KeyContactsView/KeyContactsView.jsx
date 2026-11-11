@@ -4349,7 +4349,7 @@ function KeyContactsViewInner({
               type="button"
               aria-pressed={on}
               onClick={() => toggleDmTopic(t.key)}
-              title={`Show only contacts tagged both ${t.tag} and Decision Maker whose own ${t.tag} tag status is not Sold or Not sold${t.peOnly ? ', at companies whose Type or Vertical is Private Equity' : ''}. Light several to see anyone matching any of them.`}
+              title={`Show only contacts tagged both ${t.tag} and Decision Maker whose own ${t.tag} tag status is not Sold or Not sold${t.peOnly ? ', at companies whose Type or Vertical is Private Equity, leaving out anyone whose Private Equity tag is No' : ''}. Light several to see anyone matching any of them.`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5, padding: '0.2rem 0.6rem', fontSize: '0.7rem', fontWeight: 600,
                 borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
@@ -4358,7 +4358,7 @@ function KeyContactsViewInner({
                 color: on ? '#fff' : '#475569',
               }}
             >
-              {t.label} DMs, open
+              {t.label} DMs
               <span style={{
                 display: 'inline-block', padding: '0 6px', fontSize: '0.62rem', fontWeight: 700, borderRadius: 999, minWidth: 18, textAlign: 'center',
                 background: on ? 'rgba(255,255,255,0.25)' : '#F1F5F9', color: on ? '#fff' : '#475569',
