@@ -1845,6 +1845,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
       {editingContact && (
         <Suspense fallback={null}>
           <ContactEditModal
+            prospects={prospects}
             contact={editingContact}
             onSave={saveContact}
             onClose={closeContact}

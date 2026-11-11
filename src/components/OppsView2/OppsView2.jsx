@@ -19068,6 +19068,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
 
       {editingContact && (
         <ContactEditModal
+          prospects={prospects}
           contact={editingContact}
           onSave={closeContactModal}
           onClose={() => setEditingContact(null)}

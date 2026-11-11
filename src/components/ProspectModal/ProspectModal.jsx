@@ -1127,7 +1127,7 @@ function findPortfolioProspect(row, byName, byId) {
 // can share the exact same auto-fill behavior as this modal.
 
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [] }) {
   const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -2311,6 +2311,20 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   };
   useEffect(() => () => flushRef.current?.(), []);
 
+  // The tracker Status of the company typed in the Company field, shown as a
+  // read-only pill beside its label. Keyed on the normalized name so
+  // "Piedmont Realty Trust, Inc." still finds "Piedmont Realty Trust".
+  const statusByCompany = useMemo(() => {
+    const m = new Map();
+    for (const p of (prospects || [])) {
+      const key = normalizeCompanyName(p?.company);
+      const status = String(p?.status || '').trim();
+      if (key && status && !m.has(key)) m.set(key, status);
+    }
+    return m;
+  }, [prospects]);
+  const companyStatus = statusByCompany.get(normalizeCompanyName(f.company)) || '';
+
   const inputStyle = { width: '100%', padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' };
   const labelStyle = { fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '3px' };
 
@@ -2819,7 +2833,18 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 2', position: 'relative' }} ref={companyBoxRef}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-              <label style={labelStyle}>Company</label>
+              <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+                <label style={labelStyle}>Company</label>
+                {companyStatus && (() => {
+                  const color = STATUS_COLORS[companyStatus] || '#64748B';
+                  return (
+                    <span
+                      title={`Status for ${(f.company || '').trim()}: ${companyStatus}. Change it in the company popup.`}
+                      style={{ display: 'inline-block', background: `${color}1A`, border: `1px solid ${color}`, color, padding: '0 7px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, lineHeight: '1.35', whiteSpace: 'nowrap' }}
+                    >{companyStatus}</span>
+                  );
+                })()}
+              </span>
               {/* Jump to the company's own popup. The field itself has to stay
                   an input — it's the editable, autocompleting company name —
                   so the way through sits beside the label, the same shape the
@@ -15410,6 +15435,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       )}
       {editingContact && (
         <ContactEditModal
+          prospects={prospects}
           contact={editingContact}
           onSave={handleContactSaved}
           onClose={handleCloseContactEdit}
