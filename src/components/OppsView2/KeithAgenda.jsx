@@ -19,7 +19,8 @@
 //
 // One line is more than a talking point: "Stage 6 deals" stands for a set of
 // actual opps, so that line grows a sub-bullet per Stage 6 deal, each with its
-// own tick. Those come from the opps themselves (passed in as `stage6Deals`),
+// own tick (and the Contracting deals after them, tagged as such). Those
+// come from the opps themselves (passed in as `stage6Deals`),
 // not from the stored agenda — the deals in Stage 6 change between meetings and
 // a hand-typed copy would go stale. Their ticks are stored by opp id, beside
 // the agenda rather than in it, for the same reason.
@@ -80,7 +81,7 @@ function dealListFor(text, stage6Deals, peDeals, askDeals) {
     return { prefix: 'ask:', deals: askDeals, empty: 'No opps have Keith in Waiting On right now.' };
   }
   if (isStage6Line(text)) {
-    return { prefix: '', deals: stage6Deals, empty: 'No deals in Stage 6 (Agreement Sent) right now.' };
+    return { prefix: '', deals: stage6Deals, empty: 'No deals in Stage 6 (Agreement Sent) or Contracting right now.' };
   }
   if (isPeOverlapLine(text)) {
     return { prefix: 'pe:', deals: peDeals, table: true, empty: 'No PE or Portfolio Company deals at Stage 3 or later right now.' };

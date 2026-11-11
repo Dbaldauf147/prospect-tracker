@@ -17422,19 +17422,27 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // gate hid a row with no Call In — fails at the one thing it's for.
   // Biggest deal first, which is the order the conversation takes; ties
   // fall back to account name so the order is stable.
+  //
+  // The Contracting deals come after them on the same list, tagged
+  // "Contracting", so the walk covers everything about to be signed:
+  // Agreement Sent first, then Contracting, each biggest first.
   const stage6Deals = useMemo(() => {
+    const STAGE6_LIST_ORDER = { 'Agreement Sent': 0, 'Contracting': 1 };
     return records
-      .filter(row => String(row?.Stage || '').trim() === 'Agreement Sent')
+      .filter(row => String(row?.Stage || '').trim() in STAGE6_LIST_ORDER)
       .map(row => {
+        const stage = String(row?.Stage || '').trim();
         const amount = parseMoney(row?.['Quoted Amount']);
         return {
           id: String(row._id),
           name: String(row?.['Account'] || '').trim() || '(no account)',
           amount,
           amountLabel: amount == null ? '' : fmtMoneyWhole(amount),
+          order: STAGE6_LIST_ORDER[stage],
+          stageLabel: stage === 'Contracting' ? 'Contracting' : '',
         };
       })
-      .sort((a, b) => (b.amount ?? -Infinity) - (a.amount ?? -Infinity) || a.name.localeCompare(b.name));
+      .sort((a, b) => a.order - b.order || (b.amount ?? -Infinity) - (a.amount ?? -Infinity) || a.name.localeCompare(b.name));
   }, [records]);
 
   // The deals behind the "PE overlap deals" line: every Private Equity or
