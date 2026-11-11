@@ -174,6 +174,15 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // Email draft history: every distinct draft ever saved or sent from
+    // the Draft Emails page, one document each, kept indefinitely and
+    // optionally tied to an email campaign. Split out of the settings
+    // document (which only keeps the 5 most recent) for the same 1 MB
+    // reason as the two above.
+    match /userSettings/{userId}/emailDraftHistory/{draftId} {
+      allow read, write: if owns(userId);
+    }
+
     // Target accounts: users can only read/write their own data
     match /targetAccounts/{userId} {
       allow read, write: if owns(userId);

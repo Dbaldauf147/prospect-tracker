@@ -38,6 +38,8 @@ import { recipientMapSaver } from '../../utils/recipientMaps';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
 import { recentCampaignWarnings, RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
+import { recordDraftHistory } from '../../utils/emailDraftHistoryStore';
+import { suggestCampaignFor, DRAFT_AUTOSAVE_KEY } from '../../utils/emailDraftHistory';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
 // page-break line (inserted from the Insert menu). Quill drops any tag that
@@ -1167,7 +1169,7 @@ function PreviewTabs({ contacts, subject, body, banner, personalizeForContact, d
   );
 }
 
-const AUTOSAVE_KEY = 'prospect-draft-autosave';
+const AUTOSAVE_KEY = DRAFT_AUTOSAVE_KEY;
 
 // The body "Clear all" resets to — a personalized greeting kept as a real
 // {goesBy} token so it still resolves per recipient on send/preview, followed
@@ -1919,10 +1921,27 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // used by the send paths, which have a more specific outcome to report
   // ("N .eml files downloading…") and would otherwise have it
   // immediately overwritten by "Draft saved".
-  function saveDraft({ silent = false } = {}) {
+  // Every save and send also lands in the Draft History tab, which keeps
+  // drafts indefinitely (one Firestore document each, see
+  // utils/emailDraftHistory.js). `via` says which it was; `campaign` ties
+  // the entry to a campaign, and without one it is tied to whichever saved
+  // campaign's subject line the draft's subject carries, if any.
+  function recordHistory({ via = 'saved', campaign = '' } = {}) {
+    if (!user?.uid) return;
+    const link = campaign || suggestCampaignFor(allCampaigns, subject);
+    recordDraftHistory(user.uid, { subject, body, contacts: selectedContacts, cc: draftCc, bannerId }, { via, campaign: link })
+      .then((res) => {
+        if (!res.ok && via === 'saved') {
+          setResult({ type: 'error', message: `Draft saved here, but not to Draft History: ${res.error}` });
+        }
+      });
+  }
+
+  function saveDraft({ silent = false, via = 'saved' } = {}) {
     // Quill wraps empty content in <p><br></p> — check for actual content
     const bodyText = body.replace(/<[^>]*>/g, '').trim();
     if (!subject.trim() && !bodyText) return;
+    recordHistory({ via });
     const draft = {
       id: Date.now().toString(),
       subject: subject.trim(),
@@ -2150,6 +2169,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       // Keep the in-panel campaign list current so the dropdown count and any
       // follow-up preview reflect the just-added contacts.
       setExistingCampaigns(nextCampaigns);
+      recordHistory({ campaign: primarySubject(target) || name });
       setResult({ type: 'success', message: `Added ${added.length} contact${added.length === 1 ? '' : 's'} to Email Campaign "${name}".` });
       setCampaignPreview(null);
       setNamingCampaign(false);
@@ -2213,6 +2233,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
         // Campaigns tab when the same outreach goes out reworded.
       }, [name]);
       await setDoc(ref, { campaigns: [campaign, ...existing], updatedAt: nowISO });
+      recordHistory({ campaign: name });
       setResult({ type: 'success', message: `Saved ${contacts.length} contact${contacts.length === 1 ? '' : 's'} to Email Campaign "${name}": find it under the Email Campaigns tab.` });
       setNamingCampaign(false);
       setCampaignName('');
@@ -2487,7 +2508,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     });
 
     setResult({ type: 'success', message: `${built.length} .eml file${built.length !== 1 ? 's' : ''} downloading to your Downloads folder: double-click each to open in Outlook.` });
-    saveDraft({ silent: true });
+    saveDraft({ silent: true, via: 'sent' });
   }
 
   // Duplicate detection for the To section. An address that would actually be
@@ -3207,7 +3228,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             ) : (
               <>
                 <p className={styles.draftsHint}>
-                  Only the 5 most recent drafts are kept automatically. Pin a draft (📌) to keep it from being removed.
+                  Only the 5 most recent drafts are kept here. Pin a draft (📌) to keep it from being removed. Every draft is also kept for good on the Draft History tab.
                 </p>
                 <div className={styles.draftsList}>
                   {[...drafts]
