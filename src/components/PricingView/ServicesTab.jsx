@@ -7,6 +7,7 @@ import {
   costKey, costKeysFor, allocationFor, addLaterCostFees, FIRST_YEAR_MONTHS, feeStructureCostInputs,
   costTypeConversion, moveCostAllocation, feeBucket, standardFeeContext,
   passThroughFeeRows, addPassThroughFees, usageRatesFor,
+  feeUnitCountMismatches,
 } from '../../utils/pricingServices';
 import { isUsageUnit, fmtFeePerUnit } from '../../utils/siaUsageCounts';
 import { RATE_CHECK, checkPartOf, PASS_THROUGH_MODELS, passThroughModelOf, feeUnitCountsFor } from '../../utils/serviceRateCheck';
@@ -1289,6 +1290,8 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                 kwhCount={kwhCount}
                 dthCount={dthCount}
                 costs={items}
+                serviceCounts={detail?.counts || {}}
+                countsUsed={detail?.rateCheck?.unitsUsed || []}
                 feeNameSuggestions={[...new Set([...fees.map(f => f.name), ...items.map(i => i.feeName)].filter(Boolean))]}
                 previewFeeRow={previewFeeRow}
                 autoStartMonthFor={autoStartMonthFor}
@@ -2045,6 +2048,7 @@ const fmtPlain = (n) => (typeof n === 'number' && Number.isFinite(n)
 // loaded SIA, the same way the Alternative Fee schedule reads.
 function FeeStructureEditor({
   structure, globalGmPct, isStandard, hasWorkbook, optionName, numYears, termMonths = 36, siteCount, accountCount, kwhCount, dthCount, costs = [],
+  serviceCounts = {}, countsUsed = [],
   feeNameSuggestions, previewFeeRow, autoStartMonthFor, escalators = {}, onChange, onMakeStandard, onDuplicate, onDelete, onApply,
 }) {
   const listId = `fs-names-${structure.id}`;
@@ -2091,6 +2095,17 @@ function FeeStructureEditor({
   const passOpts = { unitOf: (it) => (passThroughModelOf(it) === 'pass:per_account' ? 'Per Account' : 'Fixed') };
   const passToAdd = passThroughFeeRows(structure, costs, passOpts).length;
   const totals = Array.from({ length: numYears }, (_, yi) => previews.reduce((s, p) => s + (p?.years?.[yi] || 0), 0));
+  // Cost lines on a fee whose count (the Unit column of the cost table)
+  // differs from the Unit Count the fee bills on, so the fee would bill
+  // more or fewer units than the costs it covers.
+  const countMismatch = rows.map((r, idx) => {
+    const own = typeof r.unitCount === 'number' ? r.unitCount : billed(r, idx).unitCount;
+    const feeCount = typeof own === 'number' ? own : std.perRow[idx]?.unitCount;
+    const lines = (std.perRow[idx]?.costIdx || []).map(ci => costs[ci]).filter(Boolean);
+    const off = feeUnitCountMismatches({ unit: r.unit, feeCount, lines, serviceCounts, used: countsUsed });
+    return off.length ? { feeCount, off } : null;
+  });
+  const mismatchCount = countMismatch.filter(Boolean).length;
 
   return (
     <div className={styles.editor}>
@@ -2147,6 +2162,17 @@ function FeeStructureEditor({
         {typeof globalGmPct === 'number' ? ` (${fmtPct(globalGmPct)})` : ''} at the top of the page, so they move with it. A monthly
         fee also allows for the Escalator and Cost Esc., so it lands on that margin over the whole term.
       </p>
+      {mismatchCount > 0 && (
+        <div className={styles.countMismatchBanner} role="alert">
+          ⚠ Unit count mismatch: {mismatchCount === 1 ? 'a fee bills' : `${mismatchCount} fees bill`} on a different count than the cost lines {mismatchCount === 1 ? 'it covers' : 'they cover'}.
+          {' '}
+          {rows.map((r, idx) => countMismatch[idx] && (
+            <span key={idx} className={styles.countMismatchItem}>
+              {r.feeName || `Fee ${idx + 1}`}: {countMismatch[idx].feeCount.toLocaleString('en-US')} vs {countMismatch[idx].off.map(o => `${o.count.toLocaleString('en-US')} (${o.description})`).join(', ')}.
+            </span>
+          ))}
+        </div>
+      )}
       <table className={`${styles.table} ${styles.editTable}`}>
         <thead>
           <tr>
@@ -2232,6 +2258,14 @@ function FeeStructureEditor({
                   />
                   {std.perRow[idx]?.mixedUnits && r.unitCount == null && (
                     <div className={styles.subNote}>Lines on {std.perRow[idx].mixedUnits.map(n => n.toLocaleString('en-US')).join(' / ')}</div>
+                  )}
+                  {countMismatch[idx] && (
+                    <div
+                      className={styles.warnText}
+                      title={`This fee bills on ${countMismatch[idx].feeCount.toLocaleString('en-US')}, but ${countMismatch[idx].off.map(o => `"${o.description}" is on ${o.count.toLocaleString('en-US')}`).join(', ')} in the cost table above.`}
+                    >
+                      ⚠ Costs on {[...new Set(countMismatch[idx].off.map(o => o.count))].map(n => n.toLocaleString('en-US')).join(' / ')}
+                    </div>
                   )}
                 </td>
                 <td className={styles.num}>
