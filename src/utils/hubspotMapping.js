@@ -412,3 +412,19 @@ export function pickExportFromZip(names = []) {
   const sheets = names.filter(n => !/(^|\/)__MACOSX\//.test(n) && !/(^|\/)\._/.test(n) && /\.(csv|xlsx|xls)$/i.test(n));
   return sheets.find(n => /company-export/i.test(n.split('/').pop())) || sheets[0] || '';
 }
+
+// The HubSpot companies one account maps to, matched the way the Hubspot
+// Mapping tab matches it (Dan's link first, then website, then name, goes-by,
+// aliases and HubSpot Company Name(s)), from the stored export
+// (hubspotMappingStore). The company popup shows these in its HubSpot
+// Company Name(s) field, so the field says what the tab says.
+// Returns [{ id, name, how }], [] with no export or no match.
+export function hubspotCompaniesForAccount(account, data) {
+  const companies = data?.companies || [];
+  if (!account || !companies.length) return [];
+  const a = { ...account, aliases: splitNameList(account.aliases) };
+  const row = buildHubspotMapping([a], companies, { links: data?.links || {} })
+    .find(r => r.account && r.account.id === a.id);
+  return (row?.hubspot || []).map(c => ({ id: String(c.id ?? ''), name: String(c.name || '').trim(), how: row.how }))
+    .filter(c => c.name);
+}

@@ -183,7 +183,8 @@ import { PeOwnerField } from './PeOwnerField';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { selectDeckOpps } from '../../utils/oppDeck';
 import { holdOffMissingSubstatus } from '../../utils/reportingStatus';
-import { splitNameList } from '../../utils/hubspotMapping';
+import { splitNameList, hubspotCompaniesForAccount } from '../../utils/hubspotMapping';
+import { loadHubspotMapping } from '../../utils/hubspotMappingStore';
 import oppDeckTemplateUrl from '../../assets/se-opps-template.pptx?url';
 
 // The notes editor is fetched the first time an opportunity's notes open,
@@ -5963,6 +5964,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Tagged with the company it was asked about, so renaming the company
   // (or the card moving to another one) drops a stale answer.
   const [verticalSuggestion, setVerticalSuggestion] = useState(null);
+
+  // The HubSpot companies My Accounts > Hubspot Mapping matches this company
+  // to (its link, website or name against the export kept there), shown in
+  // the HubSpot Company Name(s) field so it reads what that tab reads.
+  // Loaded once per popup; null until it arrives or with no export.
+  const [hubspotMappingData, setHubspotMappingData] = useState(null);
+  useEffect(() => {
+    if (isNew || !prospect?.id) return undefined;
+    let cancelled = false;
+    loadHubspotMapping().then(d => { if (!cancelled) setHubspotMappingData(d); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isNew, prospect?.id]);
+  const mappedHubspotCompanies = useMemo(() => (hubspotMappingData && prospect?.id
+    ? hubspotCompaniesForAccount({
+      id: prospect.id,
+      company: fields.company,
+      goesBy: fields.goesBy,
+      aliases: fields.aliases,
+      hubspotCompanyNames: fields.hubspotCompanyNames,
+      website: fields.website,
+      emailDomain: fields.emailDomain,
+    }, hubspotMappingData)
+    : []), [hubspotMappingData, prospect?.id, fields.company, fields.goesBy, fields.aliases, fields.hubspotCompanyNames, fields.website, fields.emailDomain]);
   const suggestVertical = useCallback(async () => {
     const companyName = String(fields.company || '').trim();
     const verticals = getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [];
@@ -10414,6 +10438,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>HubSpot Company Name(s)</label>
               {(() => {
                 const names = splitNameList(fields.hubspotCompanyNames);
+                // What Hubspot Mapping matched, less anything typed here
+                // already. Not removable: re-point it on that tab.
+                const typed = new Set(names.map(n => n.toLowerCase()));
+                const mapped = [];
+                for (const c of mappedHubspotCompanies) {
+                  const k = c.name.toLowerCase();
+                  if (typed.has(k) || mapped.some(m => m.name.toLowerCase() === k)) continue;
+                  mapped.push(c);
+                }
+                const HOW_LABEL = { website: 'website', name: 'name', linked: 'your link' };
                 const add = (raw) => {
                   const val = String(raw || '').trim();
                   if (val && !names.some(n => n.toLowerCase() === val.toLowerCase())) {
@@ -10422,6 +10456,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 };
                 return (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+                    {mapped.map(c => (
+                      <span
+                        key={`m:${c.id || c.name}`}
+                        title={`From My Accounts > Hubspot Mapping, matched by ${HOW_LABEL[c.how] || c.how}${c.id ? ` (HubSpot ID ${c.id})` : ''}. Change it on that tab.`}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.15rem 0.5rem', background: '#fff', border: '1px dashed #FDBA74', borderRadius: '999px', fontSize: '0.72rem', color: '#9A3412' }}
+                      >
+                        {c.name}
+                        <span style={{ fontSize: '0.6rem', color: '#C2410C', opacity: 0.75 }}>mapped</span>
+                      </span>
+                    ))}
                     {names.map((n, i) => (
                       <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '999px', fontSize: '0.72rem', color: '#9A3412' }}>
                         {n}
@@ -10435,7 +10479,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     ))}
                     <input
                       type="text"
-                      placeholder={names.length === 0 ? 'Name as it appears in HubSpot' : '+ Add HubSpot name'}
+                      placeholder={names.length === 0 && mapped.length === 0 ? 'Name as it appears in HubSpot' : '+ Add HubSpot name'}
                       title="The company's name in HubSpot, if it differs from the Company name. Add more than one if the account has several HubSpot records. Press Enter to add."
                       onKeyDown={e => {
                         if (e.key === 'Enter' && e.target.value.trim()) {
