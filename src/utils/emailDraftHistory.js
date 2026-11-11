@@ -167,3 +167,98 @@ export function normalizeHistoryEntry(id, data) {
     campaign: String(d.campaign || ''),
   };
 }
+
+// --- Suggestions -----------------------------------------------------
+//
+// suggestCampaignFor above only ties a draft when its subject literally
+// carries a campaign's subject line, which most drafts don't (the subject
+// gets reworded, or the campaign was named after the event rather than the
+// email). The history tab offers ranked guesses instead, from three signals:
+//
+//   recipients - how many of the draft's To addresses are on the campaign's
+//                roster. The strongest signal: a campaign IS its roster.
+//   words      - the distinctive words the draft's subject shares with the
+//                campaign's title and subject lines.
+//   timing     - a small nudge for a campaign saved near when the draft was.
+//
+// A guess is only offered when recipients or words found something; timing
+// alone never makes a suggestion.
+
+const STOP_WORDS = new Set([
+  'the', 'and', 'for', 'you', 'your', 'our', 'with', 'from', 'this', 'that',
+  'are', 'was', 'not', 'but', 'all', 'can', 'has', 'have', 'its', 'into',
+  'about', 'what', 'how', 'why', 'who', 'new', 'now', 'out', 'any', 'get',
+  'invitation', 'invite', 'update', 'updates', 'email', 'quick', 'question',
+  're', 'fw', 'fwd',
+]);
+
+/** The distinctive words of a subject: lowercased, tokens and stop words out. */
+export function subjectWords(text) {
+  const out = new Set();
+  const clean = String(text || '').toLowerCase().replace(/\{[^}]*\}/g, ' ');
+  for (const w of clean.split(/[^a-z0-9]+/)) {
+    if (w.length < 3 || STOP_WORDS.has(w) || (/^\d+$/.test(w) && w.length < 4)) continue;
+    out.add(w);
+  }
+  return out;
+}
+
+const emailOf = (c) => String(c?.email || '').trim().toLowerCase();
+const DAY = 24 * 60 * 60 * 1000;
+const TIMING_WINDOW_DAYS = 30;
+
+/**
+ * Ranked campaign guesses for a draft: [{ key, label, score, reason }], best
+ * first, at most `limit`. `key` is the campaign's primary subject, as stored
+ * on a link; `label` is what the campaign list calls it (its title). Scores are 0..1-ish and only meant for ordering and the threshold.
+ */
+export function suggestCampaigns(campaigns, draft, { limit = 3, minScore = 0.2 } = {}) {
+  const toEmails = [...new Set((Array.isArray(draft?.contacts) ? draft.contacts : []).map(emailOf).filter(Boolean))];
+  const words = subjectWords(draft?.subject);
+  const draftTime = new Date(draft?.createdAt || draft?.lastSavedAt || 0).getTime();
+  const out = [];
+  const seen = new Set();
+  for (const c of Array.isArray(campaigns) ? campaigns : []) {
+    const key = primarySubject(c);
+    if (!key || seen.has(key.toLowerCase())) continue;
+    seen.add(key.toLowerCase());
+
+    const roster = new Set((Array.isArray(c.contacts) ? c.contacts : []).map(emailOf).filter(Boolean));
+    const onRoster = toEmails.filter(e => roster.has(e)).length;
+    const recipientScore = toEmails.length ? onRoster / toEmails.length : 0;
+
+    const campaignWords = subjectWords([c.title, ...campaignSubjects(c)].filter(Boolean).join(' '));
+    const shared = [...words].filter(w => campaignWords.has(w));
+    const wordScore = words.size && campaignWords.size
+      ? shared.length / Math.min(words.size, campaignWords.size)
+      : 0;
+
+    if (onRoster === 0 && shared.length === 0) continue;
+
+    const saved = new Date(c.savedAt || 0).getTime();
+    const near = draftTime > 0 && saved > 0 && Math.abs(saved - draftTime) <= TIMING_WINDOW_DAYS * DAY;
+
+    const score = 0.6 * recipientScore + 0.4 * wordScore + (near ? 0.1 : 0);
+    if (score < minScore) continue;
+
+    const reasons = [];
+    if (onRoster) reasons.push(`${onRoster} of ${toEmails.length} recipient${toEmails.length === 1 ? '' : 's'} on its roster`);
+    if (shared.length) reasons.push(`shares "${shared.slice(0, 3).join('", "')}"`);
+    if (near) reasons.push('saved around the same time');
+    out.push({ key, label: String(c.title || '').trim() || key, score: Math.round(score * 1000) / 1000, reason: reasons.join(', ') });
+  }
+  out.sort((a, b) => b.score - a.score || a.key.localeCompare(b.key));
+  return out.slice(0, limit);
+}
+
+/**
+ * The history entries tied to a campaign (any of its subject lines, any
+ * case), newest save first.
+ */
+export function draftsForCampaign(entries, campaign) {
+  const subs = new Set(campaignSubjects(campaign).map(s => s.toLowerCase()));
+  if (!subs.size) return [];
+  return (Array.isArray(entries) ? entries : [])
+    .filter(e => e?.campaign && subs.has(String(e.campaign).toLowerCase()))
+    .sort((a, b) => String(b.lastSavedAt).localeCompare(String(a.lastSavedAt)));
+}

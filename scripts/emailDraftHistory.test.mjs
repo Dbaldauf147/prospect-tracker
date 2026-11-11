@@ -8,6 +8,7 @@
 import {
   draftFingerprint, buildHistoryEntry, mergeHistoryEntry, suggestCampaignFor,
   findLinkedCampaign, draftHasContent, draftPlainText, normalizeHistoryEntry,
+  subjectWords, suggestCampaigns, draftsForCampaign,
 } from '../src/utils/emailDraftHistory.js';
 
 let passed = 0, failed = 0;
@@ -83,6 +84,41 @@ check('no link resolves to null', findLinkedCampaign(campaigns, ''), null);
 // --- normalizing -------------------------------------------------------
 const n = normalizeHistoryEntry('d-1', { subject: 'S', contacts: 'bad', saveCount: 'x' });
 check('half-written docs normalize', [n.id, n.contacts, n.saveCount, n.sentCount, n.campaign], ['d-1', [], 1, 0, '']);
+
+// --- suggestions -------------------------------------------------------
+check('subject words drop tokens, stop words and short numbers',
+  [...subjectWords('RE: {company} Michigan Electric Market Risk for 2027 in Q3')], ['michigan', 'electric', 'market', 'risk', '2027']);
+
+const roster = (emails) => emails.map(email => ({ email }));
+const sugCampaigns = [
+  { subjects: ['Great Lakes power outlook'], savedAt: '2026-11-09T00:00:00Z', contacts: roster(['a@x.com', 'b@x.com', 'c@x.com']) },
+  { title: 'Michigan market risk webinar', subjects: ['Join us: MI risk webinar'], savedAt: '2026-01-01T00:00:00Z', contacts: roster(['z@z.com']) },
+  { subjects: ['Holiday hours'], savedAt: '2026-11-10T00:00:00Z', contacts: roster(['q@q.com']) },
+];
+const mi = { subject: 'Michigan Electric Market Risk', contacts: roster(['a@x.com', 'b@x.com', 'd@x.com']), createdAt: '2026-11-10T00:00:00Z' };
+const got = suggestCampaigns(sugCampaigns, mi);
+check('roster overlap and shared words both suggest, roster first',
+  got.map(g => g.key), ['Great Lakes power outlook', 'Join us: MI risk webinar']);
+check('labels use the campaign title', got.map(g => g.label), ['Great Lakes power outlook', 'Michigan market risk webinar']);
+check('the reason says why', got[0].reason, '2 of 3 recipients on its roster, saved around the same time');
+check('a word-only match names the words', got[1].reason, 'shares "michigan", "market", "risk"');
+check('timing alone never suggests', got.some(g => g.key === 'Holiday hours'), false);
+check('nothing in common, nothing suggested', suggestCampaigns(sugCampaigns, { subject: 'Lunch', contacts: [] }), []);
+check('limit caps the list', suggestCampaigns(sugCampaigns, mi, { limit: 1 }).length, 1);
+check('one weak word is below the threshold',
+  suggestCampaigns([{ subjects: ['Ohio michigan indiana illinois wisconsin minnesota'], contacts: [] }],
+    { subject: 'Michigan alpha beta gamma delta epsilon', contacts: roster(['n@n.com']) }), []);
+
+// --- drafts on a campaign ---------------------------------------------
+const hist = [
+  { id: '1', campaign: 'q3 energy update', lastSavedAt: '2026-11-01' },
+  { id: '2', campaign: 'Q3 rates', lastSavedAt: '2026-11-05' },
+  { id: '3', campaign: 'Other', lastSavedAt: '2026-11-09' },
+  { id: '4', campaign: '', lastSavedAt: '2026-11-10' },
+];
+check('drafts on a campaign match any subject, newest first',
+  draftsForCampaign(hist, { subjects: ['Q3 energy update', 'Q3 rates'] }).map(e => e.id), ['2', '1']);
+check('a campaign with no subject has no drafts', draftsForCampaign(hist, {}), []);
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
