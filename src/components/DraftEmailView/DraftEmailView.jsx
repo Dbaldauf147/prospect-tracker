@@ -1562,8 +1562,8 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   const oppsRecords = useOppsRecords(user?.uid);
   const { clientStatusMap, clientUntrackedMap } = useClientFlagMaps();
   const rosterGates = useMemo(
-    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap }),
-    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
+    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, connected: settings?.contactConnected || null }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, settings?.contactConnected],
   );
   // The gates read raw HubSpot fields (dans_tags above all), which the
   // flattened composer contact doesn't carry — so resolve back to the raw

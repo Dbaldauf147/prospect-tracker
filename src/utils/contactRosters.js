@@ -339,6 +339,10 @@ export function makeRosterGates({
   clientStatusMap = {},
   clientUntrackedMap = {},
   showHidden = false,
+  // settings.contactConnected: { [contactId]: true } for the people Dan has
+  // ticked Connected? on. Someone he's already connected with isn't a
+  // prospect any more, so they never land on Key Prospect.
+  connected = null,
 } = {}) {
   const rows = prospects || [];
 
@@ -563,8 +567,10 @@ export function makeRosterGates({
   // So anybody whose company near-matches a Client account, or whose email
   // domain is one a Client account claims, is never a Key Prospect.
   const clientAccountOf = makeClientAccountLookup(rows);
+  const isConnected = (c) => !!(connected && c?.id != null && connected[String(c.id)]);
   const isKeyProspect = (c) => {
     if (!passesBaseGate(c)) return false;
+    if (isConnected(c)) return false;
     if (!tagsOf(c).includes('decision maker')) return false;
     if (!tierAccountOf(c)?.untouched) return false;
     return !clientAccountOf(c);
@@ -630,7 +636,8 @@ export function makeRosterGates({
       if (!acct) return `"${company}" does not match a Tier 1 / 2 / 3 account on your book (Clients don't count).`;
       if (!acct.untouched) return `"${acct.account}" already has opps, so it is no longer a Key Prospect account.`;
       const client = clientAccountOf(c);
-      return client ? `They belong to "${client}", a Client, and Clients aren't prospects.` : '';
+      if (client) return `They belong to "${client}", a Client, and Clients aren't prospects.`;
+      return isConnected(c) ? 'Connected? is ticked, so they are past being a prospect.' : '';
     };
     const rosters = [
       { label: 'Key', why: keyWhy() },

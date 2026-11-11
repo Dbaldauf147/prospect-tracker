@@ -35,7 +35,7 @@ export function useRosterActivityRecorder({ prospects, cdmName = '', settings, u
   }, [userId]);
 
   const outreachIndex = useOutreachIndex(userId);
-  const gates = useRosterGates({ prospects, cdmName, oppsRecords, userId });
+  const gates = useRosterGates({ prospects, cdmName, oppsRecords, userId, connected: settings?.contactConnected || null });
   const localFields = settings?.contactLocalFields || null;
   const myCdmGate = useMemo(
     () => makeMyCdmContactGate({ prospects: prospects || [], cdmName, localFields }),

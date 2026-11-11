@@ -122,15 +122,16 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
   // alone. What the gates supply is the account exclusions (a contact at a
   // cancelling or Don't Track client is off this page for the same reason it
   // is off the others) and the categorisation.
+  const connected = settings?.contactConnected || null;
   const gates = useMemo(
-    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden }),
-    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden],
+    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden, connected }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden, connected],
   );
   const visibleGates = useMemo(
     () => (showHidden
-      ? makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false })
+      ? makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false, connected })
       : gates),
-    [showHidden, gates, prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
+    [showHidden, gates, prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, connected],
   );
   const categorizeContact = useCallback((c) => gates.categorize(c), [gates]);
 

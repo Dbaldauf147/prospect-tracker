@@ -39,7 +39,7 @@ export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, [userId]);
 
-  const gates = useRosterGates({ prospects, cdmName, oppsRecords, userId });
+  const gates = useRosterGates({ prospects, cdmName, oppsRecords, userId, connected: settings?.contactConnected || null });
   return useMemo(() => {
     if (contacts == null) return null;
     return rosterTagCoverage({
@@ -55,7 +55,7 @@ export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings
 // exclusions) as the contacts pages build them, kept current with the
 // Clients tab's maps. Shared by the coverage above and the Prospecting >
 // History activity charts, so both count the same people.
-export function useRosterGates({ prospects, cdmName, oppsRecords, userId }) {
+export function useRosterGates({ prospects, cdmName, oppsRecords, userId, connected = null }) {
   // Same stores and the same events the contacts pages listen to, so a
   // company switched to "Cancelling for Sure" or ticked "Don't Track" drops
   // out of these numbers without a reload — and drops out here exactly as it
@@ -93,8 +93,8 @@ export function useRosterGates({ prospects, cdmName, oppsRecords, userId }) {
   // Visible mode, matching the Totals pills on All Contacts: the figure
   // should describe the rosters as they're worked, not the hidden-review view.
   const gates = useMemo(
-    () => makeRosterGates({ prospects: prospects || [], cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false }),
-    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
+    () => makeRosterGates({ prospects: prospects || [], cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false, connected }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, connected],
   );
   return gates;
 }
