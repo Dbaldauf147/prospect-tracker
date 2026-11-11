@@ -19184,6 +19184,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           className={activeTab === 'coverage' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('coverage')}
         >Coverage</button>
+        <button
+          className={activeTab === 'availability' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('availability')}
+        >Availability</button>
       </div>
 
       {/* Filter row. The Show / Start Date / Status filters and the
@@ -19803,6 +19807,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       )}
 
       {activeTab === 'coverage' && <Coverage settings={settings} updateSettings={updateSettings} />}
+
+      {/* Everyone on any opp's Availability tab, on one grid: the same
+          people the Power Automate free/busy flow checks. */}
+      {activeTab === 'availability' && (
+        <div style={{ padding: '0.75rem 0' }}>
+          <OppAvailability opps={records} />
+        </div>
+      )}
 
       {activeTab === 'closeRates' && (
         <CloseRateDeepDive
