@@ -7,7 +7,8 @@
 // the body back instead of creating a Graph draft.
 //
 // POST /api/track-prepare
-// Body: { items: [{ to, name, subject, html }] }
+// Body: { items: [{ to, name, subject, html }], skipUrls?: [url] }
+//   skipUrls: links the user switched tracking off for; left as written.
 // Returns: { items: [{ html, trackingId }] }  (same order)
 
 import { withAuth } from './_lib/http.js';
@@ -16,7 +17,8 @@ import { injectTracking, createTrackingDoc, newTrackingId, trackingBaseUrl } fro
 async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { items } = req.body || {};
+  const { items, skipUrls } = req.body || {};
+  const skip = Array.isArray(skipUrls) ? skipUrls.slice(0, 200).map(String) : [];
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'items array required' });
   }
@@ -31,7 +33,7 @@ async function handler(req, res, auth) {
   for (const item of items) {
     const trackingId = newTrackingId();
     try {
-      const { html, links } = injectTracking(item.html || '', { trackingId, baseUrl });
+      const { html, links } = injectTracking(item.html || '', { trackingId, baseUrl, skipUrls: skip });
       await createTrackingDoc({
         trackingId,
         uid: auth?.uid,

@@ -40,6 +40,8 @@ import { recentCampaignWarnings, RECENT_CAMPAIGN_DAYS } from '../../utils/recent
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
 import { recordDraftHistory } from '../../utils/emailDraftHistoryStore';
 import { suggestCampaignFor, DRAFT_AUTOSAVE_KEY } from '../../utils/emailDraftHistory';
+import { listTrackableLinks, untrackedKeySet, toggleUntracked } from '../../utils/untrackedLinks.js';
+import { linkLabel } from '../../utils/emailLinks.js';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
 // page-break line (inserted from the Insert menu). Quill drops any tag that
@@ -1337,6 +1339,18 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings?.emailSignature]);
   const [showSignatureEditor, setShowSignatureEditor] = useState(false);
+  // Links in this email (body, banner and signature), and which of them the
+  // user switched tracking off for. An untracked link keeps its real address,
+  // so the recipient's hover shows it; clicks on it aren't counted. Saved per
+  // user so the choice carries to the next batch (src/utils/untrackedLinks.js).
+  const emailLinks = useMemo(
+    () => listTrackableLinks(buildStyledBodyHtml(body, { signature, banner: activeBanner })),
+    [body, signature, activeBanner],
+  );
+  const untrackedKeys = useMemo(() => untrackedKeySet(settings?.untrackedLinks), [settings?.untrackedLinks]);
+  function setLinkTracked(url, tracked) {
+    updateSettings({ untrackedLinks: toggleUntracked(settings?.untrackedLinks, url, !tracked) });
+  }
   const draftCcRef = useRef(null);
   const fileInputRef = useRef(null);
   const searchRef = useRef(null);
@@ -2419,6 +2433,8 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               subject: p.pSubject,
               html: p.htmlContent,
             })),
+            // Links the user switched tracking off for stay as written.
+            skipUrls: emailLinks.filter(l => untrackedKeys.has(l.key)).map(l => l.url),
           }),
         });
         if (res.ok) {
@@ -3039,6 +3055,34 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             />
             <span>Track clicks &amp; delivery <span style={{ color: 'var(--color-text-muted)' }}>(view in the Email Tracking tab)</span></span>
           </label>
+
+          {trackEmails && emailLinks.length > 0 && (
+            <div style={{ margin: '-0.25rem 0 0.75rem 1.5rem', fontSize: '0.74rem', color: 'var(--color-text-secondary)' }}>
+              <div style={{ marginBottom: 3, color: 'var(--color-text-muted)' }}>
+                Links in this email. Untick one to leave it untracked: the recipient sees its real address on hover, and clicks on it aren&rsquo;t counted.
+              </div>
+              {emailLinks.map(l => {
+                const tracked = !untrackedKeys.has(l.key);
+                return (
+                  <label
+                    key={l.key}
+                    title={l.url}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '1px 0', cursor: 'pointer', minWidth: 0 }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={tracked}
+                      onChange={e => setLinkTracked(l.url, e.target.checked)}
+                      style={{ width: 14, height: 14, cursor: 'pointer', flexShrink: 0 }}
+                    />
+                    <span style={{ fontWeight: 600, flexShrink: 0 }}>{linkLabel(l.url)}</span>
+                    <span style={{ color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{l.url}</span>
+                    {!tracked && <span style={{ color: '#B45309', flexShrink: 0 }}>not tracked</span>}
+                  </label>
+                );
+              })}
+            </div>
+          )}
 
           <div className={styles.actions}>
             <button className={styles.primaryBtn} onClick={() => generateEmlFiles()} disabled={selectedContacts.length === 0 || !subject.trim()}>

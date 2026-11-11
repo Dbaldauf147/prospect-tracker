@@ -28,6 +28,7 @@
 import { adminDb } from './firebaseAdmin.js';
 import { Timestamp } from 'firebase-admin/firestore';
 import { randomBytes } from 'node:crypto';
+import { ANCHOR_HREF_RE, decodeHref, isTrackableUrl, linkKey, untrackedKeySet } from '../../src/utils/untrackedLinks.js';
 
 export const TRACKING_COLLECTION = 'emailTracking';
 
@@ -80,36 +81,29 @@ export function trackingBaseUrl(req) {
   return host ? `${proto}://${host}` : '';
 }
 
-// Decode the handful of HTML entities that legitimately show up inside
-// an href so the stored URL is the real destination we redirect to.
-function decodeHtmlEntities(s) {
-  return String(s)
-    .replace(/&amp;/gi, '&')
-    .replace(/&#38;/g, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#34;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>');
-}
-
 /**
  * Inject open + click tracking into an HTML email body.
  * Returns { html, links } where links is the ordered list of original
  * URLs referenced by the rewritten anchors (index === &l= value).
+ *
+ * `skipUrls` are links the user switched tracking off for (see
+ * src/utils/untrackedLinks.js): they are left exactly as written, so the
+ * recipient's hover shows the real address, and they get no index.
  */
-export function injectTracking(html, { trackingId, baseUrl }) {
+export function injectTracking(html, { trackingId, baseUrl, skipUrls = [] }) {
   const body = String(html || '');
   const links = [];
+  const skip = untrackedKeySet(skipUrls);
 
   // Rewrite http(s) anchor hrefs. mailto:/tel:/#anchor/{{merge}} links
   // and anything already pointing at our own tracker are left alone.
   const rewritten = body.replace(
-    /(<a\b[^>]*?\bhref\s*=\s*)(["'])(.*?)\2/gi,
+    new RegExp(ANCHOR_HREF_RE.source, 'gi'),
     (match, pre, quote, rawUrl) => {
-      const url = decodeHtmlEntities(rawUrl).trim();
-      if (!/^https?:\/\//i.test(url)) return match;
+      const url = decodeHref(rawUrl);
+      if (!isTrackableUrl(url)) return match;
       if (isOwnTrackedLink(url, baseUrl)) return match;
+      if (skip.has(linkKey(url))) return match;
       const index = links.length;
       links.push(url);
       const tracked = trackedClickUrl(baseUrl, trackingId, index);
