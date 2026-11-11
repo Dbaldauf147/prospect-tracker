@@ -49,5 +49,11 @@ console.log('PASS  procurement DM filter');
   assert.equal(matchesDmTopic(esg, { type: 'Private Equity' }, { 11: { ESG: { status: 'sold' } } }, peEsg), false, 'ESG Sold leaves them out');
   assert.equal(matchesDmTopic({ id: 12, dans_tags: 'Procurement; Decision Maker' }, { type: 'Private Equity' }, {}, peEsg), false, 'needs the ESG tag');
   assert.equal(matchesDmTopic(esg, null, {}, DM_TOPICS.find(t => t.key === 'esg')), true, 'plain ESG ignores the company');
+  const pe = { type: 'Private Equity' };
+  assert.equal(matchesDmTopic(esg, pe, { 11: { 'Private Equity': { answer: 'no' } } }, peEsg), false, 'PE answered No leaves them out');
+  assert.equal(matchesDmTopic(esg, pe, { 11: { privateequity: 'no' } }, peEsg), false, 'any spelling, legacy string record');
+  assert.equal(matchesDmTopic(esg, pe, { 11: { 'Private Equity': { answer: 'unsure' } } }, peEsg), true, 'Not sure stays in');
+  assert.equal(matchesDmTopic(esg, pe, { 11: { 'Private Equity': { answer: 'yes' } } }, peEsg), true, 'Yes stays in');
+  assert.equal(matchesDmTopic(esg, null, { 11: { 'Private Equity': { answer: 'no' } } }, DM_TOPICS.find(t => t.key === 'esg')), true, 'plain ESG ignores the PE answer');
   console.log('PASS  PE ESG DM filter');
 }
