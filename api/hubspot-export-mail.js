@@ -137,6 +137,9 @@ export async function handler(req, res) {
       receivedAt: msg.receivedDateTime,
       rowCount: rows.length,
       companies,
+      // ?rows=1: the file's rows as read, for the Hubspot Mapping subtab,
+      // which keeps more of each company (lifecycle, activity dates).
+      ...(String(req.query?.rows || '') === '1' ? { rows } : {}),
     });
   } catch (err) {
     if (err instanceof HttpError) {

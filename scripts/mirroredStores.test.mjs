@@ -53,7 +53,7 @@ const LOCAL_BY_DESIGN = {
   'hubspotContactsCache.js': 'cache - refetched from HubSpot',
   'rosterLocalStore.js': 'cache - the roster lives in Firestore; losing the copy costs one full read',
   // Only the last check's time and message; the imported companies go to Firestore (se-hubspot).
-  'hubspotExportMailSync.js': 'status - last Outlook check note; losing it just makes the next check run sooner',
+  'hubspotExportMailSync.js': 'status - last Outlook check notes (Account move and Hubspot Mapping); losing them just makes the next check run sooner',
 
   // Not a store of its own: it rewrites a renamed service inside the Pricing
   // page's cache (and the other stores it names), which keep their own

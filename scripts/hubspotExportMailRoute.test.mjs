@@ -26,10 +26,10 @@ globalThis.fetch = async (url, init = {}) => {
   throw new Error(`unexpected fetch ${url}`);
 };
 
-function run(headers) {
+function run(headers, query = {}) {
   return new Promise((resolve) => {
     const res = { code: 200, status(c) { this.code = c; return this; }, json(b) { resolve({ code: this.code, body: b }); } };
-    handler({ method: 'GET', headers, query: {} }, res);
+    handler({ method: 'GET', headers, query }, res);
   });
 }
 
@@ -39,6 +39,9 @@ assert.equal(out.body.found, true);
 assert.deepEqual(out.body.companies.map(c => [c.id, c.name, c.domain]), [['101', 'Acme', 'acme.com'], ['102', 'Beta', '']]);
 assert.equal(out.body.tokens, null, 'no refresh needed');
 assert.ok(calls.includes(csvUrl), 'Safe Links unwrapped before download');
+assert.equal(out.body.rows, undefined, 'raw rows only when asked for');
+out = await run({ 'x-ms-token': 'old' }, { rows: '1' });
+assert.deepEqual(out.body.rows.map(r => r['Company name']), ['Acme', 'Beta'], '?rows=1 hands back the rows for Hubspot Mapping');
 
 graphExpired = true;
 out = await run({ 'x-ms-token': 'old', 'x-ms-refresh-token': 'r1' });

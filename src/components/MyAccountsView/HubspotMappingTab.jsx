@@ -27,6 +27,7 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, hubspotAgentsPatch } from '../../utils/hubspotAgents';
 import { HubspotAgents } from './HubspotAgents';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
+import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
 import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName } from '../../utils/hubspotImportFile';
 
 // Which subtab of the page is open (Mapping or Agents), per viewer.
@@ -128,6 +129,42 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   useEffect(() => {
     loadHubspotMapping().then(setData).catch(err => setError(err.message)).finally(() => setLoaded(true));
   }, []);
+
+  // The "Dan's Company Export" email is this same report: the app's Outlook
+  // check (utils/hubspotExportMailSync.js, every few hours while the app is
+  // open, or Check Outlook now here) loads its file in place of a drop.
+  const [mailStatus, setMailStatus] = useState(() => lastMappingMailCheck());
+  const [checkingMail, setCheckingMail] = useState(false);
+  const [outlookConnected, setOutlookConnected] = useState(true);
+  useEffect(() => {
+    const onCheck = (e) => {
+      setMailStatus(e.detail || lastMappingMailCheck());
+      loadHubspotMapping().then(setData).catch(() => {});
+    };
+    window.addEventListener(MAPPING_MAIL_EVENT, onCheck);
+    return () => window.removeEventListener(MAPPING_MAIL_EVENT, onCheck);
+  }, []);
+  useEffect(() => { hasOutlookConnection().then(setOutlookConnected); }, [mailStatus]);
+  const checkMail = async () => {
+    setCheckingMail(true);
+    try { await syncHubspotExportMail(); setMailStatus(lastMappingMailCheck()); }
+    finally { setCheckingMail(false); }
+  };
+  const checkMailRef = useRef(checkMail);
+  checkMailRef.current = checkMail;
+  useEffect(() => {
+    function onMessage(e) {
+      if (e.origin !== window.location.origin) return;
+      if (e.data?.type === 'outlook-auth-success') {
+        saveOutlookTokens(e.data).catch(() => {}).then(() => { setOutlookConnected(true); checkMailRef.current(); });
+      } else if (e.data?.type === 'outlook-auth-error') {
+        setMailStatus({ at: new Date().toISOString(), ok: false, message: `Outlook sign-in failed: ${e.data.error || 'unknown error'}` });
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+  const connectOutlook = () => window.open('/api/outlook-auth', 'outlook-auth', 'width=500,height=700,left=200,top=100');
 
   const save = async (next) => {
     setData(next);
@@ -764,6 +801,21 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             : 'No export yet.'}
         </div>
       </label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.75rem', color: '#475569' }}>
+        <span>Or load it from the &quot;Dan&apos;s Company Export&quot; email in Outlook (checked every few hours while the app is open):</span>
+        {outlookConnected ? (
+          <button type="button" onClick={checkMail} disabled={checkingMail || busy}
+            style={{ ...linkBtn, fontSize: '0.72rem', padding: '1px 8px', cursor: checkingMail ? 'wait' : 'pointer' }}
+          >{checkingMail ? 'Checking Outlook...' : 'Check Outlook now'}</button>
+        ) : (
+          <button type="button" onClick={connectOutlook} style={{ ...linkBtn, fontSize: '0.72rem', padding: '1px 8px' }}>Connect Outlook</button>
+        )}
+        {mailStatus && (
+          <span style={{ color: mailStatus.ok ? '#64748B' : '#B91C1C' }}>
+            {mailStatus.message} ({new Date(mailStatus.at).toLocaleString()})
+          </span>
+        )}
+      </div>
       {error && <div style={{ color: '#B91C1C', fontSize: '0.78rem' }}>{error}</div>}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
         {filterBar}
