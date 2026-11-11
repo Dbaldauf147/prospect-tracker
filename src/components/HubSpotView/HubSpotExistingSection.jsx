@@ -10,7 +10,8 @@ import { DataTable } from '../common/DataTable';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { compactCompanies, compactContacts, companyMatcher, domainKey } from '../../utils/seHubspotExisting';
 import { loadSeHubspot, saveSeHubspot, EMPTY_SE_HUBSPOT } from '../../utils/seHubspotStore';
-import { syncHubspotExportMail, lastExportMailCheck, EXPORT_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
+import { syncHubspotExportMail, lastExportMailCheck, hasOutlookConnection, EXPORT_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
+import { secureSet } from '../../utils/secureStorage';
 import styles from './HubSpotMoveTab.module.css';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -48,6 +49,32 @@ export function HubSpotExistingSection({ prospects = [], settings, updateSetting
     try { setMailStatus(await syncHubspotExportMail()); }
     finally { setChecking(false); }
   };
+
+  // Connect Outlook right here: the same sign-in popup the Activity and
+  // Sent Log pages use, with the tokens stored the same way, then a check.
+  const [outlookConnected, setOutlookConnected] = useState(true);
+  useEffect(() => { hasOutlookConnection().then(setOutlookConnected); }, [mailStatus]);
+  useEffect(() => {
+    function onMessage(e) {
+      if (e.origin !== window.location.origin) return;
+      if (e.data?.type === 'outlook-auth-success') {
+        (async () => {
+          try {
+            await secureSet('outlook-access-token', e.data.accessToken);
+            if (e.data.refreshToken) await secureSet('outlook-refresh-token', e.data.refreshToken);
+            await secureSet('outlook-token-expiry', String(Date.now() + (e.data.expiresIn || 3600) * 1000));
+          } catch { /* storage refused */ }
+          setOutlookConnected(true);
+          checkMail();
+        })();
+      } else if (e.data?.type === 'outlook-auth-error') {
+        setMailStatus({ at: new Date().toISOString(), ok: false, message: `Outlook sign-in failed: ${e.data.error || 'unknown error'}` });
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+  const connectOutlook = () => window.open('/api/outlook-auth', 'outlook-auth', 'width=500,height=700,left=200,top=100');
 
   const save = async (next) => {
     setData(next);
@@ -138,9 +165,13 @@ export function HubSpotExistingSection({ prospects = [], settings, updateSetting
         </label>
       </div>
       <div className={styles.controls}>
-        <button type="button" className={styles.btn} disabled={checking} onClick={checkMail}>
-          {checking ? 'Checking Outlook...' : 'Check Outlook now'}
-        </button>
+        {outlookConnected ? (
+          <button type="button" className={styles.btn} disabled={checking} onClick={checkMail}>
+            {checking ? 'Checking Outlook...' : 'Check Outlook now'}
+          </button>
+        ) : (
+          <button type="button" className={styles.btn} onClick={connectOutlook}>Connect Outlook</button>
+        )}
         <span className={mailStatus && !mailStatus.ok ? styles.error : styles.muted}>
           The companies list also refreshes on its own from the &quot;Dan&apos;s Company Export&quot; email, checked every
           6 hours while the app is open.

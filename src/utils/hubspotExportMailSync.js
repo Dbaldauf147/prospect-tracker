@@ -46,7 +46,7 @@ export async function syncHubspotExportMail() {
       const expiry = Number(await secureGet('outlook-token-expiry'));
       if (Number.isFinite(expiry) && expiry > 0 && Date.now() > expiry - EXPIRY_SKEW_MS) access = '';
     } catch { /* fall through to "not connected" */ }
-    if (!access && !refresh) return record(false, 'Outlook is not connected. Connect it on the Activity or Sent Log page.');
+    if (!access && !refresh) return record(false, 'Outlook is not connected. Click Connect Outlook.');
 
     const headers = {};
     if (access) headers['X-MS-Token'] = access;
