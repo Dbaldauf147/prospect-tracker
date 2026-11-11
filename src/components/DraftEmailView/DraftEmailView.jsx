@@ -3339,6 +3339,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
 
       {editingContact && createPortal(
         <ContactEditModal
+          prospects={prospects}
           contact={editingContact}
           onSave={handleContactSaved}
           onClose={() => setEditingContact(null)}

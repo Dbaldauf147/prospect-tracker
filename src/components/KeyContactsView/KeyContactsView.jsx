@@ -5795,6 +5795,7 @@ function KeyContactsViewInner({
           : [];
         return (
           <ContactEditModal
+            prospects={prospects}
             contact={editingContact}
             onSave={handleContactSaved}
             onClose={() => setEditingContact(null)}

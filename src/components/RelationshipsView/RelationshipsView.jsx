@@ -604,6 +604,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
       {editingContact && (
         <Suspense fallback={null}>
           <ContactEditModal
+            prospects={prospects}
             contact={editingContact}
             onSave={saveContact}
             onClose={closeContact}

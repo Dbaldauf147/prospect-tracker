@@ -5287,6 +5287,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       {companyContacts && editingContact && (
         <Suspense fallback={null}>
           <ContactEditModal
+            prospects={prospects}
             contact={editingContact}
             onSave={saveEditingContact}
             onClose={() => setEditingContact(null)}

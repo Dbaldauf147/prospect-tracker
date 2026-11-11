@@ -3539,6 +3539,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
 
       {editingContact && createPortal(
         <ContactEditModal
+          prospects={prospects}
           contact={editingContact}
           onSave={(_updated, opts) => { if (!opts?.silent) setEditingContact(null); }}
           onClose={() => setEditingContact(null)}

@@ -2859,6 +2859,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
 
       {editingLead && editContact && createPortal(
         <ContactEditModal
+          prospects={prospects}
           contact={editContact}
           onSave={handleContactSaved}
           onClose={() => setEditingLead(null)}
