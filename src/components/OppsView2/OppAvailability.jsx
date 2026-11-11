@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import {
-  STATUS_LABELS, availabilityDays, availabilityGrid, freeRanges, parseEmailList, normEmail,
+  STATUS_LABELS, availabilityDays, availabilityEmails, availabilityGrid, freeRanges, parseEmailList, normEmail,
 } from '../../utils/availability';
 
 const labelStyle = {
@@ -115,7 +115,13 @@ function FlowSetup({ token, open, onToggle }) {
   );
 }
 
-export function OppAvailability({ oppId }) {
+// With an oppId: that opp's team, editable (the opp popup's tab). Without
+// one: everyone on any of the user's opps, the same people the flow
+// checks (the Opps page's Availability tab). There each person can be
+// ticked out of the "Everyone" row, and shows the opps they're on.
+export function OppAvailability({ oppId, opps = [] }) {
+  const allMode = !oppId;
+  const [excluded, setExcluded] = useState(() => new Set());
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -143,7 +149,23 @@ export function OppAvailability({ oppId }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const emails = useMemo(() => (data?.people?.[oppId] || []), [data, oppId]);
+  const allEmails = useMemo(() => (allMode ? availabilityEmails(data?.people) : (data?.people?.[oppId] || [])), [allMode, data, oppId]);
+  const emails = useMemo(() => allEmails.filter(e => !excluded.has(e)), [allEmails, excluded]);
+  // Opp names per person, for the all-opps view.
+  const oppsOf = useMemo(() => {
+    const name = new Map(opps.map(o => [o._id, String(o['Account'] || '').trim() || 'Untitled opp']));
+    const out = new Map();
+    for (const [id, list] of Object.entries(data?.people || {})) {
+      if (!name.has(id)) continue;
+      for (const e of list || []) out.set(e, [...(out.get(e) || []), name.get(id)]);
+    }
+    return out;
+  }, [opps, data?.people]);
+  const toggleExcluded = (e) => setExcluded(prev => {
+    const next = new Set(prev);
+    if (next.has(e)) next.delete(e); else next.add(e);
+    return next;
+  });
 
   const save = async (next) => {
     setSaving(true);
@@ -182,7 +204,7 @@ export function OppAvailability({ oppId }) {
 
   const synced = data?.updatedAt;
   const onFile = new Set((data?.schedules || []).map(s => normEmail(s.email)));
-  const waiting = emails.filter(e => !onFile.has(e));
+  const waiting = allEmails.filter(e => !onFile.has(e));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
@@ -192,7 +214,41 @@ export function OppAvailability({ oppId }) {
         </div>
       )}
 
-      <div>
+      {allMode && (
+        <div>
+          <div style={labelStyle}>SE people on your opps ({allEmails.length})</div>
+          {allEmails.length === 0 ? (
+            <div style={{ ...emptyStyle, marginTop: '0.4rem' }}>
+              Nobody added yet. Open an opp (the ⓘ on its row), go to its Availability tab and add the SE people on the deal.
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', margin: '0.2rem 0 0.4rem' }}>
+                Untick someone to leave them out of the Everyone row. People are added and removed on each opp&apos;s own Availability tab.
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                {allEmails.map(e => {
+                  const on = !excluded.has(e);
+                  const onOpps = oppsOf.get(e) || [];
+                  return (
+                    <label
+                      key={e}
+                      title={onOpps.length ? `On: ${onOpps.join(', ')}` : undefined}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.15rem 0.55rem', borderRadius: 999, background: on ? '#EEF2FF' : '#F8FAFC', border: `1px solid ${on ? '#C7D2FE' : '#E2E8F0'}`, fontSize: '0.75rem', color: on ? 'var(--color-text)' : 'var(--color-text-muted)', cursor: 'pointer' }}
+                    >
+                      <input type="checkbox" checked={on} onChange={() => toggleExcluded(e)} style={{ margin: 0 }} />
+                      {e}
+                      {onOpps.length > 0 && <span style={{ color: 'var(--color-text-muted)' }}>({onOpps.length === 1 ? onOpps[0] : `${onOpps.length} opps`})</span>}
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {!allMode && <div>
         <div style={labelStyle}>SE team on this opp</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', margin: '0.4rem 0' }}>
           {emails.length === 0 && <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Nobody added yet.</span>}
@@ -220,7 +276,7 @@ export function OppAvailability({ oppId }) {
           <button type="button" style={btnStyle} disabled={saving || !draft.trim()} onClick={addDraft}>{saving ? 'Saving...' : 'Add'}</button>
         </div>
         {draftNote && <div style={{ fontSize: '0.72rem', color: '#B45309', marginTop: '0.25rem' }}>{draftNote}</div>}
-      </div>
+      </div>}
 
       <div style={{ fontSize: '0.76rem', color: 'var(--color-text-muted)' }}>
         {synced
