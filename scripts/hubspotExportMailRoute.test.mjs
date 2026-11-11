@@ -48,4 +48,33 @@ assert.equal(out.body.tokens.accessToken, 'new', 'expired token refreshed and ha
 out = await run({});
 assert.equal(out.code, 401);
 
+// HubSpot delivers the CSV inside a zip.
+const JSZip = (await import('jszip')).default;
+const { unzipIfNeeded } = await import('../api/hubspot-export-mail.js');
+const z = new JSZip();
+z.file('__MACOSX/._report.csv', 'junk');
+z.file('readme.txt', 'hi');
+z.file("Dan's Company Export.csv", csv);
+const zipped = await z.generateAsync({ type: 'nodebuffer' });
+assert.equal((await unzipIfNeeded(zipped)).toString(), csv, 'the CSV inside the zip');
+const plain = Buffer.from(csv);
+assert.equal(await unzipIfNeeded(plain), plain, 'a plain CSV passes through');
+const XLSX = await import('xlsx');
+const wb = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Record ID'], ['1']]), 'S');
+const xlsx = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+assert.equal(await unzipIfNeeded(xlsx), xlsx, 'an .xlsx (itself a zip) passes through');
+const empty = new JSZip(); empty.file('a.txt', 'x');
+await assert.rejects(unzipIfNeeded(await empty.generateAsync({ type: 'nodebuffer' })), /no CSV or Excel/);
+
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  if (String(url) === csvUrl) return new Response(zipped, { headers: { 'content-type': 'application/zip' } });
+  return realFetch(url, init);
+};
+graphExpired = false;
+out = await run({ 'x-ms-token': 'new' });
+assert.equal(out.code, 200);
+assert.deepEqual(out.body.companies.map(c => c.id), ['101', '102'], 'zip download read end to end');
+
 console.log('PASS  hubspot export mail route');
