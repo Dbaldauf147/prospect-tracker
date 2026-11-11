@@ -14,7 +14,7 @@
 //   * a Client that isn't a Customer in HubSpot is flagged, and so is a
 //     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, pastedSheetRows, pickHubspotCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows, splitNameList } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, pastedSheetRows, pickExportFromZip, pickHubspotCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows, splitNameList } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -190,6 +190,11 @@ eq(hubspotOnlyOwnedRows(buildHubspotMapping([], compactMappingCompanies([{ 'Comp
   eq(pickHubspotCompanies(cos, '', { suggestedIds: ['1', '9'] }).map(c => c.id), ['1'], 'picker: empty query gives possible matches');
   eq(pickHubspotCompanies(cos, 'h', { limit: 2 }).length, 2, 'picker: limit');
 }
+
+// A dropped zip: the company export inside wins, else the first spreadsheet.
+eq(pickExportFromZip(['readme.txt', 'other.csv', 'dan-s-company-export.csv']), 'dan-s-company-export.csv', 'zip: the company export wins');
+eq(pickExportFromZip(['__MACOSX/._x.csv', 'folder/report.xlsx']), 'folder/report.xlsx', 'zip: else the first spreadsheet, macOS copies skipped');
+eq(pickExportFromZip(['notes.txt']), '', 'zip: no spreadsheet');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

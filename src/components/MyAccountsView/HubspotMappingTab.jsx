@@ -16,7 +16,7 @@ import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { domainKey } from '../../utils/seHubspotExisting';
-import { compactMappingCompanies, pastedSheetRows, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE, otherOwners, ownedByOthersRows } from '../../utils/hubspotMapping';
+import { compactMappingCompanies, pastedSheetRows, pickExportFromZip, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE, otherOwners, ownedByOthersRows } from '../../utils/hubspotMapping';
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -48,8 +48,20 @@ const linkBtn = { background: 'none', border: '1px solid #CBD5E1', borderRadius:
 
 // A CSV is read as text, so its dates stay as HubSpot wrote them
 // ("2026-10-05 14:02") rather than being reparsed into "10/5/26".
+// A .zip (HubSpot's report export comes zipped) is opened here and the
+// export inside read, so it can be dropped as downloaded.
 async function readSheet(file) {
-  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', raw: /\.csv$/i.test(file.name) });
+  let name = file.name;
+  let bytes = await file.arrayBuffer();
+  if (/\.zip$/i.test(name)) {
+    const { default: JSZip } = await import('jszip');
+    const zip = await JSZip.loadAsync(bytes);
+    const entry = pickExportFromZip(Object.keys(zip.files).filter(n => !zip.files[n].dir));
+    if (!entry) throw new Error('No CSV or Excel file in that zip.');
+    name = entry;
+    bytes = await zip.files[entry].async('arraybuffer');
+  }
+  const wb = XLSX.read(bytes, { type: 'array', raw: /\.csv$/i.test(name) });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   return XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
 }
@@ -741,9 +753,9 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
         onDrop={e => { e.preventDefault(); setDragOver(false); upload(e.dataTransfer.files?.[0]); }}
         style={{ display: 'block', border: `2px dashed ${dragOver ? '#1D4ED8' : '#CBD5E1'}`, background: dragOver ? '#EFF6FF' : '#F8FAFC', borderRadius: 8, padding: '0.75rem 1rem', cursor: busy ? 'wait' : 'pointer', fontSize: '0.78rem', color: '#475569' }}
       >
-        <input type="file" accept=".csv,.xlsx,.xls" disabled={busy} style={{ display: 'none' }}
+        <input type="file" accept=".csv,.xlsx,.xls,.zip" disabled={busy} style={{ display: 'none' }}
           onChange={e => { upload(e.target.files?.[0]); e.target.value = ''; }} />
-        <strong style={{ color: '#0F172A' }}>Drop your HubSpot companies export here</strong>, click to choose it (CSV or Excel), or copy the rows in Excel (header row included) and paste them anywhere on this page with Ctrl+V.
+        <strong style={{ color: '#0F172A' }}>Drop your HubSpot companies export here</strong>, click to choose it (CSV, Excel, or the zip HubSpot downloads), or copy the rows in Excel (header row included) and paste them anywhere on this page with Ctrl+V.
         {' '}It needs Company name. Add Company Domain Name (or Website URL) to the export and accounts match by website first, then by name; Company ID, Company owner, Lifecycle Stage, Target Account and the activity dates come along when they&apos;re there.
         <div style={{ marginTop: 4, color: '#64748B' }}>
           {busy ? 'Reading...'
