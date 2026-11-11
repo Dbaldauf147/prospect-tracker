@@ -2,7 +2,7 @@
 // working in HubSpot, each copied with the rows it should work through, the
 // way the Agents page copies its prompts. The prompts are the user's own,
 // kept in settings.hubspotMappingAgents so they follow him to his other
-// machine; until he touches them the two built-in agents below are shown.
+// machine; until he touches them the built-in agents below are shown.
 //
 // Pure, so scripts/hubspotAgents.test.mjs can hold it still.
 
@@ -41,9 +41,24 @@ const DEFAULT_COMPANY_OWNERS_PROMPT = `1.  I am logged into HubSpot. Work throug
 5.  You have full permission to save changes as needed throughout this workflow. Do not ask for confirmation. Automatically proceed to the next company.
 6.  When you finish, list every company you changed with its old and new owner, and any company you could not find.`;
 
+export const HUBSPOT_OWNED_EXPORT_REPORT_URL = 'https://app.hubspot.com/reports-list/51444280/448300388';
+
+const DEFAULT_LATEST_OWNED_EXPORT_PROMPT = `1.  I am logged into HubSpot and into Prospect Tracker. Do this once, start to finish.
+2.  Go to ${HUBSPOT_OWNED_EXPORT_REPORT_URL}
+3.  Click Actions, then click Export unsummarized data.
+4.  A pop up opens. Click Export.
+5.  HubSpot shows: "Your file is being prepared now. When it's ready, a link to your file will appear in your notification center. You'll also receive a confirmation email." That means it worked.
+6.  Click the bell icon in the top right-hand corner of HubSpot. When the top row says your file is ready to download, click it. If it isn't there yet, wait 30 seconds, close the notifications and click the bell again (try for up to 5 minutes).
+7.  Clicking it downloads a zip file in Chrome. Open the zip file. The top file in it is called dan-s-company-export.
+8.  Go to Prospect Tracker (https://prospect-tracker-ashen.vercel.app/), open My Accounts, then the Hubspot Mapping tab, then the Mapping subtab.
+9.  Drag dan-s-company-export from the zip onto the box that says "Drop your HubSpot companies export here". If dragging doesn't work, extract the file, click that box and choose it.
+10. You have full permission to export, download and upload as needed throughout this workflow. Do not ask for confirmation.
+11. When you finish, say how many HubSpot companies the box now says came from dan-s-company-export, or where it stopped and why.`;
+
 export const DEFAULT_HUBSPOT_AGENTS = [
   { id: 'map-activity', title: 'Map Activity on My Accounts', data: AGENT_DATA.activity, prompt: DEFAULT_MAP_ACTIVITY_PROMPT },
   { id: 'company-owners', title: 'Update HubSpot Company Owners', data: AGENT_DATA.owners, prompt: DEFAULT_COMPANY_OWNERS_PROMPT },
+  { id: 'latest-owned-export', title: "Add Dan's Latest Hubspot Owned Companies", data: AGENT_DATA.none, prompt: DEFAULT_LATEST_OWNED_EXPORT_PROMPT },
 ];
 
 const BUILT_IN = new Map(DEFAULT_HUBSPOT_AGENTS.map(a => [a.id, a]));
@@ -53,11 +68,27 @@ export function builtInAgent(id) {
   return BUILT_IN.get(id) || null;
 }
 
-/** The agents to show: the saved list, else the built-in two. */
+// The built-in agents a saved list has already been offered, so one added to
+// the app later still shows up on a list saved before it, but one the user
+// deleted stays deleted. A list saved before this key existed had seen the
+// first two.
+export const HUBSPOT_AGENTS_KNOWN_KEY = 'hubspotMappingAgentsKnown';
+const FIRST_BUILT_INS = ['map-activity', 'company-owners'];
+
+/** The settings patch that saves an edited agent list. */
+export function hubspotAgentsPatch(agents) {
+  return { [HUBSPOT_AGENTS_SETTINGS_KEY]: agents, [HUBSPOT_AGENTS_KNOWN_KEY]: DEFAULT_HUBSPOT_AGENTS.map(a => a.id) };
+}
+
+/** The agents to show: the saved list plus any built-in it hasn't seen, else the built-ins. */
 export function readHubspotAgents(settings) {
   const saved = settings?.[HUBSPOT_AGENTS_SETTINGS_KEY];
   if (!Array.isArray(saved)) return DEFAULT_HUBSPOT_AGENTS;
-  return saved
+  const knownList = settings?.[HUBSPOT_AGENTS_KNOWN_KEY];
+  const known = new Set(Array.isArray(knownList) ? knownList : FIRST_BUILT_INS);
+  const ids = new Set(saved.map(a => a?.id && String(a.id)));
+  const unseen = DEFAULT_HUBSPOT_AGENTS.filter(a => !known.has(a.id) && !ids.has(a.id));
+  return [...saved, ...unseen]
     .filter(a => a && a.id)
     .map(a => ({
       id: String(a.id),
