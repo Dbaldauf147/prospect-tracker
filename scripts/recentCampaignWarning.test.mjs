@@ -29,3 +29,16 @@ assert.deepEqual(noSubject.map(x => x.name), ['Joseph Doran', 'Amy', 'Lee'], 'wi
 assert.deepEqual(recentCampaignWarnings(campaigns, to, { nowMs: NOW, days: 3 }).map(x => x.name), ['Amy']);
 assert.deepEqual(recentCampaignWarnings(null, to, { nowMs: NOW }), []);
 console.log('PASS  recent campaign warning');
+
+// sentThisCampaign: who this draft's own campaign has already emailed.
+{
+  const { sentThisCampaign } = await import('../src/utils/recentCampaignWarning.js');
+  const s = sentThisCampaign([
+    ...campaigns,
+    { subject: 'climate risk factsheet', contacts: [{ email: 'Amy@x.com', sentDate: daysAgo(1) }, { email: 'pending@x.com', sentDate: '' }] },
+  ], 'Climate Risk Factsheet');
+  assert.deepEqual([...s.keys()], ['amy@x.com'], 'only sent rows of the matching campaign count');
+  assert.equal(s.get('amy@x.com'), daysAgo(1), 'latest send wins');
+  assert.equal(sentThisCampaign(campaigns, 'Group send').has('lee@y.com'), true, 'group sends split');
+  assert.equal(sentThisCampaign(campaigns, '').size, 0);
+}

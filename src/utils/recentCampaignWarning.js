@@ -43,3 +43,30 @@ export function recentCampaignWarnings(campaigns, recipients, {
   }
   return out;
 }
+
+/**
+ * Map of lowercased email -> latest sentDate for the recipients this draft's
+ * own campaign (the one carrying `currentSubject`) has already emailed. The
+ * Draft Emails To pills turn green from it, so a contact you've already sent
+ * this email to stands out before you send it again. Group sends ("a@x; b@x")
+ * count for every address in them.
+ */
+export function sentThisCampaign(campaigns, currentSubject) {
+  const subject = norm(currentSubject);
+  const out = new Map();
+  if (!subject) return out;
+  for (const c of Array.isArray(campaigns) ? campaigns : []) {
+    if (!campaignSubjects(c).some(s => norm(s) === subject)) continue;
+    for (const row of Array.isArray(c?.contacts) ? c.contacts : []) {
+      const sent = String(row?.sentDate || '').trim();
+      if (!sent) continue;
+      for (const part of String(row?.email || '').split(/[;,]/)) {
+        const email = norm(part);
+        if (!email) continue;
+        const prev = out.get(email);
+        if (!prev || Date.parse(sent) > Date.parse(prev)) out.set(email, sent);
+      }
+    }
+  }
+  return out;
+}

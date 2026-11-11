@@ -36,7 +36,7 @@ import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 import { responseRateOf } from '../../utils/campaignContactHold';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
-import { recentCampaignWarnings, RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
+import { recentCampaignWarnings, sentThisCampaign, RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
 import { recordDraftHistory } from '../../utils/emailDraftHistoryStore';
 import { suggestCampaignFor, DRAFT_AUTOSAVE_KEY } from '../../utils/emailDraftHistory';
@@ -2031,6 +2031,9 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     () => recentCampaignWarnings(allCampaigns, selectedContacts, { currentSubject: subject }),
     [allCampaigns, selectedContacts, subject],
   );
+  // Recipients this draft's own campaign (same subject) has already emailed:
+  // their To pills turn green with the send date.
+  const sentHere = useMemo(() => sentThisCampaign(allCampaigns, subject), [allCampaigns, subject]);
   const [namingCampaign, setNamingCampaign] = useState(false);
   const [campaignName, setCampaignName] = useState('');
   const [savingCampaign, setSavingCampaign] = useState(false);
@@ -2619,6 +2622,10 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                 const toAlso = (settings?.toAlsoMap || {})[c.email] || [];
                 const contactCc = (settings?.ccMap || {})[c.email] || [];
                 const selfDup = isSectionDuplicate(c.email);
+                const sentDate = sentHere.get(String(c.email || '').trim().toLowerCase()) || '';
+                const sentLabel = sentDate && !Number.isNaN(Date.parse(sentDate))
+                  ? new Date(sentDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                  : '';
                 const hasExtras = toAlso.length > 0 || contactCc.length > 0;
                 const extraPill = {
                   display: 'inline-flex', alignItems: 'center', gap: 3,
@@ -2631,9 +2638,12 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                   <span
                     key={c.id}
                     className={styles.contactTag}
-                    title={selfDup ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)' : undefined}
+                    title={selfDup
+                      ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)'
+                      : sentDate ? `Already sent this email${sentLabel ? ` on ${sentLabel}` : ''} (per the Email Campaigns tracker)` : undefined}
                     style={{
                       ...(hasExtras ? { flexDirection: 'column', alignItems: 'flex-start', whiteSpace: 'normal', gap: '0.2rem' } : {}),
+                      ...(sentDate ? { background: '#DCFCE7', borderColor: '#4ADE80', color: '#166534' } : {}),
                       ...(selfDup ? { background: '#FEE2E2', borderColor: '#FCA5A5', color: '#991B1B' } : {}),
                     }}
                   >
@@ -2645,7 +2655,12 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openContact(c); } }}
                         title={`Open ${c.name}`}
                         style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                      >{c.name}</span> <span className={styles.contactEmail}>({c.email})</span>
+                      >{c.name}</span> <span className={styles.contactEmail} style={sentDate ? { color: '#15803D' } : undefined}>({c.email})</span>
+                      {sentDate && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 6px', borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: '0.6rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
+                          ✓ Sent{sentLabel ? ` ${sentLabel}` : ''}
+                        </span>
+                      )}
                       {selfDup && <span title="Double-send: this address appears more than once in the To section" style={{ fontWeight: 800, color: '#991B1B' }}>⚑</span>}
                       <button className={styles.removeTag} onClick={() => removeContact(c.id)}>&times;</button>
                     </span>
