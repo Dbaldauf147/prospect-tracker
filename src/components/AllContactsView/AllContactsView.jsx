@@ -157,22 +157,23 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // The gates the page runs on, and the inverted set behind the Show Hidden
   // badge. Two calls rather than two hand-written copies of the same logic:
   // the only thing that differs is which side of the Hide tag counts.
+  const connected = settings?.contactConnected || null;
   const gates = useMemo(
-    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden }),
-    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden],
+    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden, connected }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden, connected],
   );
   const hiddenGates = useMemo(
-    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: true }),
-    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
+    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: true, connected }),
+    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, connected],
   );
   // Visible-mode gates for the Totals pills: the counts should say what each
   // dedicated tab would surface today, not what the inverted review view is
   // showing. Reuses `gates` when Show Hidden is already off.
   const visibleGates = useMemo(
     () => (showHidden
-      ? makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false })
+      ? makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false, connected })
       : gates),
-    [showHidden, gates, prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
+    [showHidden, gates, prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, connected],
   );
   const { rosterSelector } = gates;
 

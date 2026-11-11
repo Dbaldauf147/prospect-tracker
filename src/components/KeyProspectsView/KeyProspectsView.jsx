@@ -114,7 +114,11 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
   // Contact selector: Decision Maker at a Tier 1 / Tier 2 / Tier 3 account on
   // my CDM whose company has no opps yet. Hide / Left / Schneider are
   // excluded as they are everywhere else in the roster pages.
+  // Anybody ticked Connected? is past being a prospect, so they're left off
+  // here too (same rule as the Key Prospect roster gate).
+  const connectedMap = settings?.contactConnected || null;
   const selector = useCallback((c) => {
+    if (connectedMap && c?.id != null && connectedMap[String(c.id)]) return false;
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
     if (tags.includes('hide')) return false;
     if (tags.includes('left')) return false;
@@ -137,7 +141,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
       }
     }
     return false;
-  }, [tierAccountStatus, myTierAccounts, clientAccountOf]);
+  }, [tierAccountStatus, myTierAccounts, clientAccountOf, connectedMap]);
 
   // Set of lowercase company strings (taken from passing-the-selector
   // HubSpot contacts) representing Tier 1 / Tier 2 / Tier 3 accounts that DO

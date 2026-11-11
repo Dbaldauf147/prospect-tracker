@@ -1971,7 +1971,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 260, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
+    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 260, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, connected: 120, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -4517,7 +4517,7 @@ function KeyContactsViewInner({
                     <div
                       key={c.key}
                       onClick={c.sortable === false ? undefined : () => toggleContactSort(c.key)}
-                      title={c.sortable === false ? c.label : `Sort by ${c.label.toLowerCase()}`}
+                      title={c.sortable === false ? c.label : `${c.label}: click to sort`}
                       style={{
                         position: 'relative',
                         padding: '0.4rem 0.6rem',
@@ -4530,6 +4530,13 @@ function KeyContactsViewInner({
                         cursor: c.sortable === false ? 'default' : 'pointer',
                         userSelect: 'none',
                         borderRight: '1px solid #E2E8F0',
+                        // A label wider than its column is cut with an
+                        // ellipsis (full text on hover) rather than running
+                        // over the next header.
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
                       }}
                     >
                       {c.label}{c.sortable === false ? '' : CONTACT_GLYPH(c.key)}

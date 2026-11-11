@@ -388,7 +388,7 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
   // the contacts pages list them (their own gates and client exclusions).
   const { user } = useAuth() || {};
   const oppsRecords = useOpps2Data(user?.uid)?.records ?? null;
-  const rosterGates = useRosterGates({ prospects, cdmName, oppsRecords, userId: user?.uid });
+  const rosterGates = useRosterGates({ prospects, cdmName, oppsRecords, userId: user?.uid, connected: settings?.contactConnected || null });
   const myCdmGate = useMemo(
     () => makeMyCdmContactGate({ prospects: prospects || [], cdmName, localFields }),
     [prospects, cdmName, localFields],
