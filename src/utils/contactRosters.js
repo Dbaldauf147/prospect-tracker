@@ -297,6 +297,41 @@ export function applyCompanyOverride(c, localFields) {
  * ORs the four, and `categorize`, which names the rosters a contact lands
  * on.
  */
+/**
+ * (contact) => the name of the Client account the contact belongs to, or ''.
+ * A near-name match (rosterKeysMatch) on the contact's company, or an email
+ * domain a Client account claims (Email Domain / Website). Looser than the
+ * Client roster's own exact-name gate on purpose: it is what keeps anybody
+ * at a Client off Key Prospect, and a stray spelling shouldn't let them in.
+ */
+export function makeClientAccountLookup(prospects) {
+  const allClientRows = (prospects || []).filter(p => p.status === 'Client');
+  const allClientKeys = allClientRows.map(p => rosterMatchKey(p.company));
+  // Email domain -> the Client account claiming it (first one wins).
+  const clientByDomain = new Map();
+  for (const p of allClientRows) {
+    const ds = new Set();
+    collectClientDomains(p, ds);
+    for (const d of ds) if (!clientByDomain.has(d)) clientByDomain.set(d, String(p.company || d).trim());
+  }
+  const clientAccountByName = new Map();
+  return (c) => {
+    const company = String(c?.company || '').trim();
+    if (company) {
+      let hit = clientAccountByName.get(company);
+      if (hit === undefined) {
+        const ck = rosterMatchKey(company);
+        const i = allClientKeys.findIndex(k => rosterKeysMatch(k, ck));
+        hit = i >= 0 ? String(allClientRows[i].company || '').trim() : '';
+        clientAccountByName.set(company, hit);
+      }
+      if (hit) return hit;
+    }
+    const domain = accountDomain(c);
+    return (domain && clientByDomain.get(domain)) || '';
+  };
+}
+
 export function makeRosterGates({
   prospects = [],
   cdmName = '',
@@ -518,10 +553,21 @@ export function makeRosterGates({
     tierAccountByName.set(company, result);
     return result;
   };
+  // Clients aren't prospects, and that has to hold for the CONTACT, not just
+  // for the account row tierAccountOf lands on. The Client gate matches a
+  // company name exactly, so somebody whose HubSpot company is spelled a
+  // little differently from the Client account ("Piedmont Office Realty
+  // Trust" for "... Inc.") isn't on Client - and the near-name match above
+  // could still land them on some other Tier 1-3 row (a duplicate, a
+  // similarly named prospect) and call them a Key Prospect at a Client.
+  // So anybody whose company near-matches a Client account, or whose email
+  // domain is one a Client account claims, is never a Key Prospect.
+  const clientAccountOf = makeClientAccountLookup(rows);
   const isKeyProspect = (c) => {
     if (!passesBaseGate(c)) return false;
     if (!tagsOf(c).includes('decision maker')) return false;
-    return !!tierAccountOf(c)?.untouched;
+    if (!tierAccountOf(c)?.untouched) return false;
+    return !clientAccountOf(c);
   };
   // Which Table View company put a Key Prospect on the roster, so a list
   // can say "via Accel-KKR" when that isn't the contact's own company.
@@ -582,7 +628,9 @@ export function makeRosterGates({
       if (!company) return 'No Company to match a Tier 1 / 2 / 3 account to.';
       const acct = tierAccountOf(c);
       if (!acct) return `"${company}" does not match a Tier 1 / 2 / 3 account on your book (Clients don't count).`;
-      return acct.untouched ? '' : `"${acct.account}" already has opps, so it is no longer a Key Prospect account.`;
+      if (!acct.untouched) return `"${acct.account}" already has opps, so it is no longer a Key Prospect account.`;
+      const client = clientAccountOf(c);
+      return client ? `They belong to "${client}", a Client, and Clients aren't prospects.` : '';
     };
     const rosters = [
       { label: 'Key', why: keyWhy() },
