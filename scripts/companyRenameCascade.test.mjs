@@ -20,6 +20,23 @@ const opps = [
   { _id: 'o3', Account: 'Some Other Co' },
 ];
 
+// --- PE Owner typed with a different suffix still follows the rename --------
+{
+  const prospects = [
+    { id: 'firm', company: 'DivCore Capital' },
+    { id: 'divco', company: 'DivcoWest', peOwner: 'DivCore Capital (a Blue Owl co.), KKR' },
+    { id: 'sib', company: 'Other PortCo', peOwner: 'Blue Owl' },
+  ];
+  const a = buildCompanyRenamePlan({ oldName: 'DivCore Capital', newName: 'Divcore Capital', prospects, currentProspectId: 'firm' });
+  eq(a.peOwnerUpdates, [{ id: 'divco', peOwner: 'Divcore Capital, KKR' }], 'an owner with a trailing parenthetical follows a rename of the bare name');
+  const b = buildCompanyRenamePlan({ oldName: 'DivCore Capital (a Blue Owl co.)', newName: 'Divcore Capital', prospects: [
+    { id: 'divco', company: 'DivcoWest', peOwner: 'DivCore Capital Inc' },
+  ], currentProspectId: 'firm' });
+  eq(b.peOwnerUpdates, [{ id: 'divco', peOwner: 'Divcore Capital' }], 'and the other way round, with a corporate suffix');
+  const c = buildCompanyRenamePlan({ oldName: 'Blue Owl Capital', newName: 'Blue Owl Capital Partners', prospects, currentProspectId: 'firm' });
+  eq(c.peOwnerUpdates, [], 'a sibling firm name ("Blue Owl") is still never rewritten');
+}
+
 // --- case-only rename ------------------------------------------------------
 {
   const plan = buildCompanyRenamePlan({

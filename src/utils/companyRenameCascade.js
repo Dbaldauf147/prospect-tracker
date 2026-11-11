@@ -60,6 +60,16 @@ const eq = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').tr
 // and renders it, so skipping one leaves the old spelling on screen.
 const sameText = (a, b) => String(a || '').trim() === String(b || '').trim();
 
+// The firm a PE Owner token names, with the noise a hand-typed owner and the
+// firm's record disagree on taken off: a trailing parenthetical ("DivCore
+// Capital (a Blue Owl co.)"), a corporate suffix, punctuation and case. Two
+// tokens are the same firm only when what's left is identical, so "Blue Owl"
+// still never matches "Blue Owl Capital".
+function peOwnerKey(name) {
+  return normalizeAccount(String(name || '').replace(/\s*\([^)]*\)\s*$/, ''));
+}
+const sameFirm = (a, b) => eq(a, b) || (peOwnerKey(a) !== '' && peOwnerKey(a) === peOwnerKey(b));
+
 function readListMapping(key) {
   try { const raw = userLsGet(key); return raw ? (JSON.parse(raw) || {}) : null; } catch { return null; }
 }
@@ -83,13 +93,16 @@ export function buildCompanyRenamePlan({ oldName, newName, prospects = [], curre
     if (r && r._id != null && accountMatchesCompany(old, r['Account'])) plan.oppIds.push(r._id);
   }
 
-  // Other prospects naming the old firm as a PE owner (exact token match,
+  // Other prospects naming the old firm as a PE owner (whole-token match,
   // so renaming "Blue Owl Capital" never rewrites a sibling "Blue Owl").
   for (const p of prospects) {
     if (!p || p.id === currentProspectId) continue;
+    // Matched on the firm, not the exact text: an owner typed as "DivCore
+    // Capital (a Blue Owl co.)" has to follow a rename of the "DivCore
+    // Capital" record (and the other way round), or it keeps the old name.
     const owners = splitPeOwners(p.peOwner);
-    if (!owners.some(o => eq(o, old))) continue;
-    plan.peOwnerUpdates.push({ id: p.id, peOwner: joinPeOwners(owners.map(o => (eq(o, old) ? next : o))) });
+    if (!owners.some(o => sameFirm(o, old))) continue;
+    plan.peOwnerUpdates.push({ id: p.id, peOwner: joinPeOwners(owners.map(o => (sameFirm(o, old) ? next : o))) });
   }
 
   // Dismissed RA/Target suggestions keyed by lowercased name. A case-only
