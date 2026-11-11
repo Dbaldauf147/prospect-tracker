@@ -9,7 +9,11 @@
 //     /api/track-open?id=<trackingId>. When the recipient's mail client
 //     loads the image we log an "open" event.
 //   • Click tracking — every http(s) link in the body is rewritten to
-//     /api/track-click?id=<trackingId>&l=<index>. The endpoint logs the
+//     the short form /c/<trackingId>/<index> (vercel.json rewrites it to
+//     /api/track-click?id=<trackingId>&l=<index>; links in mail sent
+//     before the short form existed still use that long form directly,
+//     and keep working). The short form exists because the recipient
+//     sees the whole href on hover. The endpoint logs the
 //     click and 302-redirects to the real URL. We store the original
 //     URLs on the tracking doc and reference them by index rather than
 //     passing the target in the query string, which keeps the redirector
@@ -23,7 +27,7 @@
 
 import { adminDb } from './firebaseAdmin.js';
 import { Timestamp } from 'firebase-admin/firestore';
-import { randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 export const TRACKING_COLLECTION = 'emailTracking';
 
@@ -32,8 +36,34 @@ export const TRACKING_COLLECTION = 'emailTracking';
 // limit. The counters (openCount/clickCount) stay exact regardless.
 const MAX_EVENTS = 100;
 
+// 12 base62 characters, about 71 bits: as unguessable as anyone needs for a
+// click counter, and a third the length of the 32-hex UUID it replaced, which
+// matters because the id is in every link the recipient hovers over. Old
+// 32-hex ids stay valid; they are just Firestore doc ids like these.
+const ID_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+export const TRACKING_ID_LENGTH = 12;
 export function newTrackingId() {
-  return randomUUID().replace(/-/g, '');
+  // Rejection sampling: 62 doesn't divide 256, so bytes >= 248 are dropped
+  // rather than wrapped, keeping every character equally likely.
+  let id = '';
+  while (id.length < TRACKING_ID_LENGTH) {
+    for (const b of randomBytes(TRACKING_ID_LENGTH * 2)) {
+      if (b < 248 && id.length < TRACKING_ID_LENGTH) id += ID_ALPHABET[b % 62];
+    }
+  }
+  return id;
+}
+
+/** The short tracked link for link `index` of a send. */
+export function trackedClickUrl(baseUrl, trackingId, index) {
+  return `${baseUrl}/c/${encodeURIComponent(trackingId)}/${index}`;
+}
+
+// A link that already points at our redirector, in either form, so a body
+// that went through tracking twice is never double-wrapped.
+function isOwnTrackedLink(url, baseUrl) {
+  if (url.includes('/api/track-click')) return true;
+  return !!baseUrl && url.startsWith(`${baseUrl}/c/`);
 }
 
 // Resolve the origin that serves the pixel/redirect. The user asked to
@@ -79,10 +109,10 @@ export function injectTracking(html, { trackingId, baseUrl }) {
     (match, pre, quote, rawUrl) => {
       const url = decodeHtmlEntities(rawUrl).trim();
       if (!/^https?:\/\//i.test(url)) return match;
-      if (url.includes('/api/track-click')) return match;
+      if (isOwnTrackedLink(url, baseUrl)) return match;
       const index = links.length;
       links.push(url);
-      const tracked = `${baseUrl}/api/track-click?id=${encodeURIComponent(trackingId)}&l=${index}`;
+      const tracked = trackedClickUrl(baseUrl, trackingId, index);
       return `${pre}${quote}${tracked}${quote}`;
     }
   );
