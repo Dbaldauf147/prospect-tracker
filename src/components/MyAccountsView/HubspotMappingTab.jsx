@@ -26,6 +26,7 @@ import { canonicalCdmOption } from '../../utils/targetAccountCdm';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, HUBSPOT_AGENTS_SETTINGS_KEY } from '../../utils/hubspotAgents';
 import { HubspotAgents } from './HubspotAgents';
+import { HubspotCompanyPicker } from './HubspotCompanyPicker';
 import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName } from '../../utils/hubspotImportFile';
 
 // Which subtab of the page is open (Mapping or Agents), per viewer.
@@ -109,6 +110,8 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const [shownRows, setShownRows] = useState([]);
   const [shownUnmappedRows, setShownUnmappedRows] = useState([]);
   const [accepting, setAccepting] = useState(false);
+  // The account whose HubSpot Company cell is showing the picker to re-point it.
+  const [changing, setChanging] = useState('');
 
   useEffect(() => {
     loadHubspotMapping().then(setData).catch(err => setError(err.message)).finally(() => setLoaded(true));
@@ -204,6 +207,13 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     });
     return buildHubspotMapping(withNames, data.companies, { links: data.links, tracker: prospects || [] });
   }, [accounts, prospects, byId, data]);
+
+  // Which account each HubSpot company is already mapped to, for the picker.
+  const claimedBy = useMemo(() => {
+    const m = new Map();
+    for (const r of mapping) if (r.account) for (const c of r.hubspot) if (!m.has(String(c.id))) m.set(String(c.id), r.account.company);
+    return m;
+  }, [mapping]);
 
   const counts = useMemo(() => {
     const c = { '': 0 };
@@ -444,9 +454,23 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     },
     {
       key: 'hubspot', label: 'HubSpot Company', defaultWidth: 260,
+      headerTitle: 'The HubSpot company this account is mapped to. An account with none gets a box: type a name or website and pick the company to link it. Change links a mapped account to a different one.',
       getSortValue: r => (r.hubspot[0]?.name || '').toLowerCase() || null,
       getFilterValue: hsField('name'), exportValue: hsField('name'),
       render: r => {
+        // An account with no HubSpot company, or one being re-pointed: pick
+        // it here and it links, the same as Map on a possible match.
+        const picker = (autoFocus) => (
+          <HubspotCompanyPicker
+            companies={data.companies}
+            suggestedIds={r.suggestions.map(m => String(m.hubspotId))}
+            claimedBy={claimedBy}
+            autoFocus={autoFocus}
+            onPick={c => { setChanging(''); link(r.account.id, c.id); }}
+            onCancel={() => setChanging('')}
+          />
+        );
+        if (r.account && (!r.hubspot.length || changing === r.account.id)) return picker(changing === r.account.id);
         if (!r.hubspot.length) return blank;
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -458,6 +482,9 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             )}
             {r.how === 'linked' && (
               <button type="button" style={linkBtn} onClick={() => link(r.account.id, null)} title="Linked by you. Unlink to go back to the name match.">Unlink</button>
+            )}
+            {r.account && (
+              <button type="button" style={linkBtn} onClick={() => setChanging(r.account.id)} title="Link this account to a different HubSpot company">Change</button>
             )}
           </span>
         );
