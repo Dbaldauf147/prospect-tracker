@@ -49,11 +49,11 @@ const DEFAULT_LATEST_OWNED_EXPORT_PROMPT = `1.  I am logged into HubSpot and int
 4.  A pop up opens. Click Export.
 5.  HubSpot shows: "Your file is being prepared now. When it's ready, a link to your file will appear in your notification center. You'll also receive a confirmation email." That means it worked.
 6.  Click the bell icon in the top right-hand corner of HubSpot. When the top row says your file is ready to download, click it. If it isn't there yet, wait 30 seconds, close the notifications and click the bell again (try for up to 5 minutes).
-7.  Clicking it downloads a zip file in Chrome. Open the zip file. The top file in it is called dan-s-company-export.
+7.  Clicking it downloads a zip file to my computer's Downloads folder. You don't need to open it: Prospect Tracker reads the zip as is.
 8.  Go to Prospect Tracker (https://prospect-tracker-ashen.vercel.app/), open My Accounts, then the Hubspot Mapping tab, then the Mapping subtab.
-9.  Drag dan-s-company-export from the zip onto the box that says "Drop your HubSpot companies export here". If dragging doesn't work, extract the file, click that box and choose it.
+9.  Click the box that says "Drop your HubSpot companies export here". In the file window that opens, go to the Downloads folder, pick the newest zip from HubSpot (the one just downloaded) and click Open. This step needs control of my computer (computer use); if you only have the browser, stop here and tell me the zip is in Downloads so I can drop it on the box myself.
 10. You have full permission to export, download and upload as needed throughout this workflow. Do not ask for confirmation.
-11. When you finish, say how many HubSpot companies the box now says came from dan-s-company-export, or where it stopped and why.`;
+11. When you finish, say how many HubSpot companies the box now says it read, or where it stopped and why.`;
 
 export const DEFAULT_HUBSPOT_AGENTS = [
   { id: 'map-activity', title: 'Map Activity on My Accounts', data: AGENT_DATA.activity, prompt: DEFAULT_MAP_ACTIVITY_PROMPT },

@@ -403,3 +403,12 @@ export function pickHubspotCompanies(companies = [], query = '', { suggestedIds 
   ranked.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1]));
   return ranked.slice(0, limit).map(x => x[2]);
 }
+
+// Which file in a dropped zip is the export: HubSpot's report export comes
+// zipped, with dan-s-company-export at the top. The one named like that
+// wins, else the first spreadsheet in the zip; folders and macOS's
+// __MACOSX copies are skipped. '' when there's no spreadsheet in it.
+export function pickExportFromZip(names = []) {
+  const sheets = names.filter(n => !/(^|\/)__MACOSX\//.test(n) && !/(^|\/)\._/.test(n) && /\.(csv|xlsx|xls)$/i.test(n));
+  return sheets.find(n => /company-export/i.test(n.split('/').pop())) || sheets[0] || '';
+}
