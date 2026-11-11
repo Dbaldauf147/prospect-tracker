@@ -2077,6 +2077,15 @@ function FeeStructureEditor({
   // pointed at it (see standardFeesForStructure). A blank Fee cell bills
   // it, and Apply writes it into the schedule.
   const { std, standardFee, billed } = standardFeeContext(structure, costs, { termMonths, siteCount, accountCount, kwhCount, dthCount, startMonthFor: autoStartMonthFor, ...escalators });
+  // A fee that starts after the term ends never bills, so its standard
+  // fee comes out $0 and its years stay empty. Said so on the row rather
+  // than left looking broken.
+  const term = Math.max(0, Math.round(Number(termMonths) || 0));
+  const pastTerm = (idx) => term > 0 && (std.perRow[idx]?.startMonth || 1) > term;
+  const pastTermText = (idx) => {
+    const name = String(rows[idx]?.feeName || '').trim() || 'This fee';
+    return `${name} starts in month ${std.perRow[idx].startMonth}, after the ${term}-month term, so it never bills. Lengthen the Term at the top of the page, or start it earlier.`;
+  };
   // A fee starting after a monthly cost it covers catches up the months it
   // missed, so the term still recovers the cost.
   const catchUpNote = (idx) => {
@@ -2242,6 +2251,9 @@ function FeeStructureEditor({
                     width={44}
                     onCommit={(v) => { const n = parseCount(v); if (n !== undefined) setRow(idx, { startMonth: n == null ? null : Math.round(n) }); }}
                   />
+                  {pastTerm(idx) && (
+                    <div className={styles.pastTerm} title={pastTermText(idx)}>After term</div>
+                  )}
                 </td>
                 {hasWorkbook && Array.from({ length: numYears }, (_, yi) => (
                   <td key={yi} className={styles.num}>{p?.years?.[yi] > 0 ? fmtMoney(p.years[yi]) : ''}</td>
@@ -2269,6 +2281,15 @@ function FeeStructureEditor({
           </tfoot>
         )}
       </table>
+      {(() => {
+        const past = rows.map((_, i) => i).filter(pastTerm);
+        if (past.length === 0) return null;
+        return (
+          <div className={styles.pastTermNote}>
+            {past.map(i => <div key={i}>{pastTermText(i)}</div>)}
+          </div>
+        );
+      })()}
       {(() => {
         // Costs starting after the first year that no fee bills from
         // their own year: offer them a standard fee of their own.

@@ -2289,6 +2289,8 @@ const SUMMARY_COLS = [
 ];
 
 const STORE = 'pricing-cache';
+// Contract term a fresh SIA starts on, in months.
+const DEFAULT_TERM_MONTHS = 36;
 const KEY = 'current';
 // Saved Linked-To defaults live under their own key so they survive
 // parser-version cache wipes, file removal, and switching to a new
@@ -2520,7 +2522,7 @@ export function PricingView({ settings, updateSettings } = {}) {
   const [lineItemPriority, setLineItemPriority] = useState({}); // { [lineItemKey]: true } - services in priority order, first in scope takes the cost
   const [lineItemSharedOk, setLineItemSharedOk] = useState({}); // { [lineItemKey]: sharedSignature } - shared line items kept shared on the Services subtab
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
-  const [termMonths, setTermMonths] = useState(36);
+  const [termMonths, setTermMonths] = useState(DEFAULT_TERM_MONTHS);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
   // Separate escalator for CTS costs - defaults to 3.85% so margin
   // compression year-over-year reflects supplier cost creep, while
@@ -3667,6 +3669,9 @@ export function PricingView({ settings, updateSettings } = {}) {
       // Fresh file → reset the global margin to the 50% default so a
       // stale saved value from a prior workbook doesn't carry over.
       setGlobalGmPct(0.5);
+      // Same for the term: a new SIA starts on the 36-month default
+      // rather than whatever the last deal was set to.
+      setTermMonths(DEFAULT_TERM_MONTHS);
       setActiveOption(parsed.options[0]?.optionNumber ?? null);
       // Seed the Alternative Fee schedule from the cost rows' Linked To
       // tags rather than the workbook's own alt-fee table. Every unique
@@ -3811,6 +3816,7 @@ export function PricingView({ settings, updateSettings } = {}) {
     setOverrides({});
     setActiveOption(null);
     setAltFees({});
+    setTermMonths(DEFAULT_TERM_MONTHS);
     // The Fee Builder's picks, typed fees and done ticks belong to this SIA.
     setFeeBuilderPicks({});
     setFeeBuilderOverrides({});
