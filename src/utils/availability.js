@@ -167,6 +167,11 @@ export function slotStatus(schedule, slot) {
   if (!schedule || schedule.error) return { status: 'unknown', item: null };
   const s = slot.start.toISOString();
   const e = slot.end.toISOString();
+  // From Find meeting times, only the slots Outlook offered were looked
+  // at: anything outside them is unknown, not free.
+  if (Array.isArray(schedule.coverage) && !schedule.coverage.some(r => r.start <= s && r.end >= e)) {
+    return { status: 'unknown', item: null };
+  }
   let best = { status: 'free', item: null };
   for (const it of schedule.items || []) {
     if (it.end <= s || it.start >= e) continue;
@@ -207,5 +212,72 @@ export function freeRanges(grid) {
     if (last && last.end.getTime() === sl.start.getTime()) last.end = sl.end;
     else out.push({ start: sl.start, end: sl.end });
   });
+  return out;
+}
+
+// Find meeting times (Office 365 Outlook, "Find meeting times (V2)").
+//
+// The flow can use this ordinary Outlook action in place of a raw Graph
+// call. Asked with Minimum attendee percentage 0, it returns candidate
+// slots in working hours whether or not everyone is free, each with every
+// attendee's availability for it. Turned into the same per-person shape
+// as getSchedule, plus `coverage`: the time it actually reported on, so
+// a slot it never offered reads as unknown rather than free.
+export function schedulesFromSuggestions(payload) {
+  const list = Array.isArray(payload)
+    ? payload
+    : (Array.isArray(payload?.meetingTimeSuggestions) ? payload.meetingTimeSuggestions : []);
+  const people = new Map();
+  const coverage = [];
+  for (const sg of list.slice(0, 1000)) {
+    const start = graphTimeToIso(sg?.meetingTimeSlot?.start ?? sg?.start);
+    const end = graphTimeToIso(sg?.meetingTimeSlot?.end ?? sg?.end);
+    if (!start || !end || end <= start) continue;
+    coverage.push({ start, end });
+    for (const a of Array.isArray(sg?.attendeeAvailability) ? sg.attendeeAvailability : []) {
+      const email = normEmail(a?.attendee?.emailAddress?.address ?? a?.email);
+      if (!email) continue;
+      if (!people.has(email)) people.set(email, []);
+      const raw = String(a?.availability || '').replace(/\s+/g, '').toLowerCase();
+      if (raw === 'unknown') { people.get(email).push({ status: 'unknown', start, end }); continue; }
+      const status = normStatus(raw);
+      if (status !== 'free') people.get(email).push({ status, start, end });
+    }
+  }
+  const merged = mergeRanges(coverage);
+  return [...people.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([email, items]) => {
+    // A slot this person's calendar couldn't be read for is cut out of
+    // their coverage, so it shows as no data rather than free.
+    const unknown = items.filter(i => i.status === 'unknown');
+    const cov = unknown.length ? subtractRanges(merged, unknown) : merged;
+    return {
+      email,
+      items: items.filter(i => i.status !== 'unknown').sort((x, y) => (x.start < y.start ? -1 : 1)),
+      coverage: cov,
+    };
+  });
+}
+
+function mergeRanges(ranges) {
+  const sorted = ranges.slice().sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+  const out = [];
+  for (const r of sorted) {
+    const last = out[out.length - 1];
+    if (last && r.start <= last.end) { if (r.end > last.end) last.end = r.end; } else out.push({ ...r });
+  }
+  return out;
+}
+
+function subtractRanges(ranges, cuts) {
+  let out = ranges;
+  for (const c of cuts) {
+    const next = [];
+    for (const r of out) {
+      if (c.end <= r.start || c.start >= r.end) { next.push(r); continue; }
+      if (c.start > r.start) next.push({ start: r.start, end: c.start });
+      if (c.end < r.end) next.push({ start: c.end, end: r.end });
+    }
+    out = next;
+  }
   return out;
 }
