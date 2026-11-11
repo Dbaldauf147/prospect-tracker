@@ -15,7 +15,7 @@
 //     Hubspot Duplicates, several IDs, a HubSpot name that differs,
 //   * inactive accounts are in; Only in HubSpot rows are not.
 import ExcelJS from 'exceljs';
-import { buildHubspotImportSheets, buildHubspotImportWorkbook, normalizeDomain, hubspotIdsOf, hubspotImportFileName, IMPORT_HEADERS, REVIEW_HEADERS } from '../src/utils/hubspotImportFile.js';
+import { buildHubspotImportSheets, buildHubspotImportWorkbook, normalizeDomain, hubspotIdsOf, hubspotImportFileName, IMPORT_HEADERS } from '../src/utils/hubspotImportFile.js';
 import { buildHubspotMapping, compactMappingCompanies } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
@@ -99,13 +99,12 @@ eq(hubspotImportFileName(new Date(2026, 9, 5)), 'hubspot-company-import-2026-10-
 const wb = buildHubspotImportWorkbook(ExcelJS.Workbook, sheets);
 const back = new ExcelJS.Workbook();
 await back.xlsx.load(await wb.xlsx.writeBuffer());
-eq(back.worksheets.map(w => w.name), ['Import', 'Review', 'Reference'], 'three sheets, in order');
+eq(back.worksheets.map(w => w.name), ['Import'], 'one sheet: Import only');
 const ws = back.getWorksheet('Import');
 eq(ws.getRow(1).values.slice(1), IMPORT_HEADERS, 'Import headers exact');
-eq(back.getWorksheet('Review').getRow(1).values.slice(1), REVIEW_HEADERS, 'Review headers exact');
 const idCell = ws.getCell('A2');
 eq([typeof idCell.value, idCell.value, idCell.numFmt], ['string', '58451545973', '@'], 'Record ID is stored as text');
-eq(back.worksheets.map(w => [w.views[0]?.state, w.views[0]?.ySplit]), [['frozen', 1], ['frozen', 1], ['frozen', 1]], 'header row frozen on each sheet');
+eq(back.worksheets.map(w => [w.views[0]?.state, w.views[0]?.ySplit]), [['frozen', 1]], 'header row frozen');
 eq(ws.getColumn(1).width >= 13, true, 'Record ID column wide enough for 11 digits');
 
 console.log(`\n${passed} passed, ${failed} failed`);

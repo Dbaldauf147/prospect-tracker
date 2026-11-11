@@ -1,13 +1,15 @@
 // My Accounts > Hubspot Mapping: "Export HubSpot Import File". Dan imports
 // the file into HubSpot (Companies, "Update existing companies only",
 // "Create a list from this import") to get a static list of his accounts'
-// companies for reporting. Three sheets:
+// companies for reporting. The file is one sheet, Import: one row per
+// HubSpot Company ID (Record ID), so every duplicate record makes the list;
+// an account with no ID but a website goes in by Company Domain Name
+// instead. One sheet because HubSpot's importer takes one, and extra tabs
+// only got in the way.
 //
-//   Import     one row per HubSpot Company ID (Record ID), so every
-//              duplicate record makes the list; an account with no ID but
-//              a website goes in by Company Domain Name instead.
-//   Review     the accounts worth a second look before importing, with why.
-//   Reference  every column of the tab, one row per account, unsplit.
+// buildHubspotImportSheets still works out the Review rows (the accounts
+// worth a second look, with why) and the Reference rows (every column of
+// the tab, one row per account); they just aren't written to the file.
 //
 // Every account on the tab goes in, active and inactive, whatever the
 // filters on screen say. Only in HubSpot rows (no account) are left out.
@@ -142,13 +144,11 @@ function addSheet(wb, name, headers, rows) {
   return ws;
 }
 
-/** The workbook, built with the ExcelJS Workbook class passed in. */
+/** The workbook (the Import sheet only), built with the ExcelJS Workbook class passed in. */
 export function buildHubspotImportWorkbook(Workbook, sheets) {
   const wb = new Workbook();
   wb.created = new Date();
   addSheet(wb, 'Import', IMPORT_HEADERS, sheets.importRows);
-  addSheet(wb, 'Review', REVIEW_HEADERS, sheets.reviewRows);
-  addSheet(wb, 'Reference', sheets.referenceHeaders, sheets.referenceRows);
   return wb;
 }
 
