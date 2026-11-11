@@ -615,6 +615,24 @@
   color: #b45309;
 }
 
+.pastTerm {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #b45309;
+  white-space: nowrap;
+  margin-top: 0.1rem;
+}
+
+.pastTermNote {
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  font-size: var(--font-size-xs);
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+}
+
 /* Price check: the cost lines marked up, against the rate card range. */
 .rateGrid {
   display: flex;
