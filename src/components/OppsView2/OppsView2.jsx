@@ -201,6 +201,10 @@ import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
 import { CallNextStepsLog } from './CallNextStepsLog';
 import { OppAvailability } from './OppAvailability';
+// The Availability tabs (Opps page and opp popup) are hidden for now: the
+// Power Automate flow behind them sends colleagues' free/busy outside
+// Microsoft 365, and that waits on IT. Flip to true to bring both back.
+const SHOW_AVAILABILITY = false;
 import { readOppLinks, countOppLinks, linkHref } from '../../utils/oppLinks';
 import { companyOverrideUpdate } from '../../utils/contactCompanyOverride';
 import { DealTimelineModal } from './DealTimelineModal';
@@ -9370,7 +9374,7 @@ function oppDetailPlacementLabel(tab, step) {
 // Quote carries the saved Pricing Option snapshot, which every opp can
 // have; Call Notes is content in its own right; the stage tabs are being
 // filled in over time and have to be reachable while they're still empty.
-const ALWAYS_ON_TABS = new Set(['scope', 'callnotes', 'availability', ...OPP_DETAIL_STAGE_TABS]);
+const ALWAYS_ON_TABS = new Set(['scope', 'callnotes', ...(SHOW_AVAILABILITY ? ['availability'] : []), ...OPP_DETAIL_STAGE_TABS]);
 
 // Stage is the deal's headline field, so it belongs in Overview and
 // nowhere else. Matched on the normalised header rather than one exact
@@ -11223,7 +11227,7 @@ export function OppInfoModal({
               said", this is "what we said we'd do", and a rep chasing a
               commitment from three weeks ago is not reading summaries. */}
           {currentTab === 'callnotes' && <CallNextStepsLog oppId={opp._id} />}
-          {currentTab === 'availability' && <OppAvailability oppId={opp._id} />}
+          {SHOW_AVAILABILITY && currentTab === 'availability' && <OppAvailability oppId={opp._id} />}
         </div>
 
         <div style={{
@@ -19184,10 +19188,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           className={activeTab === 'coverage' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('coverage')}
         >Coverage</button>
-        <button
-          className={activeTab === 'availability' ? styles.tabActive : styles.tab}
-          onClick={() => setActiveTab('availability')}
-        >Availability</button>
+        {SHOW_AVAILABILITY && (
+          <button
+            className={activeTab === 'availability' ? styles.tabActive : styles.tab}
+            onClick={() => setActiveTab('availability')}
+          >Availability</button>
+        )}
       </div>
 
       {/* Filter row. The Show / Start Date / Status filters and the
@@ -19810,7 +19816,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
 
       {/* Everyone on any opp's Availability tab, on one grid: the same
           people the Power Automate free/busy flow checks. */}
-      {activeTab === 'availability' && (
+      {SHOW_AVAILABILITY && activeTab === 'availability' && (
         <div style={{ padding: '0.75rem 0' }}>
           <OppAvailability opps={records} />
         </div>
