@@ -24,7 +24,7 @@ import { targetAccountRows, targetSuggestionsForAccounts, targetAcceptPatch, map
 import { buildCdmOptions } from '../../utils/prospectOptions';
 import { canonicalCdmOption } from '../../utils/targetAccountCdm';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, HUBSPOT_AGENTS_SETTINGS_KEY } from '../../utils/hubspotAgents';
+import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, hubspotAgentsPatch } from '../../utils/hubspotAgents';
 import { HubspotAgents } from './HubspotAgents';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
 import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName } from '../../utils/hubspotImportFile';
@@ -650,7 +650,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
         {subtabBar}
         <HubspotAgents
           agents={agents}
-          onChange={(next) => updateSettings({ [HUBSPOT_AGENTS_SETTINGS_KEY]: next })}
+          onChange={(next) => updateSettings(hubspotAgentsPatch(next))}
           rowsByData={agentRows}
           blurbs={agentBlurbs}
           hasExport={data.companies.length > 0}

@@ -2,7 +2,7 @@
 // (src/utils/hubspotAgents.js). Plain Node. Run:
 //   node scripts/hubspotAgents.test.mjs
 import {
-  readHubspotAgents, DEFAULT_HUBSPOT_AGENTS, builtInAgent, activityAgentRows, ownerAgentRows,
+  readHubspotAgents, hubspotAgentsPatch, DEFAULT_HUBSPOT_AGENTS, builtInAgent, activityAgentRows, ownerAgentRows,
   agentDataBlock, fullAgentPrompt, AGENT_DATA, NO_OWNER, moveAgent,
 } from '../src/utils/hubspotAgents.js';
 import { buildHubspotMapping, compactMappingCompanies } from '../src/utils/hubspotMapping.js';
@@ -16,10 +16,13 @@ function check(label, actual, expected) {
 }
 
 // the agent list
-check('untouched settings show the two built-in agents', readHubspotAgents({}).map(a => a.id), ['map-activity', 'company-owners']);
-check('a saved list wins, even empty', readHubspotAgents({ hubspotMappingAgents: [] }), []);
+check('untouched settings show the built-in agents', readHubspotAgents({}).map(a => a.id), ['map-activity', 'company-owners', 'latest-owned-export']);
+check('a list saved before the export agent existed gets it added', readHubspotAgents({ hubspotMappingAgents: [] }).map(a => a.id), ['latest-owned-export']);
+check('a saved list that has seen every built-in wins, even empty', readHubspotAgents(hubspotAgentsPatch([])), []);
+check('saving keeps a deleted built-in deleted', readHubspotAgents(hubspotAgentsPatch([{ id: 'x', title: 'Mine', data: '', prompt: '' }])).map(a => a.id), ['x']);
+check('the export agent is prompt only and goes to the report', [builtInAgent('latest-owned-export').data, builtInAgent('latest-owned-export').prompt.includes('https://app.hubspot.com/reports-list/51444280/448300388'), builtInAgent('latest-owned-export').title], ['', true, "Add Dan's Latest Hubspot Owned Companies"]);
 check('a saved agent with an unknown data kind is prompt only',
-  readHubspotAgents({ hubspotMappingAgents: [{ id: 'x', title: '', data: 'bogus', prompt: 'Hi' }] }),
+  readHubspotAgents({ ...hubspotAgentsPatch([]), hubspotMappingAgents: [{ id: 'x', title: '', data: 'bogus', prompt: 'Hi' }] }),
   [{ id: 'x', title: 'Untitled agent', data: '', prompt: 'Hi' }]);
 check('built-in agents can be reset; your own cannot', [!!builtInAgent('map-activity'), builtInAgent('x')], [true, null]);
 check('no built-in prompt has an em dash', DEFAULT_HUBSPOT_AGENTS.some(a => /—/.test(a.prompt + a.title)), false);
