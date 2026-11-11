@@ -200,6 +200,7 @@ import { bfoFieldMissing } from '../../utils/bfoFields';
 import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
 import { CallNextStepsLog } from './CallNextStepsLog';
+import { OppAvailability } from './OppAvailability';
 import { readOppLinks, countOppLinks, linkHref } from '../../utils/oppLinks';
 import { companyOverrideUpdate } from '../../utils/contactCompanyOverride';
 import { DealTimelineModal } from './DealTimelineModal';
@@ -9213,6 +9214,10 @@ const OPP_DETAIL_TABS = [
   // — the "does this tab have any fields" test that hides an empty tab
   // would hide this one on every record.
   { key: 'callnotes', label: 'Call Notes' },
+  // When the SE people on the deal are free, from the user's Power
+  // Automate free/busy flow. Like Call Notes it holds no opp fields, so it
+  // is in ALWAYS_ON_TABS and left out of the field destinations.
+  { key: 'availability', label: 'Availability' },
   // The numbered BFO sales stages, so the popup can be arranged the way the
   // deal actually moves: the fields you fill in to get through Stage 5 sit
   // on Stage 5, rather than being spread across buckets named after what
@@ -9340,7 +9345,7 @@ function oppDetailPlacementFor(header, placements) {
 // and a field parked there would render above a list it has nothing to do
 // with.
 const OPP_DETAIL_FIELD_DESTINATIONS = OPP_DETAIL_TABS
-  .filter(t => t.key !== 'callnotes')
+  .filter(t => t.key !== 'callnotes' && t.key !== 'availability')
   .flatMap(t => {
     const steps = OPP_DETAIL_STAGE_SUBSECTIONS.get(t.key);
     if (!steps || steps.length === 0) return [{ tab: t.key, tabLabel: t.label, step: null }];
@@ -9365,7 +9370,7 @@ function oppDetailPlacementLabel(tab, step) {
 // Quote carries the saved Pricing Option snapshot, which every opp can
 // have; Call Notes is content in its own right; the stage tabs are being
 // filled in over time and have to be reachable while they're still empty.
-const ALWAYS_ON_TABS = new Set(['scope', 'callnotes', ...OPP_DETAIL_STAGE_TABS]);
+const ALWAYS_ON_TABS = new Set(['scope', 'callnotes', 'availability', ...OPP_DETAIL_STAGE_TABS]);
 
 // Stage is the deal's headline field, so it belongs in Overview and
 // nowhere else. Matched on the normalised header rather than one exact
@@ -11218,6 +11223,7 @@ export function OppInfoModal({
               said", this is "what we said we'd do", and a rep chasing a
               commitment from three weeks ago is not reading summaries. */}
           {currentTab === 'callnotes' && <CallNextStepsLog oppId={opp._id} />}
+          {currentTab === 'availability' && <OppAvailability oppId={opp._id} />}
         </div>
 
         <div style={{
