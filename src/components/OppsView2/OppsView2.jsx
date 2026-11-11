@@ -19106,6 +19106,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           onSaveMetInPerson={saveContactMetInPerson}
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={saveContactInvitedToLouisville}
+          contactConnected={settings?.contactConnected || {}}
+          onSaveConnected={(cid, on) => updateSettings({ contactConnected: { ...(settings?.contactConnected || {}), [cid]: !!on } })}
           contactSentiment={settings?.contactSentiment || {}}
           onSaveSentiment={(cid, v) => {
             if (cid == null) return;

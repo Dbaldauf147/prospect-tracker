@@ -636,6 +636,9 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     { key: 'linkedin', label: 'LinkedIn', sortable: false },
     { key: 'salesNav', label: 'LinkedIn Search', sortable: false },
     { key: 'met',      label: 'Met' },
+    // The contact popup's "Connected?" tick (settings.contactConnected),
+    // editable from the cell. Full-table pages only.
+    ...(hasFullTable(storagePrefix) ? [{ key: 'connected', label: 'Connected?' }] : []),
     { key: 'events',   label: 'Events' },
     // Custom free-text column — only on the All Contacts page.
     // Reads/writes the same per-contact `settings.customField`
@@ -1838,6 +1841,13 @@ function KeyContactsViewInner({
   // Firestore settings so it persists cross-device. Edited inline on
   // the All Contacts table.
   const contactEvents = settings?.contactEvents || {};
+  const contactConnected = settings?.contactConnected || {};
+  const isConnected = (c) => !!contactConnected[String(c?.id ?? '')];
+  const toggleConnected = (c) => {
+    const cid = String(c?.id ?? '');
+    if (!cid || !updateSettings) return;
+    updateSettings({ contactConnected: { ...contactConnected, [cid]: !contactConnected[cid] } });
+  };
   const handleSaveContactEvents = useCallback((cid, val) => {
     const cur = settings?.contactEvents || {};
     const next = { ...cur };
@@ -1981,7 +1991,7 @@ function KeyContactsViewInner({
   // keys removes the guess: anything not on the list shows, so the next
   // column to ship here needs none of this. They stay only to convert a
   // layout saved under the old model, once.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', 'companyCdm', ...(showCompanyVertical ? ['companyVertical'] : []), ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct', 'strength'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', 'companyCdm', ...(showCompanyVertical ? ['companyVertical'] : []), ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', ...(hasFullTable(storagePrefix) ? ['connected'] : []), 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct', 'strength'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
   function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -3404,6 +3414,7 @@ function KeyContactsViewInner({
         case 'country': cmp = (a.country || '').localeCompare(b.country || ''); break;
         case 'events':  cmp = (contactEvents[String(a.id || '')] || '').localeCompare(contactEvents[String(b.id || '')] || ''); break;
         case 'met':     cmp = Number(!!a.metInPerson) - Number(!!b.metInPerson); break;
+        case 'connected': cmp = Number(isConnected(a)) - Number(isConnected(b)); break;
         case 'taggedPct': cmp = tagScoreFor(a).pct - tagScoreFor(b).pct; break;
         // Unscored contacts (no activity on record) sit below a 0.
         case 'strength':
@@ -3449,7 +3460,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, campaignReplies, contactEvents, categorizeContact, contactCampaign, campaignSends60, tagScoreFor, contactStrength]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, campaignReplies, contactEvents, contactConnected, categorizeContact, contactCampaign, campaignSends60, tagScoreFor, contactStrength]);
 
   // Combined "To Also" + "CC" recipients edited in the contact popup,
   // keyed by lowercased primary email so the All Contacts "To / CC"
@@ -3557,6 +3568,7 @@ function KeyContactsViewInner({
     linkedin: c => c.linkedin ? 'open' : '',
     salesNav: c => '',
     met:      c => c.metInPerson ? 'yes' : 'no',
+    connected: c => isConnected(c) ? 'Yes' : 'No',
     events:   c => contactEvents[String(c.id || '')] || '',
     taggedPct: c => `${tagScoreFor(c).pct}%`,
     strength: c => strengthFor(c)?.tier.label || '',
@@ -5022,6 +5034,18 @@ function KeyContactsViewInner({
                         : <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>}
                     </div>
                     ),
+                    connected: (
+                    <div style={{ padding: '0.3rem 0.6rem', display: 'flex', alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isConnected(c)}
+                        onChange={() => toggleConnected(c)}
+                        aria-label={`Connected with ${c.name || 'this contact'}`}
+                        title="Connected? Same tick as on the contact popup"
+                        style={{ accentColor: '#16A34A', width: 15, height: 15, cursor: 'pointer', margin: 0 }}
+                      />
+                    </div>
+                    ),
                     events: (
                     <InlineCell
                       value={contactEvents[String(c.id || '')] || ''}
@@ -5829,6 +5853,8 @@ function KeyContactsViewInner({
             }}
             contactMetInPerson={settings?.contactMetInPerson || {}}
             onSaveMetInPerson={(contactId, met) => updateSettings(metInPersonUpdate(contactId, met))}
+            contactConnected={contactConnected}
+            onSaveConnected={(contactId, on) => updateSettings({ contactConnected: { ...(settings?.contactConnected || {}), [contactId]: !!on } })}
             contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
             onSaveInvitedToLouisville={(contactId, invited) => {
               const current = settings?.contactInvitedToLouisville || {};

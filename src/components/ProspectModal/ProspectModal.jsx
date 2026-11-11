@@ -1128,7 +1128,7 @@ function findPortfolioProspect(row, byName, byId) {
 // can share the exact same auto-fill behavior as this modal.
 
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [] }) {
   const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -1221,6 +1221,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // "Invited to Louisville" — another local-only flag (never in HubSpot).
   const [invitedToLouisville, setInvitedToLouisville] = useState(() =>
     metCid != null ? !!contactInvitedToLouisville[metCid] : false
+  );
+  // "Connected?" - local-only too (settings.contactConnected), editable
+  // here and from the All Contacts table's Connected column.
+  const [connected, setConnected] = useState(() =>
+    metCid != null ? !!contactConnected[metCid] : false
   );
   // Champion / neutral / detractor — local-only as well, and the thing the
   // Divisions chart marks people with. Neutral is the stored absence, so a
@@ -1883,6 +1888,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     });
   }
 
+  function toggleConnected() {
+    setConnected(prev => {
+      const next = !prev;
+      const cid = contact.id || contact.vid;
+      if (cid != null && onSaveConnected) onSaveConnected(cid, next);
+      return next;
+    });
+  }
+
   // Clicking the choice a contact already has clears it back to neutral, so
   // the picker can undo itself without a fourth button.
   function chooseSentiment(value) {
@@ -1915,7 +1929,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // usually typed more. Keep the editable state on a ref that every render
   // refreshes and have handleSave read from that instead.
   const stateRef = useRef(null);
-  stateRef.current = { f, checkedTags, ccEmails, toAlsoEmails, metInPerson, invitedToLouisville, sentiment, leadSource };
+  stateRef.current = { f, checkedTags, ccEmails, toAlsoEmails, metInPerson, invitedToLouisville, connected, sentiment, leadSource };
 
   // Re-render trigger for the moment a new contact gains a HubSpot id (see
   // handleSave). The id itself is pinned on the contact prop, which React
@@ -2103,6 +2117,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       }
       if (savedCid && onSaveInvitedToLouisville) {
         onSaveInvitedToLouisville(savedCid, latest.invitedToLouisville);
+      }
+      if (savedCid && onSaveConnected) {
+        onSaveConnected(savedCid, !!latest.connected);
       }
       // A contact created here has no id until HubSpot hands one back, so the
       // click-time save above was a no-op — persist it under the real id now.
@@ -2340,7 +2357,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={e => { e.stopPropagation(); onClose(); }}>
-      <div style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', width: '880px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', width: '980px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>{(!contact.id && !contact.vid) ? 'New HubSpot Contact' : 'Edit HubSpot Contact'}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
@@ -2430,6 +2447,16 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               })}
             </div>
           </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.45rem 0.7rem', border: `1px solid ${connected ? '#86EFAC' : '#E2E8F0'}`, borderRadius: '8px', background: connected ? '#F0FDF4' : '#fff' }}>
+            <input
+              type="checkbox"
+              checked={connected}
+              onChange={toggleConnected}
+              aria-label="Connected?"
+              style={{ accentColor: '#16A34A', width: '16px', height: '16px', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: connected ? '#166534' : '#374151' }}>Connected?</span>
+          </label>
           {/* Where this contact came to us from. A value saved before the
               option list had it still shows, so nothing is silently lost. */}
           <label
@@ -7940,6 +7967,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const next = { ...current, [contactId]: !!invited };
     updateSettings({ contactInvitedToLouisville: next });
   }, [settings.contactInvitedToLouisville, updateSettings]);
+  const handleSaveContactConnected = useCallback((contactId, on) => {
+    updateSettings({ contactConnected: { ...(settings.contactConnected || {}), [contactId]: !!on } });
+  }, [settings.contactConnected, updateSettings]);
 
   // Champion / detractor. Neutral removes the key rather than storing an
   // empty string, so the map only carries contacts anyone has judged.
@@ -15520,6 +15550,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveMetInPerson={handleSaveContactMetInPerson}
           contactInvitedToLouisville={settings.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={handleSaveContactInvitedToLouisville}
+          contactConnected={settings.contactConnected || {}}
+          onSaveConnected={handleSaveContactConnected}
           contactSentiment={settings.contactSentiment || {}}
           onSaveSentiment={handleSaveContactSentiment}
           contactLeadSource={settings.contactLeadSource || {}}
