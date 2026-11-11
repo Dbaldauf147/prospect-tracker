@@ -54,6 +54,10 @@ import { buildCampaignTierLookup, tierRank } from '../../utils/campaignTier';
 import { buildScheduledCampaign, cannotCreateReason } from '../../utils/campaignSchedules';
 import { CampaignSchedulesPanel } from './CampaignSchedulesPanel';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import { CampaignLinkedDrafts } from './CampaignLinkedDrafts';
+import { subscribeDraftHistory } from '../../utils/emailDraftHistoryStore';
+import { draftsForCampaign } from '../../utils/emailDraftHistory';
+import { loadDraftIntoComposer } from '../../utils/draftComposerLoad';
 import { campaignCategory, campaignCategoryOptions, normalizeCampaignCategory } from '../../utils/campaignCategory';
 
 // The contact table's columns, and how wide each one starts.
@@ -265,8 +269,16 @@ function TierBadge({ tier }) {
 // `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
 // to be opened by its subject line; `onOpened` acknowledges the request so
 // the same campaign can be asked for again.
-export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = '', settings, updateSettings, onSelectProspect }) {
+export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = '', settings, updateSettings, onSelectProspect, onLoadDraft, onOpenDraftHistory }) {
   const { user } = useAuth();
+  // The Draft History, for the drafts tied to each campaign (the count in
+  // the saved list, and the list in an open campaign's header). A failed
+  // subscription just shows none: the campaigns don't depend on it.
+  const [draftHistory, setDraftHistory] = useState([]);
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    return subscribeDraftHistory(user.uid, setDraftHistory, () => setDraftHistory([]));
+  }, [user?.uid]);
   const [subject, setSubject] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -2800,6 +2812,11 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                   >+ Add event link</button>
                 )}
               </div>
+              <CampaignLinkedDrafts
+                drafts={draftsForCampaign(draftHistory, { subjects: displaySubjects })}
+                onLoad={(d) => { if (loadDraftIntoComposer(d)) onLoadDraft?.(); }}
+                onOpenHistory={onOpenDraftHistory}
+              />
             </div>
             <div style={{ display: 'inline-flex', gap: '0.5rem', flexShrink: 0 }}>
               {(() => {
@@ -3383,6 +3400,10 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                   <div style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
                     Saved {fmtDate(c.savedAt)}: {c.uniqueRecipients} of {c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients} sent, {c.uniqueRepliers} replies
                     {c.refreshedAt && <span style={{ color: 'var(--color-text-muted)' }}> · updated {fmtDate(c.refreshedAt)}</span>}
+                    {(() => {
+                      const n = draftsForCampaign(draftHistory, c).length;
+                      return n > 0 ? <span title="Drafts tied to this campaign on the Draft History tab"> · {n} draft{n === 1 ? '' : 's'}</span> : null;
+                    })()}
                   </div>
                 </td>
                 {/* Its own click, so typing a category doesn't open the row. */}

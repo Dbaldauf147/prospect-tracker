@@ -19,10 +19,9 @@ import { CampaignPicker } from '../common/CampaignPicker';
 import { campaignsByRecency, campaignPickerDetail } from '../../utils/campaignPicker';
 import { primarySubject } from '../../utils/campaignSubjects';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
-import { userLsGet } from '../../utils/userLs';
-import { writeWorkKey } from '../../utils/mirroredWorkKeys';
+import { loadDraftIntoComposer } from '../../utils/draftComposerLoad';
 import {
-  draftPlainText, draftHasContent, findLinkedCampaign, DRAFT_AUTOSAVE_KEY,
+  draftPlainText, findLinkedCampaign, suggestCampaigns,
 } from '../../utils/emailDraftHistory';
 import {
   subscribeDraftHistory, importSavedDrafts, setDraftCampaign, deleteDraftHistory,
@@ -46,11 +45,40 @@ const linkBtn = {
   fontFamily: 'inherit', fontSize: '0.74rem', fontWeight: 600, cursor: 'pointer',
 };
 
-function CampaignCell({ entry, options, campaigns, onLink, onOpenCampaign }) {
+const chipBtn = {
+  display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', minWidth: 0,
+  padding: '1px 7px', border: '1px dashed #93C5FD', borderRadius: 999, background: '#EFF6FF',
+  color: '#1D4ED8', fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer',
+};
+
+// The guesses for an untied draft, as one-click chips under its picker.
+function SuggestionChips({ entry, suggestions, onLink }) {
+  if (!suggestions?.length) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3, minWidth: 0, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: '0.64rem', color: '#64748B', flexShrink: 0 }}>Suggested:</span>
+      {suggestions.slice(0, 2).map(sg => (
+        <button
+          key={sg.key}
+          type="button"
+          style={chipBtn}
+          onClick={() => onLink(entry, sg.key)}
+          title={`Tie to "${sg.label}": ${sg.reason}`}
+        >
+          <span aria-hidden="true">+</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sg.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CampaignCell({ entry, options, campaigns, suggestions, onLink, onOpenCampaign }) {
   const linked = findLinkedCampaign(campaigns, entry.campaign);
   const key = linked ? primarySubject(linked) : '';
   const missing = entry.campaign && !linked;
   return (
+    <div style={{ minWidth: 0, padding: '2px 0' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
       <CampaignPicker
         options={options}
@@ -67,6 +95,8 @@ function CampaignCell({ entry, options, campaigns, onLink, onOpenCampaign }) {
       {entry.campaign && (
         <button type="button" style={{ ...linkBtn, color: '#94A3B8' }} onClick={() => onLink(entry, '')} title="Untie this draft from its campaign" aria-label="Untie from campaign">×</button>
       )}
+    </div>
+    {!linked && <SuggestionChips entry={entry} suggestions={suggestions} onLink={onLink} />}
     </div>
   );
 }
@@ -145,16 +175,7 @@ export function DraftHistoryView({ settings, updateSettings, onLoadDraft, onOpen
   }
 
   function load(entry) {
-    let current = null;
-    try { current = JSON.parse(userLsGet(DRAFT_AUTOSAVE_KEY) || 'null'); } catch { current = null; }
-    if (current && draftHasContent(current)) {
-      const ok = window.confirm('Open this draft in the composer? It replaces what is in the compose box now. Save that first (Save Draft) if you want to keep it.');
-      if (!ok) return;
-    }
-    writeWorkKey(DRAFT_AUTOSAVE_KEY, JSON.stringify({
-      subject: entry.subject, body: entry.body, contacts: entry.contacts, cc: entry.cc, bannerId: entry.bannerId,
-    }));
-    onLoadDraft?.();
+    if (loadDraftIntoComposer(entry)) onLoadDraft?.();
   }
 
   const toggle = (id) => setExpanded((prev) => {
@@ -173,6 +194,9 @@ export function DraftHistoryView({ settings, updateSettings, onLoadDraft, onOpen
       recipientNames: e.contacts.map(recipientName).filter(Boolean).join(', '),
       snippet: draftPlainText(e.body).slice(0, 240),
       status: e.sentCount > 0 ? 'Sent' : 'Saved',
+      // Only worked out for drafts not tied to a live campaign: a tied
+      // draft has its answer.
+      suggestions: linked ? [] : suggestCampaigns(campaigns, e),
     };
   }), [entries, campaigns]);
 
@@ -192,7 +216,7 @@ export function DraftHistoryView({ settings, updateSettings, onLoadDraft, onOpen
       key: 'campaignName', label: 'Email Campaign', defaultWidth: 280,
       getFilterValue: (r) => r.campaignName || '(none)',
       render: (r) => (
-        <CampaignCell entry={r._entry} options={options} campaigns={campaigns} onLink={link} onOpenCampaign={onOpenCampaign} />
+        <CampaignCell entry={r._entry} options={options} campaigns={campaigns} suggestions={r.suggestions} onLink={link} onOpenCampaign={onOpenCampaign} />
       ),
     },
     { key: 'status', label: 'Status', defaultWidth: 80 },
@@ -248,6 +272,20 @@ export function DraftHistoryView({ settings, updateSettings, onLoadDraft, onOpen
   if (!uid) return <p style={{ color: '#64748B', fontSize: '0.85rem' }}>Sign in to see your draft history.</p>;
 
   const linkedCount = rows.filter(r => r.campaign).length;
+  const suggested = rows.filter(r => r.suggestions.length > 0);
+
+  async function acceptAll() {
+    const ok = window.confirm(`Tie ${suggested.length} draft${suggested.length === 1 ? '' : 's'} to ${suggested.length === 1 ? 'its' : 'their'} top suggested campaign?\n\n${suggested.map(r => `${r.subject || '(No subject)'}  ->  ${r.suggestions[0].label}`).join('\n')}`);
+    if (!ok) return;
+    let failed = 0;
+    for (const r of suggested) {
+      const res = await setDraftCampaign(uid, r.id, r.suggestions[0].key);
+      if (!res.ok) failed += 1;
+    }
+    flash(failed ? 'error' : 'success', failed
+      ? `${suggested.length - failed} tied, ${failed} failed. Try those again.`
+      : `Tied ${suggested.length} draft${suggested.length === 1 ? '' : 's'} to ${suggested.length === 1 ? 'its' : 'their'} suggested campaign.`);
+  }
   // DataTable fills a bounded flex column (it scrolls its own body); the
   // Draft Emails page around this is a plain block, so bound it here.
   return (
@@ -259,10 +297,18 @@ export function DraftHistoryView({ settings, updateSettings, onLoadDraft, onOpen
             {rows.length} draft{rows.length === 1 ? '' : 's'}, {linkedCount} tied to a campaign
           </span>
         )}
+        {suggested.length > 0 && (
+          <button
+            type="button"
+            onClick={acceptAll}
+            title="Tie every untied draft that has a suggestion to its top suggested campaign. You see the list before anything changes."
+            style={{ ...chipBtn, border: '1px solid #1D4ED8', background: '#fff', fontSize: '0.74rem', padding: '2px 10px' }}
+          >Accept all suggestions ({suggested.length})</button>
+        )}
       </div>
       <p style={{ margin: '0 0 10px', fontSize: '0.78rem', color: '#64748B', maxWidth: 820, lineHeight: 1.4 }}>
         Every draft you save or send from the Drafts tab is kept here for good. Saving the same draft again updates its row; any edit makes a new row, so earlier versions stay.
-        A draft whose subject carries a campaign&apos;s subject line is tied to that campaign automatically, and moving a draft&apos;s contacts to a campaign ties it too. Change or clear the link in the Email Campaign column.
+        A draft whose subject carries a campaign&apos;s subject line is tied to that campaign automatically, and moving a draft&apos;s contacts to a campaign ties it too. Untied drafts get suggestions from the campaigns whose rosters hold their recipients or whose subjects share their words; click one to tie it. Change or clear any link in the Email Campaign column.
       </p>
       {loadError && <p style={{ color: '#B91C1C', fontSize: '0.8rem' }}>{loadError}</p>}
       {message && <p style={{ color: message.type === 'error' ? '#B91C1C' : '#15803D', fontSize: '0.8rem' }}>{message.text}</p>}
@@ -279,6 +325,7 @@ export function DraftHistoryView({ settings, updateSettings, onLoadDraft, onOpen
           defaultHidden={['recipientNames', 'lastSentAt']}
           expandedRowIds={expanded}
           renderExpansion={renderExpansion}
+          variableRowHeight
           emptyMessage="No drafts yet. Save or send one from the Drafts tab and it will be kept here."
           settings={settings}
           updateSettings={updateSettings}
