@@ -16,7 +16,7 @@
 //     Hubspot Duplicates, several IDs, a HubSpot name that differs,
 //   * inactive accounts are in; Only in HubSpot rows are not.
 import ExcelJS from 'exceljs';
-import { buildHubspotImportSheets, buildHubspotImportWorkbook, normalizeDomain, hubspotIdsOf, hubspotImportFileName, IMPORT_HEADERS } from '../src/utils/hubspotImportFile.js';
+import { buildHubspotImportSheets, buildHubspotImportWorkbook, normalizeDomain, hubspotIdsOf, hubspotImportFileName, IMPORT_HEADERS, buildHubspotCreateRows, buildHubspotCreateWorkbook, hubspotCreateFileName, CREATE_HEADERS } from '../src/utils/hubspotImportFile.js';
 import { buildHubspotMapping, compactMappingCompanies } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
@@ -116,6 +116,34 @@ const idCell = ws.getCell('A2');
 eq([typeof idCell.value, idCell.value, idCell.numFmt], ['string', '58451545973', '@'], 'Record ID is stored as text');
 eq(back.worksheets.map(w => [w.views[0]?.state, w.views[0]?.ySplit]), [['frozen', 1]], 'header row frozen');
 eq(ws.getColumn(1).width >= 13, true, 'Record ID column wide enough for 11 digits');
+
+// The new-companies file: only what HubSpot doesn't have.
+{
+  const accts = [
+    { id: 'n1', company: 'Acme Realty', website: 'acme.com' },          // in Dan's export: out
+    { id: 'n2', company: 'Teletower' },                                 // nowhere: in, no domain
+    { id: 'n3', company: 'Wespath', website: 'https://www.wespath.org/x' }, // nowhere: in
+    { id: 'n4', company: 'Portal Co', website: 'portal.com' },          // in the portal: out
+    { id: 'n5', company: 'Taken Domain LLC', emailDomain: 'jo@taken.com' }, // domain taken: out
+    { id: 'n6', company: 'Wespath Investments', website: 'wespath.org' },   // same domain as n3: out
+  ];
+  const m = buildHubspotMapping(accts, companies);
+  const { rows, skipped } = buildHubspotCreateRows(m, {
+    portalMatch: (a) => (a.company === 'Portal Co' ? { id: '900', name: 'Portal Co' } : null),
+    takenDomains: ['TAKEN.com'],
+    owner: 'dan@example.com',
+  });
+  eq(rows.map(r => r['Tracker Name']), ['Teletower', 'Wespath'], 'create: only companies HubSpot lacks');
+  eq(rows.find(r => r.Name === 'Wespath'), { Name: 'Wespath', 'Company Domain Name': 'wespath.org', 'Website URL': 'https://www.wespath.org/x', 'Company owner': 'dan@example.com', 'Tracker Name': 'Wespath' }, 'create: row filled');
+  eq(rows.find(r => r.Name === 'Teletower')['Company Domain Name'], '', 'create: no domain still created by name');
+  eq(skipped, { inHubspot: 1, inPortal: 1, domainTaken: 1, sameDomain: 1 }, 'create: what was left out, and why');
+  eq(buildHubspotCreateRows(m, { info: (a) => (a.id === 'n2' ? { website: 'teletower.com' } : null) }).rows.find(r => r.Name === 'Teletower')['Company Domain Name'], 'teletower.com', 'create: website from the full record');
+  eq(hubspotCreateFileName(new Date(2026, 10, 11)), 'hubspot-new-companies-2026-11-11.xlsx', 'create: file name');
+  const cwb = new ExcelJS.Workbook();
+  await cwb.xlsx.load(await buildHubspotCreateWorkbook(ExcelJS.Workbook, rows).xlsx.writeBuffer());
+  eq(cwb.worksheets.map(w => w.name), ['Companies'], 'create: one sheet');
+  eq(cwb.getWorksheet('Companies').getRow(1).values.slice(1), CREATE_HEADERS, 'create: headers exact');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -177,3 +177,61 @@ export function hubspotImportFileName(now = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `hubspot-company-import-${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}.xlsx`;
 }
+
+// ── "Export New Companies for HubSpot": the companies to CREATE ──
+//
+// The second file on the tab: the accounts on screen that HubSpot doesn't
+// have yet, for an import with "Create new companies only". An account is
+// left out when it is already there by any route we can see: a HubSpot
+// Company ID in Dan's own export (the mapping), a record in the whole
+// portal's export (`portalMatch`, seHubspotExisting.companyMatcher), or a
+// domain one of those records already has (HubSpot dedupes companies on
+// domain, so a row with a taken domain would only fail or duplicate).
+// Two accounts on one domain make one row: HubSpot would merge them anyway.
+//
+// Standard HubSpot properties only, labelled as HubSpot labels them, so the
+// import maps every column without custom fields being set up first.
+// Tracker Name is ours, for reading the file; leave it unmapped.
+export const CREATE_HEADERS = ['Name', 'Company Domain Name', 'Website URL', 'Company owner', 'Tracker Name'];
+
+/**
+ * The rows to create, from the tab's mapping rows (buildHubspotMapping).
+ * `info(account)` gives the account's full record (website, emailDomain),
+ * `takenDomains` the domains HubSpot already holds, `owner` the Company
+ * owner (Dan's HubSpot email).
+ */
+export function buildHubspotCreateRows(mapping = [], { portalMatch = null, takenDomains = null, owner = '', info = null } = {}) {
+  const taken = new Set([...(takenDomains || [])].map(normalizeDomain).filter(Boolean));
+  for (const r of mapping || []) for (const c of r?.hubspot || []) { const d = normalizeDomain(c?.domain); if (d) taken.add(d); }
+  const rows = [];
+  const skipped = { inHubspot: 0, inPortal: 0, domainTaken: 0, sameDomain: 0 };
+  const seen = new Set();
+  const accountRows = (mapping || []).filter(r => r?.account)
+    .slice().sort((x, y) => trim(x.account.company).localeCompare(trim(y.account.company)));
+  for (const r of accountRows) {
+    if (hubspotIdsOf(r).length) { skipped.inHubspot += 1; continue; }
+    const a = { ...(info ? info(r.account) || {} : {}), ...r.account };
+    const full = { ...a, website: r.account.website || a.website, emailDomain: r.account.emailDomain || a.emailDomain };
+    if (portalMatch && realId(portalMatch(full)?.id)) { skipped.inPortal += 1; continue; }
+    const domain = accountDomain(full);
+    if (domain && taken.has(domain)) { skipped.domainTaken += 1; continue; }
+    if (domain && seen.has(domain)) { skipped.sameDomain += 1; continue; }
+    if (domain) seen.add(domain);
+    const name = trim(r.account.company);
+    rows.push({ Name: name, 'Company Domain Name': domain, 'Website URL': trim(full.website), 'Company owner': trim(owner), 'Tracker Name': name });
+  }
+  return { rows, skipped };
+}
+
+/** The create workbook: one sheet, Companies. */
+export function buildHubspotCreateWorkbook(Workbook, rows) {
+  const wb = new Workbook();
+  wb.created = new Date();
+  addSheet(wb, 'Companies', CREATE_HEADERS, rows);
+  return wb;
+}
+
+/** hubspot-new-companies-YYYY-MM-DD.xlsx, in the viewer's own date. */
+export function hubspotCreateFileName(now = new Date()) {
+  return hubspotImportFileName(now).replace('hubspot-company-import-', 'hubspot-new-companies-');
+}
