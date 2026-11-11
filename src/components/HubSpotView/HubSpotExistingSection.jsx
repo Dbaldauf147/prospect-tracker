@@ -10,6 +10,7 @@ import { DataTable } from '../common/DataTable';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { compactCompanies, compactContacts, companyMatcher, domainKey } from '../../utils/seHubspotExisting';
 import { loadSeHubspot, saveSeHubspot, EMPTY_SE_HUBSPOT } from '../../utils/seHubspotStore';
+import { syncHubspotExportMail, lastExportMailCheck, EXPORT_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
 import styles from './HubSpotMoveTab.module.css';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -27,9 +28,26 @@ export function HubSpotExistingSection({ prospects = [], settings, updateSetting
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
+  const [mailStatus, setMailStatus] = useState(() => lastExportMailCheck());
+  const [checking, setChecking] = useState(false);
+
   useEffect(() => {
     loadSeHubspot().then(setData).catch(err => setError(err.message)).finally(() => setLoaded(true));
+    // The daily Outlook check (HubspotExportMailWatcher) may import while
+    // this tab is open: show its result and the refreshed list.
+    const onCheck = (e) => {
+      setMailStatus(e.detail || lastExportMailCheck());
+      loadSeHubspot().then(setData).catch(() => {});
+    };
+    window.addEventListener(EXPORT_MAIL_EVENT, onCheck);
+    return () => window.removeEventListener(EXPORT_MAIL_EVENT, onCheck);
   }, []);
+
+  const checkMail = async () => {
+    setChecking(true);
+    try { setMailStatus(await syncHubspotExportMail()); }
+    finally { setChecking(false); }
+  };
 
   const save = async (next) => {
     setData(next);
@@ -118,6 +136,16 @@ export function HubSpotExistingSection({ prospects = [], settings, updateSetting
         <label>Contacts export (CSV or Excel)
           <input type="file" accept=".csv,.xlsx,.xls" disabled={!!busy} onChange={e => upload('contacts', e.target.files?.[0])} />
         </label>
+      </div>
+      <div className={styles.controls}>
+        <button type="button" className={styles.btn} disabled={checking} onClick={checkMail}>
+          {checking ? 'Checking Outlook...' : 'Check Outlook now'}
+        </button>
+        <span className={mailStatus && !mailStatus.ok ? styles.error : styles.muted}>
+          The companies list also refreshes on its own from the &quot;Dan&apos;s Company Export&quot; email, checked every
+          6 hours while the app is open.
+          {mailStatus && ` Last check ${new Date(mailStatus.at).toLocaleString()}: ${mailStatus.message}`}
+        </span>
       </div>
       {busy && <div className={styles.muted}>Reading the {busy} export...</div>}
       {error && <div className={styles.error}>{error}</div>}

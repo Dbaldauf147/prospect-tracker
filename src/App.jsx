@@ -37,6 +37,7 @@ import { PrivacyPolicy } from './components/PrivacyPolicy';
 import { UpdateBanner } from './components/UpdateBanner';
 import { OtherTabBanner } from './components/OtherTabBanner';
 import { BackupHealthBanner } from './components/BackupHealthBanner';
+import { HubspotExportMailWatcher } from './components/HubspotExportMailWatcher';
 import { SyncPanel } from './components/SyncPanel';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
@@ -937,6 +938,7 @@ function App() {
       <UpdateBanner />
       <OtherTabBanner />
       <BackupHealthBanner user={user} />
+      {isAdmin && <HubspotExportMailWatcher />}
     </div>
   );
 }
