@@ -11,8 +11,9 @@
 // worth a second look, with why) and the Reference rows (every column of
 // the tab, one row per account); they just aren't written to the file.
 //
-// Every account on the tab goes in, active and inactive, whatever the
-// filters on screen say. Only in HubSpot rows (no account) are left out.
+// The tab passes the rows on screen (its chips, search and column filters
+// applied), so a filtered table exports just those accounts. Only in
+// HubSpot rows (no account) are left out.
 //
 // Pure apart from the Workbook class passed in, so it runs under plain
 // Node in the tests (scripts/hubspotImportFile.test.mjs).

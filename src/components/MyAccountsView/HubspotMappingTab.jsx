@@ -636,15 +636,18 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     XLSX.writeFile(wb, `Only in HubSpot - ${firstName}'s companies - ${new Date().toISOString().slice(0, 10)}.csv`, { bookType: 'csv' });
   };
 
-  // The HubSpot import file (utils/hubspotImportFile.js): every account on
-  // the tab, active and inactive, whatever is filtered on screen.
+  // The HubSpot import file (utils/hubspotImportFile.js): the accounts on
+  // screen, after the chips, the search and the column filters. With
+  // nothing filtered that is every account on the All chip.
   const [exportingImport, setExportingImport] = useState(false);
+  const shownAccountCount = useMemo(() => shownRows.filter(r => r?.account).length, [shownRows]);
   const exportHubspotImportFile = async () => {
     if (exportingImport) return;
     setExportingImport(true); setError('');
     try {
       const reference = columns.map(c => ({ label: c.label, value: c.exportValue || c.getFilterValue || (() => '') }));
-      const sheets = buildHubspotImportSheets(mapping, { reference });
+      if (!shownAccountCount) throw new Error('No My Accounts companies on screen. Clear a filter and try again.');
+      const sheets = buildHubspotImportSheets(shownRows, { reference });
       const { Workbook } = await import('exceljs');
       const buf = await buildHubspotImportWorkbook(Workbook, sheets).xlsx.writeBuffer();
       const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
@@ -848,9 +851,9 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
               >{bulkLabel(shownSuggested.length)}</button>
             )}
             <button type="button" onClick={exportHubspotImportFile} disabled={exportingImport}
-              title="Download an Excel file to import into HubSpot (Companies, Update existing companies only, Create a list from this import). One sheet: a row per HubSpot Company ID, or the domain when there is no ID. Every account goes in, active and inactive, whatever is filtered on screen."
+              title="Download an Excel file to import into HubSpot (Companies, Update existing companies only, Create a list from this import). One sheet: a row per HubSpot Company ID, or the domain when there is no ID. Only the My Accounts companies on screen go in: filter the table first to export just those."
               style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#fff', color: '#1D4ED8', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: exportingImport ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
-            >{'\u21E9'} {exportingImport ? 'Building...' : 'Export HubSpot Import File'}</button>
+            >{'\u21E9'} {exportingImport ? 'Building...' : `Export HubSpot Import File (${fmt(shownAccountCount)})`}</button>
           </>
         )}
       </div>
