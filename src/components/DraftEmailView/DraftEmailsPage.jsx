@@ -7,6 +7,9 @@
 // Tracking and Campaigns are linked: clicking a campaign in the tracking
 // table hops to the Email Campaigns tab with that campaign open.
 //
+// Draft History is the composer's long memory: every draft ever saved or
+// sent, kept indefinitely and tied to the campaign it belongs to.
+//
 // Sent Log sits alongside them but reads the other way round: rather than
 // what this app sent, it is what Outlook sent, read back out of the Sent
 // Items folder. It is what replaced the HubSpot BCC add-in, and it belongs
@@ -20,10 +23,11 @@ import { EmailTrackingView } from '../EmailTrackingView/EmailTrackingView';
 import { SentLogView } from '../SentLogView/SentLogView';
 import { SiteListOverview } from './SiteListOverview';
 import { DansDraftsView } from './DansDraftsView';
+import { DraftHistoryView } from './DraftHistoryView';
 import { MarketUpdatesView } from './MarketUpdatesView';
 import { primarySubject } from '../../utils/campaignSubjects';
 
-const TABS = ['drafts', 'dansdrafts', 'marketupdates', 'campaigns', 'tracking', 'sentlog', 'sitelists'];
+const TABS = ['drafts', 'drafthistory', 'dansdrafts', 'marketupdates', 'campaigns', 'tracking', 'sentlog', 'sitelists'];
 
 export function DraftEmailsPage({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '', onSelectProspect, initialTab = 'drafts' }) {
   const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : 'drafts');
@@ -62,6 +66,7 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', marginBottom: '0.75rem' }}>
         {tabBtn('drafts', 'Drafts')}
+        {tabBtn('drafthistory', 'Draft History')}
         {tabBtn('dansdrafts', "Dan's Drafts")}
         {tabBtn('marketupdates', 'Market Updates')}
         {tabBtn('campaigns', 'Email Campaigns')}
@@ -71,6 +76,14 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
       </div>
       {tab === 'drafts' && (
         <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} cdmName={cdmName} onSelectProspect={onSelectProspect} />
+      )}
+      {tab === 'drafthistory' && (
+        <DraftHistoryView
+          settings={settings}
+          updateSettings={updateSettings}
+          onLoadDraft={() => setTab('drafts')}
+          onOpenCampaign={openCampaign}
+        />
       )}
       {tab === 'dansdrafts' && (
         <DansDraftsView settings={settings} updateSettings={updateSettings} />

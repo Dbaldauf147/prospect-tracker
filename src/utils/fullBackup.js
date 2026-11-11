@@ -240,6 +240,7 @@ export function summarizeBackup(env) {
     hasSettings: !!cloud.userSettings,
     opps2Records: Array.isArray(cloud.opps2?.records) ? cloud.opps2.records.length : 0,
     contractLanguage: Array.isArray(cloud.contractLanguage) ? cloud.contractLanguage.length : 0,
+    emailDraftHistory: Array.isArray(cloud.emailDraftHistory) ? cloud.emailDraftHistory.length : 0,
     skipped: Array.isArray(env.manifest?.skipped) ? env.manifest.skipped.length : 0,
     bytes: Number(env.manifest?.bytes) || 0,
   };
@@ -423,6 +424,14 @@ async function collectFirestore(uid, ctx, onProgress) {
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   });
 
+  // Every draft ever saved from the Draft Emails page, kept indefinitely
+  // (see utils/emailDraftHistory.js), so it belongs in the backup too.
+  out.emailDraftHistory = await step('emailDraftHistory', async () => {
+    const [{ db }, { collection, getDocs }] = await Promise.all([import('../firebase.js'), import('firebase/firestore')]);
+    const snap = await getDocs(collection(db, 'userSettings', uid, 'emailDraftHistory'));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  });
+
   out.opps2 = await step('opps2', async () => {
     const { loadOpps2Newest } = await import('./opps2Store.js');
     return loadOpps2Newest(uid);
@@ -587,6 +596,17 @@ async function restoreCloud(env, uid, say) {
       await setDoc(doc(db, 'userSettings', uid, 'contractLanguage', id), data, { merge: true });
     }
     done.push(`${cloud.contractLanguage.length} contract-language services`);
+  }
+
+  if (Array.isArray(cloud.emailDraftHistory) && cloud.emailDraftHistory.length) {
+    say('Restoring email draft history…');
+    const [{ db }, { doc, setDoc }] = await Promise.all([import('../firebase.js'), import('firebase/firestore')]);
+    for (const entry of cloud.emailDraftHistory) {
+      const { id, ...data } = entry || {};
+      if (!id) continue;
+      await setDoc(doc(db, 'userSettings', uid, 'emailDraftHistory', id), data, { merge: true });
+    }
+    done.push(`${cloud.emailDraftHistory.length} email draft history entries`);
   }
 
   return done;
