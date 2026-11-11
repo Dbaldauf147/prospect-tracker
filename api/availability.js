@@ -9,9 +9,12 @@
 //
 //  - The user's Power Automate flow (a token, no sign-in; it runs in
 //    Microsoft's cloud, not in the browser):
-//      GET  ?token=...  -> { emails, window, getScheduleBody }: who to look
-//              up, and the exact body to hand Graph's getSchedule.
-//      POST { token, schedules } -> stores getSchedule's answer.
+//      GET  ?token=...  -> { emails, attendees, start, end, window }: who to
+//              look up ("a;b" for Find meeting times' Required attendees)
+//              and the window. getScheduleBody is still returned for a flow
+//              built on the earlier raw-Graph steps.
+//      POST { token, suggestions } -> stores Find meeting times' answer;
+//           { token, schedules }  -> stores getSchedule's (older flows).
 //
 // The token is 32 random hex bytes and only maps to a uid; it lets the
 // flow read the list of colleague addresses the user typed and write
@@ -22,7 +25,7 @@ import { adminDb } from './_lib/firebaseAdmin.js';
 import { applyCors, requireAuth, failWith } from './_lib/http.js';
 import {
   AVAILABILITY_MAX_PEOPLE, availabilityEmails, availabilityWindow, getScheduleBody,
-  isValidEmail, normEmail, normalizeSchedules,
+  isValidEmail, normEmail, normalizeSchedules, schedulesFromSuggestions,
 } from '../src/utils/availability.js';
 
 const USERS = 'availability';
@@ -91,14 +94,25 @@ async function handleFlow(req, res) {
     const snap = await db.collection(USERS).doc(uid).get();
     const emails = availabilityEmails(snap.exists ? snap.data()?.people : {});
     const window = availabilityWindow();
-    return res.status(200).json({ emails, count: emails.length, window, getScheduleBody: getScheduleBody(emails, window) });
+    return res.status(200).json({
+      emails,
+      count: emails.length,
+      attendees: emails.join(';'),
+      start: window.start,
+      end: window.end,
+      window,
+      getScheduleBody: getScheduleBody(emails, window),
+    });
   }
 
   if (req.method === 'POST') {
     const body = readBody(req);
     const uid = await uidForToken(db, body.token);
     if (!uid) return res.status(401).json({ error: 'Unknown token' });
-    const schedules = normalizeSchedules(body.schedules ?? body.value ?? body);
+    const fromSuggestions = body.suggestions ?? body.meetingTimeSuggestions;
+    const schedules = fromSuggestions !== undefined
+      ? schedulesFromSuggestions(fromSuggestions)
+      : normalizeSchedules(body.schedules ?? body.value ?? body);
     // The window the flow was told about, so the tab knows which days the
     // data covers. Recomputed rather than trusted from the body.
     const window = availabilityWindow();

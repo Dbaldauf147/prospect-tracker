@@ -72,7 +72,10 @@ function FlowSetup({ token, open, onToggle }) {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const getUrl = `${origin}/api/availability?token=${token}`;
   const postUrl = `${origin}/api/availability`;
-  const postBody = `{"token":"${token}","schedules":@{body('Send_an_HTTP_request')?['value']}}`;
+  const postBody = `{"token":"${token}","suggestions":@{body('Find_meeting_times_(V2)')?['meetingTimeSuggestions']}}`;
+  const field = (name, value) => (
+    <li>{name}: {value}</li>
+  );
   return (
     <div style={{ border: '1px solid #BFDBFE', background: '#EFF6FF', borderRadius: 6, padding: '0.55rem 0.75rem', fontSize: '0.76rem', lineHeight: 1.55 }}>
       <button type="button" onClick={onToggle} style={{ ...btnStyle, border: 'none', background: 'none', padding: 0, fontWeight: 700, color: '#1D4ED8' }}>
@@ -81,9 +84,11 @@ function FlowSetup({ token, open, onToggle }) {
       {open && (
         <div style={{ marginTop: '0.45rem' }}>
           <div>
-            The flow runs under your own Microsoft account, so it sees the same free/busy Outlook&apos;s
-            Scheduling Assistant shows you, and nothing more. It checks everyone on all your opps
-            each time it runs.
+            The flow runs under your own Microsoft account and reads availability with Outlook&apos;s
+            ordinary <strong>Find meeting times</strong> action, the same free/busy the Scheduling
+            Assistant shows you, and nothing more. It checks everyone on all your opps each time it runs.
+            Its last step sends the result to this app, which is outside Microsoft 365: check with IT
+            first if you&apos;re not sure that&apos;s allowed.
           </div>
           <ol style={{ margin: '0.4rem 0 0 1.2rem' }}>
             <li>At make.powerautomate.com, <strong>+ Create</strong> a <strong>Scheduled cloud flow</strong> named &quot;Opp availability&quot;, running <strong>every 1 hour</strong>.</li>
@@ -92,10 +97,17 @@ function FlowSetup({ token, open, onToggle }) {
               <CopyRow value={getUrl} />
             </li>
             <li>
-              Add <strong>Office 365 Outlook, Send an HTTP request</strong>: Method <strong>POST</strong>, URI:
-              <CopyRow value="https://graph.microsoft.com/v1.0/me/calendar/getSchedule" />
-              Content-Type <code>application/json</code>, Body:
-              <CopyRow value="@body('HTTP')?['getScheduleBody']" />
+              Add <strong>Office 365 Outlook, Find meeting times (V2)</strong>. Open <strong>Show all</strong> and set:
+              <ul style={{ margin: '0.2rem 0 0.3rem 1.1rem' }}>
+                {field('Required attendees', <CopyRow value="@{body('HTTP')?['attendees']}" />)}
+                {field('Meeting duration', <strong>30</strong>)}
+                {field('Start time', <CopyRow value="@{body('HTTP')?['start']}" />)}
+                {field('End time', <CopyRow value="@{body('HTTP')?['end']}" />)}
+                {field('Max candidates', <strong>500</strong>)}
+                {field('Minimum attendee percentage', <><strong>0</strong> (so it reports every slot, busy ones included, and each person&apos;s row can be drawn)</>)}
+                {field('Is organizer optional', <><strong>Yes</strong> (so your own calendar doesn&apos;t hide slots)</>)}
+                {field('Activity domain', <strong>Work</strong>)}
+              </ul>
             </li>
             <li>
               Add another <strong>HTTP</strong>: Method <strong>POST</strong>, URI:
@@ -107,7 +119,7 @@ function FlowSetup({ token, open, onToggle }) {
           </ol>
           <div style={{ color: '#475569' }}>
             The token in the first URL is yours: keep it private, it lets the flow read the colleague list and post free/busy.
-            If an action name differs in your flow, change it in the two body(...) expressions to match.
+            If an action name differs in your flow, change it in the body(...) expressions to match. Times outside working hours, or that Outlook didn't offer, show as No data yet.
           </div>
         </div>
       )}

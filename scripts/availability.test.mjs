@@ -9,7 +9,7 @@
 process.env.TZ = 'America/New_York';
 const {
   parseEmailList, availabilityEmails, getScheduleBody, normalizeSchedules,
-  availabilityGrid, freeRanges, availabilityDays, availabilityWindow,
+  availabilityGrid, freeRanges, availabilityDays, availabilityWindow, schedulesFromSuggestions,
 } = await import('../src/utils/availability.js');
 
 let passed = 0, failed = 0;
@@ -91,6 +91,34 @@ check('after 6pm, today is skipped',
   [16, 17]);
 const morning = availabilityGrid(schedules, ['a@se.com'], day, undefined, new Date(2026, 10, 12, 9, 15));
 check('slots already over read as past', morning.everyone.slice(0, 4), ['past', 'past', 'busy', 'busy']);
+
+// ── Find meeting times ────────────────────────────────────────────────────
+// Three 30-minute slots Outlook offered, 9:00 to 10:30 New York on Nov 12.
+const slot = (h, m, avail) => ({
+  confidence: 50,
+  meetingTimeSlot: {
+    start: { dateTime: `2026-11-12T${String(h).padStart(2, '0')}:${m}:00.0000000`, timeZone: 'UTC' },
+    end: { dateTime: `2026-11-12T${String(m === '30' ? h + 1 : h).padStart(2, '0')}:${m === '30' ? '00' : '30'}:00.0000000`, timeZone: 'UTC' },
+  },
+  attendeeAvailability: Object.entries(avail).map(([address, availability]) => ({ attendee: { emailAddress: { address } }, availability })),
+});
+const fmt = schedulesFromSuggestions({ meetingTimeSuggestions: [
+  slot(14, '00', { 'A@se.com': 'busy', 'b@se.com': 'free' }),
+  slot(14, '30', { 'a@se.com': 'free', 'b@se.com': 'tentative' }),
+  slot(15, '00', { 'a@se.com': 'free', 'b@se.com': 'unknown' }),
+] });
+check('one schedule per attendee, emails lowercased', fmt.map(s => s.email), ['a@se.com', 'b@se.com']);
+check('busy slot becomes an item', fmt[0].items, [{ status: 'busy', start: '2026-11-12T14:00:00.000Z', end: '2026-11-12T14:30:00.000Z' }]);
+check('coverage is the offered slots merged', fmt[0].coverage, [{ start: '2026-11-12T14:00:00.000Z', end: '2026-11-12T15:30:00.000Z' }]);
+check('an unknown slot is cut from that person\'s coverage', fmt[1].coverage, [{ start: '2026-11-12T14:00:00.000Z', end: '2026-11-12T15:00:00.000Z' }]);
+const fg = availabilityGrid(fmt, ['a@se.com', 'b@se.com'], day, undefined, new Date(2026, 10, 11));
+const fAt = (row, h, m = 0) => fg.rows[row].cells[(h - 8) * 2 + (m ? 1 : 0)].status;
+check('outside the offered slots is unknown, not free', fAt(0, 8), 'unknown');
+check('offered and busy', fAt(0, 9), 'busy');
+check('offered and free', fAt(0, 9, 30), 'free');
+check('tentative kept', fAt(1, 9, 30), 'tentative');
+check('unknown for that person only', [fAt(0, 10), fAt(1, 10)], ['free', 'unknown']);
+check('the bare suggestions array is accepted', schedulesFromSuggestions([slot(14, '00', { 'a@se.com': 'free' })]).length, 1);
 
 console.log(`${failed ? 'FAIL' : 'PASS'}  availability.test.mjs  ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
