@@ -839,3 +839,26 @@ test('two cost lines with the same line item and type each keep their own fee pi
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
+
+// Fee Unit Count against the cost lines' own counts.
+{
+  const { feeUnitCountMismatches, costLineCountForUnit } = await import('../src/utils/pricingServices.js');
+  const svc = { sites: 12, sites_mandate: 7, accounts: 40 };
+  assert.equal(costLineCountForUnit('Per Site', {}, svc, ['sites_mandate']), 7);
+  assert.equal(costLineCountForUnit('Per Site', {}, svc, ['sites']), 12);
+  assert.equal(costLineCountForUnit('Per Site', { sites_mandate: 5 }, svc, ['sites_mandate']), 5);
+  assert.equal(costLineCountForUnit('Per Account', {}, svc, []), 40);
+  assert.equal(costLineCountForUnit('Fixed', {}, svc, []), null);
+  const lines = [
+    { description: 'A', lineCounts: {} },
+    { description: 'B', lineCounts: { sites_mandate: 9 } },
+    { description: 'C', lineCounts: { sites_mandate: 3 }, ignored: true },
+  ];
+  assert.deepEqual(
+    feeUnitCountMismatches({ unit: 'Per Site', feeCount: 7, lines, serviceCounts: svc, used: ['sites_mandate'] }),
+    [{ description: 'B', count: 9 }],
+  );
+  assert.deepEqual(feeUnitCountMismatches({ unit: 'Per Site', feeCount: null, lines, serviceCounts: svc }), []);
+  assert.deepEqual(feeUnitCountMismatches({ unit: 'Fixed', feeCount: 7, lines, serviceCounts: svc }), []);
+  console.log('ok - fee unit count mismatches');
+}

@@ -1186,3 +1186,19 @@
   background: #4f46e5;
   color: #fff;
 }
+
+/* Fee structure: a fee billing on a different count than its cost lines. */
+.countMismatchBanner {
+  margin: 0.4rem 0;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: var(--font-size-xs);
+}
+
+.countMismatchItem {
+  display: block;
+  margin-top: 0.15rem;
+}

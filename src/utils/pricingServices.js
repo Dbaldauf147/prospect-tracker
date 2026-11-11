@@ -1369,3 +1369,34 @@ export function usageRatesFor(costs, { kwhCount, dthCount, ...opts } = {}) {
   };
   return { perKwh: rateOn('Per kWh', kwhCount), perDth: rateOn('Per Dth', dthCount) };
 }
+
+// The count a cost line is on for a fee's unit, the way the cost table's
+// Unit column shows it: the line's own typed count, else the service's.
+// Per Site reads sites w/ mandate when the service's rate card prices on
+// it, else sites. Null for a unit the cost lines carry no count for.
+const LINE_COUNT_KEYS = { 'Per Site': ['sites_mandate', 'sites'], 'Per Account': ['accounts'] };
+export function costLineCountForUnit(unit, lineCounts = {}, serviceCounts = {}, used = []) {
+  const keys = LINE_COUNT_KEYS[unit];
+  if (!keys) return null;
+  const pick = used?.length ? keys.filter(k => used.includes(k)) : keys;
+  const ok = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
+  for (const k of (pick.length ? pick : keys)) {
+    if (ok(lineCounts?.[k])) return lineCounts[k];
+    if (ok(serviceCounts?.[k])) return serviceCounts[k];
+  }
+  return null;
+}
+
+// The cost lines on a fee whose count for the fee's unit differs from the
+// Unit Count the fee bills on. [{ description, count }], empty when they
+// all agree or there is nothing to compare.
+export function feeUnitCountMismatches({ unit, feeCount, lines = [], serviceCounts = {}, used = [] } = {}) {
+  if (!(typeof feeCount === 'number' && feeCount > 0)) return [];
+  const out = [];
+  for (const it of lines) {
+    if (!it || it.ignored) continue;
+    const n = costLineCountForUnit(unit, it.lineCounts || {}, serviceCounts, used);
+    if (n != null && Math.abs(n - feeCount) > 1e-9) out.push({ description: it.description || 'A cost line', count: n });
+  }
+  return out;
+}
