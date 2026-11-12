@@ -66,7 +66,7 @@ for (const c of contacts) assert.equal(myCdmGate(c), !!accountOf(c), 'the gate a
 
 console.log('dmsWithoutActivity: all assertions passed');
 
-// Hold Off, Lost - Not Sold and Old Client accounts are left out; a
+// Hold Off, Lost - Not Sold, Old Client and Client accounts are left out; a
 // Substatus reads as Hold Off.
 {
   const { DMS_HIDDEN_ACCOUNT_STATUSES, accountStatusOf } = await import('../src/utils/tieredAccountActivity.js');
@@ -82,10 +82,12 @@ console.log('dmsWithoutActivity: all assertions passed');
   const gate = makeMyCdmContactGate({ prospects: ps, cdmName: 'Dan Baldauf' });
   const acc = makeMyCdmContactAccount({ prospects: ps, cdmName: 'Dan Baldauf' });
   const list = decisionMakersWithoutActivity({ contacts: cs, gates, myCdmGate: gate, accountOf: acc, hiddenStatuses: DMS_HIDDEN_ACCOUNT_STATUSES, nowMs: now });
-  assert.deepEqual(list.map(p => p.contact.firstname), ['Active', 'Client'], 'inactive accounts and a substatus are left out');
+  assert.deepEqual(list.map(p => p.contact.firstname), ['Active'], 'inactive accounts, clients and a substatus are left out');
   assert.equal(decisionMakersWithoutActivity({ contacts: cs, gates, myCdmGate: gate, nowMs: now }).length, 6, 'without accountOf nothing is dropped');
   assert.equal(accountStatusOf(ps[4]), 'Hold Off');
   assert.equal(accountStatusOf(ps[0]), 'Prospect');
   assert.equal(accountStatusOf(null), '');
-  console.log('dmsWithoutActivity: inactive accounts left out');
+    const { GAP_FILL_HIDDEN_STATUSES } = await import('../src/utils/hubspotContactGaps.js');
+  assert.equal(GAP_FILL_HIDDEN_STATUSES.includes('Client'), false, 'Gap Fill keeps Clients');
+  console.log('dmsWithoutActivity: inactive accounts and clients left out');
 }
