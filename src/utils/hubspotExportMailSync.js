@@ -14,9 +14,8 @@ import { apiFetch } from './apiFetch';
 import { secureGet, secureSet } from './secureStorage';
 import { userLsGet, userLsSet } from './userLs';
 import { loadSeHubspot, saveSeHubspot } from './seHubspotStore';
-import { mergeCompanies } from './hubspotExportMail.js';
+import { applyToMapping, applyToSeHubspot } from './hubspotExportMailApply.js';
 import { loadHubspotMapping, saveHubspotMapping } from './hubspotMappingStore';
-import { compactMappingCompanies } from './hubspotMapping.js';
 
 export const EXPORT_MAIL_EVENT = 'se-hubspot-export-mail';
 const STATUS_KEY = 'se-hubspot-export-mail-status';
@@ -43,21 +42,15 @@ export async function saveOutlookTokens({ accessToken, refreshToken, expiresIn }
   await secureSet('outlook-token-expiry', String(Date.now() + (expiresIn || 3600) * 1000));
 }
 
-// The Hubspot Mapping subtab's half of a check: the emailed file replaces
-// its companies when the email is one it hasn't read yet. Never throws.
+// The Hubspot Mapping subtab's half of a check (rules in
+// hubspotExportMailApply.js, shared with the server's scheduled check).
+// Never throws.
 async function syncMapping(body) {
   try {
-    const when = new Date(body.receivedAt).toLocaleDateString();
     const data = await loadHubspotMapping();
-    if (data.meta?.mailId === body.messageId) return recordMapping(true, `Up to date with the ${when} email.`);
-    // A file dropped by hand after the email came is newer: leave it.
-    if (data.meta?.at && Date.parse(data.meta.at) >= Date.parse(body.receivedAt)) {
-      return recordMapping(true, `Kept ${data.meta.file || 'the file'} from ${new Date(data.meta.at).toLocaleDateString()}: it is newer than the ${when} email.`);
-    }
-    const companies = compactMappingCompanies(body.rows || []);
-    if (!companies.length) return recordMapping(false, `The ${when} email's file has no companies with a Company name.`);
-    await saveHubspotMapping({ ...data, companies, meta: { file: `${body.subject} email`, at: body.receivedAt, mailId: body.messageId } });
-    return recordMapping(true, `Loaded the ${when} email: ${companies.length} HubSpot companies.`);
+    const { ok, next, message } = applyToMapping(data, body);
+    if (next) await saveHubspotMapping(next);
+    return recordMapping(ok, message);
   } catch (err) {
     return recordMapping(false, err?.message || String(err));
   }
@@ -124,21 +117,9 @@ export async function syncHubspotExportMail() {
     await syncMapping(body);
 
     const data = await loadSeHubspot();
-    if (data.meta?.companiesMailId === body.messageId) {
-      return record(true, `Up to date with the ${new Date(body.receivedAt).toLocaleDateString()} email.`);
-    }
-    const { companies, added, updated } = mergeCompanies(data.companies, body.companies);
-    await saveSeHubspot({
-      ...data,
-      companies,
-      meta: {
-        ...data.meta,
-        companiesFile: `${body.subject} email`,
-        companiesAt: body.receivedAt,
-        companiesMailId: body.messageId,
-      },
-    });
-    return record(true, `Imported the ${new Date(body.receivedAt).toLocaleDateString()} email: ${added} new, ${updated} refreshed (${body.companies.length} in the file).`);
+    const { ok, next, message } = applyToSeHubspot(data, body);
+    if (next) await saveSeHubspot(next);
+    return record(ok, message);
   } catch (err) {
     recordMapping(false, err?.message || String(err));
     return record(false, err?.message || String(err));
@@ -149,4 +130,20 @@ export async function syncHubspotExportMail() {
 export function exportMailCheckDue(hours = 6) {
   const last = lastExportMailCheck();
   return !last?.at || Date.now() - Date.parse(last.at) > hours * 3600 * 1000;
+}
+
+/**
+ * The server's scheduled check for this account (api/hubspot-export-mail.js):
+ * { scheduled, last: { at, ok, message } | null }, or null when it can't be
+ * read. `scheduled` is false until a check from this app has handed the
+ * server an Outlook sign-in to use.
+ */
+export async function scheduledMailCheck() {
+  try {
+    const r = await apiFetch('/api/hubspot-export-mail?action=status');
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
 }

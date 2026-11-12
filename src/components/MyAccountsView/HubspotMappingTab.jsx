@@ -28,7 +28,7 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, hubspotAgentsPatch } from '../../utils/hubspotAgents';
 import { HubspotAgents } from './HubspotAgents';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
-import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
+import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, scheduledMailCheck, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
 import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName, buildHubspotCreateRows, buildHubspotCreateWorkbook, hubspotCreateFileName } from '../../utils/hubspotImportFile';
 
 // Which subtab of the page is open (Mapping or Agents), per viewer.
@@ -146,6 +146,10 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     return () => window.removeEventListener(MAPPING_MAIL_EVENT, onCheck);
   }, []);
   useEffect(() => { hasOutlookConnection().then(setOutlookConnected); }, [mailStatus]);
+  // The server's own check, every 3 hours with no browser open; it uses the
+  // Outlook sign-in the last check from here handed it.
+  const [scheduled, setScheduled] = useState(null);
+  useEffect(() => { scheduledMailCheck().then(setScheduled); }, [mailStatus]);
   const checkMail = async () => {
     setCheckingMail(true);
     try { await syncHubspotExportMail(); setMailStatus(lastMappingMailCheck()); }
@@ -861,7 +865,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
         </div>
       </label>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.75rem', color: '#475569' }}>
-        <span>Or load it from the &quot;Dan&apos;s Company Export&quot; email in Outlook (checked every few hours while the app is open):</span>
+        <span>Or load it from the &quot;Dan&apos;s Company Export&quot; email in Outlook (checked every 3 hours, even with the app closed):</span>
         {outlookConnected ? (
           <button type="button" onClick={checkMail} disabled={checkingMail || busy}
             style={{ ...linkBtn, fontSize: '0.72rem', padding: '1px 8px', cursor: checkingMail ? 'wait' : 'pointer' }}
@@ -875,6 +879,15 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
           </span>
         )}
       </div>
+      {scheduled && (
+        <div style={{ fontSize: '0.72rem', color: scheduled.last && !scheduled.last.ok ? '#B91C1C' : '#64748B' }}>
+          {!scheduled.scheduled
+            ? 'Scheduled check: off until you click Check Outlook now once (or Connect Outlook), which lets the server read the email on its own.'
+            : scheduled.last
+              ? `Scheduled check: ${scheduled.last.message} (${new Date(scheduled.last.at).toLocaleString()})`
+              : 'Scheduled check: on. The first run is within 3 hours.'}
+        </div>
+      )}
       {error && <div style={{ color: '#B91C1C', fontSize: '0.78rem' }}>{error}</div>}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
         {filterBar}

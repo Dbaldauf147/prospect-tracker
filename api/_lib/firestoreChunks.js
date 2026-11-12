@@ -101,3 +101,67 @@ export const MIRROR = {
   // My Accounts > All Missing History, the All Missing Steps total by day.
   missingHistory: 'company-data-missing-history',
 };
+
+// ---- Writing ----------------------------------------------------------
+
+// Characters per chunk. A UTF-16 code unit is at most 3 bytes of UTF-8, so
+// a chunk is at most ~600 KB, under Firestore's 1 MiB per-document cap
+// whatever the text is.
+const WRITE_CHUNK_CHARS = 200 * 1024;
+// Chunks per commit: ten at ~600 KB stays well under the 11 MiB request cap.
+const WRITE_CHUNKS_PER_BATCH = 10;
+
+function splitChars(str, size) {
+  const parts = [];
+  let i = 0;
+  while (i < str.length) {
+    let end = Math.min(str.length, i + size);
+    // Never split a surrogate pair: neither half survives UTF-8 alone.
+    if (end < str.length) {
+      const code = str.charCodeAt(end - 1);
+      if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+    }
+    parts.push(str.slice(i, end));
+    i = end;
+  }
+  return parts;
+}
+
+/**
+ * Write `value` at `ref` in the layout src/utils/chunkedDoc.js reads: a
+ * parent { ...meta, chunkCount, updatedAt, json } and, when the JSON is
+ * too big for one document, a `chunks` subcollection with each slice under
+ * `s`. For server jobs that update a store the browser owns.
+ *
+ * `value` must be plain JSON (what readChunkedValue hands back is).
+ */
+export async function writeChunkedValue(db, ref, value, { meta = {} } = {}) {
+  const json = JSON.stringify(value);
+  const updatedAt = Date.now();
+  const prior = Number((await ref.get()).data()?.chunkCount) || 0;
+  const drop = async (from, to) => {
+    for (let start = from; start < to; start += 400) {
+      const batch = db.batch();
+      for (let i = start; i < Math.min(start + 400, to); i++) batch.delete(ref.collection('chunks').doc(String(i)));
+      await batch.commit();
+    }
+  };
+
+  if (Buffer.byteLength(json, 'utf8') <= 900 * 1024) {
+    await ref.set({ ...meta, chunkCount: 0, updatedAt, json });
+    await drop(0, prior);
+    return;
+  }
+  const parts = splitChars(json, WRITE_CHUNK_CHARS);
+  for (let start = 0; start < parts.length; start += WRITE_CHUNKS_PER_BATCH) {
+    const batch = db.batch();
+    for (let i = start; i < Math.min(start + WRITE_CHUNKS_PER_BATCH, parts.length); i++) {
+      batch.set(ref.collection('chunks').doc(String(i)), { s: parts[i] });
+    }
+    await batch.commit();
+  }
+  // The parent lands last, so a reader never sees a chunkCount whose
+  // chunks aren't all written yet.
+  await ref.set({ ...meta, chunkCount: parts.length, updatedAt, json: '' });
+  if (prior > parts.length) await drop(parts.length, prior);
+}
