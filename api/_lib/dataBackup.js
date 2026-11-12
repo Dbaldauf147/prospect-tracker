@@ -204,8 +204,8 @@ export async function collectUserBackup(db, uid, email) {
 }
 
 // The lookupTables items the nightly backup carries: the Hubspot Mapping
-// export and links, and the Hubspot activity history.
-export const HUBSPOT_LOOKUP_ITEMS = ['hubspot-mapping', 'hubspot-activity'];
+// export and links, the Hubspot activity history, and the contacts export.
+export const HUBSPOT_LOOKUP_ITEMS = ['hubspot-mapping', 'hubspot-activity', 'hubspot-contacts'];
 
 // Their counts, always present (0 when the store is missing), so a wipe
 // that took the whole document still trips the alert.
@@ -218,6 +218,9 @@ export function hubspotLookupCounts(id, value) {
   }
   if (id === 'hubspot-activity') {
     return { hubspotActivities: len(v.activities), hubspotActivityIgnored: len(v.ignored) };
+  }
+  if (id === 'hubspot-contacts') {
+    return { hubspotContacts: len(v.contacts) };
   }
   return {};
 }

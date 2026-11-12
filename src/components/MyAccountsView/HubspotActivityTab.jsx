@@ -7,9 +7,8 @@
 // drop merges into what is there, so history builds up across exports.
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
-import { pastedSheetRows, pickExportFromZip } from '../../utils/hubspotMapping';
+import { readHubspotSheet, usePastedRows } from './hubspotDrop';
 import {
   compactActivities, mergeActivities, activityMatcher, activityRows, othersActivityRows,
   salespeopleSummary, formatActivityDate, activityKey, accountTier,
@@ -19,25 +18,6 @@ const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 const chipStyle = (active) => ({ padding: '0.2rem 0.6rem', borderRadius: 999, border: `1px solid ${active ? '#1D4ED8' : '#E2E8F0'}`, background: active ? '#EFF6FF' : '#fff', color: active ? '#1D4ED8' : '#475569', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' });
 const ghostBtn = { padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #CBD5E1', background: '#fff', color: '#475569', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' };
-
-// IDs are read as the numbers in the cells, not as Excel shows them, so a
-// 12-digit Engagement ID keeps every digit (Excel shows 1.18921E+11). Dates
-// come as Date objects from Excel and as text from a CSV.
-async function readActivitySheet(file) {
-  let name = file.name;
-  let bytes = await file.arrayBuffer();
-  if (/\.zip$/i.test(name)) {
-    const { default: JSZip } = await import('jszip');
-    const zip = await JSZip.loadAsync(bytes);
-    const entry = pickExportFromZip(Object.keys(zip.files).filter(n => !zip.files[n].dir));
-    if (!entry) throw new Error('No CSV or Excel file in that zip.');
-    name = entry;
-    bytes = await zip.files[entry].async('arraybuffer');
-  }
-  const csv = /\.csv$/i.test(name);
-  const wb = XLSX.read(bytes, { type: 'array', raw: csv, cellDates: !csv });
-  return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: true });
-}
 
 // The whole stored email of one activity, over the page. Esc, x or a
 // click outside closes it.
@@ -110,35 +90,15 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
       setBusy(false);
     }
   };
-  const upload = (file) => { if (file) loadRows(() => readActivitySheet(file), file.name); };
+  const upload = (file) => { if (file) loadRows(() => readHubspotSheet(file), file.name); };
   const clearAll = async () => {
     if (!window.confirm(`Remove all ${fmt(data.activities.length)} stored activities? Drop the export again to bring them back.`)) return;
     await onSave({ ...data, activities: [], meta: {} });
     setNote('');
   };
 
-  // Ctrl/Cmd+V of rows copied out of Excel, as on the Mapping subtab: only
-  // when the last click was on this subtab and no text box has focus.
   const rootRef = useRef(null);
-  const clickedInside = useRef(true);
-  const pasteRef = useRef(null);
-  pasteRef.current = (e) => {
-    if (e.defaultPrevented || busy || !clickedInside.current) return;
-    const ae = document.activeElement;
-    const tag = ae?.tagName?.toLowerCase() || '';
-    if (tag === 'input' || tag === 'textarea' || tag === 'select' || ae?.isContentEditable) return;
-    const rows = pastedSheetRows(e.clipboardData?.getData('text/plain') || '');
-    if (!rows.length) return;
-    e.preventDefault();
-    loadRows(() => rows, 'paste');
-  };
-  useEffect(() => {
-    const onPaste = (e) => pasteRef.current?.(e);
-    const onDown = (e) => { clickedInside.current = !!rootRef.current?.contains(e.target); };
-    document.addEventListener('paste', onPaste);
-    document.addEventListener('pointerdown', onDown, true);
-    return () => { document.removeEventListener('paste', onPaste); document.removeEventListener('pointerdown', onDown, true); };
-  }, []);
+  usePastedRows(rootRef, busy, (rows) => loadRows(() => rows, 'paste'));
 
   const match = useMemo(() => activityMatcher(mapping, accounts), [mapping, accounts]);
   const allRows = useMemo(() => activityRows(data.activities, match, cdmName), [data.activities, match, cdmName]);

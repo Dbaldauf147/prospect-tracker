@@ -244,6 +244,7 @@ export function summarizeBackup(env) {
     hubspotMappingLinks: cloud.hubspotMapping?.links && typeof cloud.hubspotMapping.links === 'object' ? Object.keys(cloud.hubspotMapping.links).length : 0,
     hubspotMappingCompanies: Array.isArray(cloud.hubspotMapping?.companies) ? cloud.hubspotMapping.companies.length : 0,
     hubspotActivities: Array.isArray(cloud.hubspotActivity?.activities) ? cloud.hubspotActivity.activities.length : 0,
+    hubspotContacts: Array.isArray(cloud.hubspotContacts?.contacts) ? cloud.hubspotContacts.contacts.length : 0,
     skipped: Array.isArray(env.manifest?.skipped) ? env.manifest.skipped.length : 0,
     bytes: Number(env.manifest?.bytes) || 0,
   };
@@ -446,6 +447,10 @@ async function collectFirestore(uid, ctx, onProgress) {
     const { loadHubspotActivity } = await import('./hubspotMappingStore.js');
     return loadHubspotActivity();
   });
+  out.hubspotContacts = await step('hubspotContacts', async () => {
+    const { loadHubspotContacts } = await import('./hubspotMappingStore.js');
+    return loadHubspotContacts();
+  });
 
   out.opps2 = await step('opps2', async () => {
     const { loadOpps2Newest } = await import('./opps2Store.js');
@@ -595,6 +600,19 @@ export function mergeHubspotActivityRestore(current, backup, mergeActivities) {
   return { ...bak, ...cur, activities, ignored, meta };
 }
 
+/**
+ * The Hubspot contacts export with a backup's copy put back: the backup's
+ * contacts only when the current store has none, since the current export
+ * is the newer one and each drop replaces the whole list. Pure, for tests.
+ */
+export function mergeHubspotContactsRestore(current, backup) {
+  const cur = current && typeof current === 'object' ? current : {};
+  const bak = backup && typeof backup === 'object' ? backup : {};
+  const curContacts = Array.isArray(cur.contacts) ? cur.contacts : [];
+  if (curContacts.length || !Array.isArray(bak.contacts) || !bak.contacts.length) return { ...cur, contacts: curContacts, meta: cur.meta || {} };
+  return { ...cur, contacts: bak.contacts, meta: bak.meta || {} };
+}
+
 async function restoreCloud(env, uid, say) {
   const cloud = env.firestore || {};
   const done = [];
@@ -662,7 +680,7 @@ async function restoreCloud(env, uid, say) {
 
   // The Hubspot stores are put back ADDITIVELY, so a restore from an older
   // file can't take away anything added since: see mergeHubspot*Restore above.
-  if (cloud.hubspotMapping || cloud.hubspotActivity) {
+  if (cloud.hubspotMapping || cloud.hubspotActivity || cloud.hubspotContacts) {
     say('Restoring Hubspot mapping and activity…');
     const store = await import('./hubspotMappingStore.js');
     const { mergeActivities } = await import('./hubspotActivity.js');
@@ -675,6 +693,11 @@ async function restoreCloud(env, uid, say) {
       const next = mergeHubspotActivityRestore(await store.loadHubspotActivity(), cloud.hubspotActivity, mergeActivities);
       await store.saveHubspotActivity(next);
       done.push(`${next.activities.length} Hubspot activities`);
+    }
+    if (cloud.hubspotContacts && typeof cloud.hubspotContacts === 'object') {
+      const next = mergeHubspotContactsRestore(await store.loadHubspotContacts(), cloud.hubspotContacts);
+      await store.saveHubspotContacts(next);
+      done.push(`${next.contacts.length} Hubspot contacts`);
     }
   }
 

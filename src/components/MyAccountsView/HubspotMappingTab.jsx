@@ -18,7 +18,7 @@ import { DataTable } from '../common/DataTable';
 import { domainKey, companyMatcher } from '../../utils/seHubspotExisting';
 import { loadSeHubspot } from '../../utils/seHubspotStore';
 import { compactMappingCompanies, pastedSheetRows, pickExportFromZip, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE, otherOwners, ownedByOthersRows, splitNameList } from '../../utils/hubspotMapping';
-import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING, loadHubspotActivity, saveHubspotActivity, EMPTY_HUBSPOT_ACTIVITY } from '../../utils/hubspotMappingStore';
+import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING, loadHubspotActivity, saveHubspotActivity, EMPTY_HUBSPOT_ACTIVITY, loadHubspotContacts, saveHubspotContacts, EMPTY_HUBSPOT_CONTACTS } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { targetAccountRows, targetSuggestionsForAccounts, targetAcceptPatch, mappedTargetNames } from '../../utils/targetAccountMatch';
@@ -28,6 +28,7 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, hubspotAgentsPatch } from '../../utils/hubspotAgents';
 import { HubspotAgents } from './HubspotAgents';
 import { HubspotActivityTab } from './HubspotActivityTab';
+import { HubspotContactsTab } from './HubspotContactsTab';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
 import { HubspotMappingBackup } from './HubspotMappingBackup';
 import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, scheduledMailCheck, checkGmailNow, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
@@ -35,7 +36,7 @@ import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFile
 
 // Which subtab of the page is open, per viewer.
 const SUBTAB_KEY = 'hubspot-mapping-subtab';
-const SUBTABS = [['mapping', 'Mapping'], ['activity', 'Activity'], ['others', "Others' Activity"], ['agents', 'Agents']];
+const SUBTABS = [['mapping', 'Mapping'], ['activity', 'Activity'], ['others', "Others' Activity"], ['contacts', 'Contacts'], ['agents', 'Agents']];
 const readSubtab = () => {
   try { const t = localStorage.getItem(SUBTAB_KEY); return SUBTABS.some(([k]) => k === t) ? t : 'mapping'; } catch { return 'mapping'; }
 };
@@ -143,6 +144,18 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   useEffect(() => {
     loadHubspotActivity().then(setActivity).catch(err => setActivityError(err.message)).finally(() => setActivityLoaded(true));
   }, []);
+  // The Contacts subtab's contacts export (HubspotContactsTab).
+  const [contactsData, setContactsData] = useState(EMPTY_HUBSPOT_CONTACTS);
+  const [contactsLoaded, setContactsLoaded] = useState(false);
+  const [contactsError, setContactsError] = useState('');
+  useEffect(() => {
+    loadHubspotContacts().then(setContactsData).catch(err => setContactsError(err.message)).finally(() => setContactsLoaded(true));
+  }, []);
+  const saveContacts = async (next) => {
+    setContactsData(next);
+    try { await saveHubspotContacts(next); setContactsError(''); }
+    catch (err) { setContactsError(`Couldn't save the contacts: ${err.message}`); }
+  };
   const saveActivity = async (next) => {
     setActivity(next);
     try { await saveHubspotActivity(next); setActivityError(''); }
@@ -797,6 +810,27 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const closeOthers = useCallback(() => setShowOthers(false), []);
 
   const m = data.meta || {};
+  if (subtab === 'contacts') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+        {subtabBar}
+        {contactsError && <div style={{ color: '#B91C1C', fontSize: '0.78rem' }}>{contactsError}</div>}
+        <HubspotContactsTab
+          data={contactsData}
+          onSave={saveContacts}
+          loaded={contactsLoaded}
+          mapping={mapping}
+          accounts={withNames}
+          byId={byId}
+          onSelect={onSelect}
+          cdmName={cdmName}
+          hasMappingExport={data.companies.length > 0}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      </div>
+    );
+  }
   if (subtab === 'activity' || subtab === 'others') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
