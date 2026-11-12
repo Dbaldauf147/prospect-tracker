@@ -7,7 +7,7 @@ import { useState, useMemo, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
 import { readHubspotSheet, usePastedRows } from './hubspotDrop';
 import { compactContacts, contactMatcher, contactRows, contactOwnerSummary } from '../../utils/hubspotContacts';
-import { accountTier, formatActivityDate } from '../../utils/hubspotActivity';
+import { accountTier, formatActivityDate, stampSortValue } from '../../utils/hubspotActivity';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -23,7 +23,7 @@ const text = (key, label, width, extra = {}) => ({
 });
 const dateCol = (key, label) => ({
   key, label, defaultWidth: 190,
-  getSortValue: r => r[key] || null,
+  getSortValue: r => stampSortValue(r[key]),
   getFilterValue: r => formatActivityDate(r[key]), exportValue: r => formatActivityDate(r[key]),
   render: r => (r[key] ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatActivityDate(r[key])}</span> : blank),
 });

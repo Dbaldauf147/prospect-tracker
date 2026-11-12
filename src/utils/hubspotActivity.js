@@ -342,6 +342,16 @@ export function salespeopleSummary(rows = []) {
 /** A My Accounts account's tier, as the My Accounts Tier column shows it, '' for none. */
 export const accountTier = (account) => String(account?.tierLabel || account?.myTier || account?.tier || '').trim();
 
+/**
+ * A "YYYY-MM-DD HH:MM" stamp as a number to sort on (202610191700), null
+ * for none. DataTable compares numerically first, and parseFloat of the
+ * stamp is just the year, so every date in a year would tie.
+ */
+export const stampSortValue = (s) => {
+  const d = String(s || '').replace(/\D/g, '');
+  return d ? Number(d) : null;
+};
+
 /** "YYYY-MM-DD HH:MM" as "Oct 19, 2026 5:00 PM", '' for none. */
 export function formatActivityDate(s) {
   const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/);
@@ -350,4 +360,53 @@ export function formatActivityDate(s) {
   const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][mo - 1];
   const hr = h % 12 || 12;
   return `${month} ${d}, ${y} ${hr}:${pad(mi)} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/**
+ * Others' Activity as the Issues tab takes it: the rows on one of My
+ * Accounts that somebody other than `me` logged and that aren't ignored
+ * (data.ignored), one compact record each, newest first.
+ */
+export function othersActivityIssueRecords(data, match = () => null, me = '') {
+  const ignored = new Set(data?.ignored || []);
+  return othersActivityRows(activityRows(data?.activities || [], match, me), me)
+    .filter(r => !ignored.has(activityKey(r)))
+    .map(r => ({
+      key: activityKey(r),
+      accountId: r.account?.id || '',
+      company: r.account?.company || '',
+      salesperson: r.salesperson,
+      date: r.date,
+      type: r.type,
+      subject: r.subject || '',
+      hubspotCompany: r.companyName || '',
+    }))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+/**
+ * The Issues tab's rows for those records. With `prospects` given, a row
+ * whose account is gone (merged or deleted) is left out.
+ */
+export function othersActivityIssues(records = [], { prospects = [] } = {}) {
+  const byId = new Map((prospects || []).map(p => [p.id, p]));
+  const check = byId.size > 0;
+  const out = [];
+  for (const r of records || []) {
+    if (!r || !r.key) continue;
+    const live = r.accountId ? byId.get(r.accountId) : null;
+    if (check && r.accountId && !live) continue;
+    const what = [r.type || 'Activity', r.date ? `on ${formatActivityDate(r.date)}` : ''].filter(Boolean).join(' ');
+    out.push({
+      id: `hubspot-others-activity:${r.key}`,
+      source: 'Hubspot Mapping',
+      type: 'Activity by another salesperson',
+      company: live?.company || r.company || r.hubspotCompany || '-',
+      prospectId: live?.id || r.accountId || null,
+      daysUntil: null,
+      expirationDate: null,
+      detail: `${r.salesperson || 'Someone else'} logged ${what} in HubSpot${r.subject ? ` ("${r.subject}")` : ''}. Ignore it on My Accounts > Hubspot Mapping > Activity > Others' Activity to clear it.`,
+    });
+  }
+  return out;
 }

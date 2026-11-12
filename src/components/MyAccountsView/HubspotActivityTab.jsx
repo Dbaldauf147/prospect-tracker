@@ -11,7 +11,7 @@ import { DataTable } from '../common/DataTable';
 import { readHubspotSheet, usePastedRows } from './hubspotDrop';
 import {
   compactActivities, mergeActivities, activityMatcher, activityRows, othersActivityRows,
-  salespeopleSummary, formatActivityDate, activityKey, accountTier,
+  salespeopleSummary, formatActivityDate, activityKey, accountTier, stampSortValue,
 } from '../../utils/hubspotActivity';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -138,7 +138,7 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
   const columns = useMemo(() => [
     {
       key: 'date', label: 'Activity Date', defaultWidth: 205,
-      getSortValue: r => r.date || null,
+      getSortValue: r => stampSortValue(r.date),
       getFilterValue: r => formatActivityDate(r.date), exportValue: r => formatActivityDate(r.date),
       render: r => (r.date ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatActivityDate(r.date)}</span> : blank),
     },

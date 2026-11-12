@@ -673,6 +673,7 @@ async function loadMirroredStores() {
     import('./clientManagerStore.js'),
     import('./issueSnoozeStore.js'),
     import('./myAccountsFlagsStore.js'),
+    import('./hubspotOthersActivityStore.js'),
     import('./myAccountsSince.js'),
     import('./relationshipLog.js'),
     import('./pipelineDashboardStore.js'),
