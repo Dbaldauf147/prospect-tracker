@@ -227,6 +227,16 @@ export function buildResolution(row, ctx) {
         async save(v) { await setOppBfoLink(uid, r.oppId, v.bfoLink.trim()); },
       };
 
+    case 'bfoCompanyName':
+      if (!prospect) return null;
+      return {
+        title: 'Set BFO Company Name',
+        subtitle,
+        note: 'The account name to search for in BFO. Once set, the company goes into the Agents tab\'s BFO History prompt.',
+        fields: [field('bfoCompanyName', 'BFO Company Name', 'text', prospect.bfoCompanyName, { start: prospect.bfoCompanyName || prospect.company || '' })],
+        async save(v) { await updateProspect(prospect.id, { bfoCompanyName: String(v.bfoCompanyName || '').trim() }); },
+      };
+
     case 'newBfo': {
       const fields = [];
       const notes = [];
