@@ -7,7 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { metInPersonUpdate } from '../../utils/metInPerson';
-import { toggleContactInEvents } from '../../utils/eventsStore';
+import { toggleContactInEvents, addContactToNewEvent } from '../../utils/eventsStore';
 import { saveTagReview } from '../../utils/contactTagReview';
 import { DataTable } from '../common/DataTable';
 import {
@@ -19136,6 +19136,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           onSaveTagPresets={(list) => updateSettings({ tagPresets: list })}
           events={settings?.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
+          onAddContactEvent={(ev, c) => updateSettings({ events: addContactToNewEvent(settings?.events || [], ev, c) })}
           companyContacts={(hubspotContacts || []).filter(c => {
             const cCompany = String(c?.company || '').trim().toLowerCase();
             const tgt = String(editingContact?.company || '').trim().toLowerCase();

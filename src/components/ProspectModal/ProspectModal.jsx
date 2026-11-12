@@ -84,6 +84,7 @@ import { RelationshipPanel } from '../Relationship/RelationshipPanel';
 import { estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
 import { EmailDomainsField } from './EmailDomainsField';
 import { BfoNamesField } from './BfoNamesField';
+import { ContactEventsField } from './ContactEventsField';
 import { bfoCompanyNamesOf, markedNoBfoName } from '../../utils/bfoCompanyNames';
 import { emailSuggestions } from '../../utils/emailSuggestions';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
@@ -114,7 +115,7 @@ import PortfolioTransactions from './PortfolioTransactions';
 import { PortfolioCompanyLinkPicker } from './PortfolioCompanyLinkPicker';
 import { siteListFacts as computeSiteListFacts, siteListScreeningRows, formatSqft } from '../../utils/siteListFacts';
 import { annualSavingsFromWorkbook } from '../../utils/analysisWorkbookFigures';
-import { isContactInEvent, toggleContactInEvents, titleOnlyAttendeesForCompany } from '../../utils/eventsStore';
+import { toggleContactInEvents, addContactToNewEvent, titleOnlyAttendeesForCompany } from '../../utils/eventsStore';
 import { normalizeCompany as normalizeCompanyName } from '../../utils/companyNorm';
 // Aliased: `setClientManager` is also the name of this modal's own state
 // setter for the resolved value.
@@ -1139,7 +1140,7 @@ function findPortfolioProspect(row, byName, byId) {
 // can share the exact same auto-fill behavior as this modal.
 
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, onAddContactEvent = null, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [] }) {
   const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -3211,36 +3212,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} /></div>
           <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>Events</label>
-            {(!cid) ? (
-              <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.3rem 0' }}>Save the contact first to add them to events.</div>
-            ) : events.length === 0 ? (
-              null
-            ) : (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', padding: '0.4rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', maxHeight: 120, overflowY: 'auto' }}>
-                {events.map(ev => {
-                  const inEvent = isContactInEvent(ev, cid);
-                  return (
-                    <button
-                      key={ev.id}
-                      type="button"
-                      onClick={() => onToggleContactEvent && onToggleContactEvent(ev.id, contact)}
-                      title={inEvent ? 'Remove from this event' : 'Add to this event'}
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                        padding: '0.2rem 0.55rem', borderRadius: 999,
-                        fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
-                        background: inEvent ? '#DCFCE7' : '#F8FAFC',
-                        border: `1px solid ${inEvent ? '#86EFAC' : '#CBD5E1'}`,
-                        color: inEvent ? '#166534' : '#475569',
-                      }}
-                    >
-                      <span style={{ fontWeight: 800 }}>{inEvent ? '✓' : '+'}</span>
-                      {ev.name || 'Untitled event'}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <ContactEventsField events={events} contact={contact} cid={cid} onToggle={onToggleContactEvent} onAdd={onAddContactEvent} />
           </div>
           <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>CC Emails</label>
@@ -15493,6 +15465,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveTagPresets={(list) => updateSettings({ tagPresets: list })}
           events={settings.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settingsRef.current.events || [], eventId, c) })}
+          onAddContactEvent={(ev, c) => updateSettings({ events: addContactToNewEvent(settingsRef.current.events || [], ev, c) })}
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
           companyNames={(prospects || []).map(p => p.company).filter(Boolean)}

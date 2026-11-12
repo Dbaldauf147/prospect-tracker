@@ -90,3 +90,28 @@ export function titleOnlyAttendeesForCompany(events, names, normalize) {
   for (const e of out) e.events.sort((x, y) => String(y.date).localeCompare(String(x.date)));
   return out.sort((x, y) => (x.decisionMaker === y.decisionMaker ? x.title.localeCompare(y.title) : x.decisionMaker ? -1 : 1));
 }
+
+// A new event with `contact` as its first attendee, added to the list. For
+// tagging somebody with an event they went to that isn't on the Events page
+// yet (the contact popup's "+ New event"). `date` is YYYY-MM-DD or blank.
+export function newEventId() {
+  return `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function addContactToNewEvent(events, { name, date = '' } = {}, contact) {
+  const list = Array.isArray(events) ? events : [];
+  const title = cleanText(name);
+  if (!title || !contactKey(contact)) return list;
+  return [...list, { id: newEventId(), name: title, date: String(date || ''), location: '', notes: '', attendees: [attendeeFromContact(contact)] }];
+}
+
+// Events newest first, undated ones last, for the contact popup's chips.
+export function eventsNewestFirst(events) {
+  return [...(Array.isArray(events) ? events : [])].sort((a, b) => {
+    const da = String(a?.date || ''), db = String(b?.date || '');
+    if (da && db) return db.localeCompare(da);
+    if (da) return -1;
+    if (db) return 1;
+    return String(a?.name || '').localeCompare(String(b?.name || ''));
+  });
+}

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { companyOverrideUpdate } from '../utils/contactCompanyOverride';
 import { metInPersonUpdate } from '../utils/metInPerson';
 import { recipientMapSaver } from '../utils/recipientMaps';
+import { toggleContactInEvents, addContactToNewEvent } from '../utils/eventsStore';
 
 // The settings-backed half of ContactEditModal's props, in one place.
 //
@@ -103,6 +104,11 @@ export function useContactEditSettings({ settings, updateSettings }) {
       // See utils/tagPresets.js.
       tagPresets: settings?.tagPresets || [],
       onSaveTagPresets: (list) => updateSettings?.({ tagPresets: list }),
+      // The Events page's events, for the popup's Events chips: tick the
+      // ones the contact went to, or add one that isn't there yet.
+      events: settings?.events || [],
+      onToggleContactEvent: (eventId, c) => updateSettings?.({ events: toggleContactInEvents(settings?.events || [], eventId, c) }),
+      onAddContactEvent: (ev, c) => updateSettings?.({ events: addContactToNewEvent(settings?.events || [], ev, c) }),
     };
   }, [settings, updateSettings]);
 }
