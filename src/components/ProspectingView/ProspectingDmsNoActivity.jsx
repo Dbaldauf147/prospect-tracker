@@ -26,6 +26,13 @@ const chipStyle = (active) => ({ padding: '0.2rem 0.65rem', borderRadius: 999, b
 const linkBtn = { background: 'none', border: 'none', padding: 0, font: 'inherit', color: '#2563EB', cursor: 'pointer', textAlign: 'left' };
 const nameOf = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
 const linkedinOf = (c) => c?.hs_linkedin_url || c?.linkedin_url || c?.hs_linkedinid || '';
+// Blank, non-numeric or missing reads as no figure (null), so it sorts last.
+const sitesOf = (a) => {
+  const v = a?.numberOfSites;
+  if (v == null || v === '') return null;
+  const n = Number(String(v).replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+};
 const toIso = (ms) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -177,6 +184,17 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       getSortValue: r => String(r.account?.subVertical || '').trim().toLowerCase() || null,
       getFilterValue: r => String(r.account?.subVertical || '').trim(), exportValue: r => String(r.account?.subVertical || '').trim(),
       render: r => String(r.account?.subVertical || '').trim() || blank,
+    },
+    {
+      // The company pop-up's Sites box (numberOfSites).
+      key: 'sites', label: 'Sites', defaultWidth: 90,
+      headerTitle: 'The account\'s site count, from the Sites box on the company pop-up.',
+      getSortValue: r => sitesOf(r.account),
+      getFilterValue: r => (sitesOf(r.account) == null ? '' : fmt(sitesOf(r.account))),
+      exportValue: r => sitesOf(r.account) ?? '',
+      render: r => (sitesOf(r.account) == null
+        ? blank
+        : <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(sitesOf(r.account))}</span>),
     },
     {
       key: 'status', label: 'Status', defaultWidth: 130,
