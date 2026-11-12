@@ -1,7 +1,7 @@
 // Assertion tests for the BFO History paste parser and the Agents task's
 // company list. Plain Node, no framework. Run:
 //   node scripts/bfoHistory.test.mjs
-import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, BFO_HISTORY_HEADER } from '../src/utils/bfoHistory.js';
+import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, bfoHistoryMissingNameIssues, BFO_HISTORY_HEADER } from '../src/utils/bfoHistory.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -54,6 +54,20 @@ check('targets: one per company, dm counts, freshness', targets.map(t => [t.comp
   ['Acme', 'ACME Corp', 2, false],
   ['Beta', '', 1, true],
 ]);
+
+// Issues tab rows: only the companies with no BFO Company Name.
+{
+  const targets = [
+    { prospect: { id: 'a' }, company: 'Anderson Capital', bfoCompanyName: '', dmCount: 1 },
+    { prospect: { id: 'b' }, company: 'CBRE', bfoCompanyName: 'CBRE INVESTMENT', dmCount: 2 },
+    { prospect: { id: 'c' }, company: 'CIBC', bfoCompanyName: '', dmCount: 4 },
+  ];
+  const rows = bfoHistoryMissingNameIssues(targets);
+  check('missing-name issues: one per nameless company', rows.map(r => r.id), ['bfo-history-no-name:a', 'bfo-history-no-name:c']);
+  check('missing-name issue carries the fix kind and company', [rows[1].type, rows[1].company, rows[1].prospectId, rows[1].resolve.kind], ['BFO Company Name missing', 'CIBC', 'c', 'bfoCompanyName']);
+  check('missing-name issue pluralises DMs', rows[1].detail.includes('4 DMs without activity'), true);
+  check('missing-name issues: empty input', bfoHistoryMissingNameIssues(null), []);
+}
 
 if (failures) {
   console.log(`\n${failures} failure(s)`);

@@ -108,3 +108,26 @@ export function bfoHistoryTargets(entries, accountOf, nowMs = Date.now()) {
   }
   return [...byId.values()].sort((a, b) => a.company.localeCompare(b.company));
 }
+
+// Issues tab rows for the BFO History task: every company on it with no BFO
+// Company Name, which leaves it out of the prompt (the agent has nothing to
+// search BFO for, so its opportunities never get pulled). `targets` is
+// bfoHistoryTargets' output; the row clears once the name is filled in.
+export function bfoHistoryMissingNameIssues(targets) {
+  const out = [];
+  for (const t of targets || []) {
+    if (t.bfoCompanyName || !t.prospect?.id) continue;
+    out.push({
+      id: `bfo-history-no-name:${t.prospect.id}`,
+      source: 'Agents',
+      type: 'BFO Company Name missing',
+      company: t.company || '-',
+      prospectId: t.prospect.id,
+      daysUntil: null,
+      expirationDate: null,
+      resolve: { kind: 'bfoCompanyName' },
+      detail: `On the BFO History task (${t.dmCount} DM${t.dmCount === 1 ? '' : 's'} without activity) but has no BFO Company Name, so its BFO opps can't be pulled`,
+    });
+  }
+  return out;
+}

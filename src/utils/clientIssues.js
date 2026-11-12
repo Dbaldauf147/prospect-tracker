@@ -876,7 +876,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 //
 // Service Exploration Coverage is deliberately not among them — see
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], commissionUploads = null, hubspotOthersActivity = [], hubspotGapFill = [], now = new Date() }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], commissionUploads = null, hubspotOthersActivity = [], hubspotGapFill = [], bfoHistoryMissing = [], now = new Date() }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
   // handed to the opp-derived detectors so every issue row names its opp by
@@ -914,5 +914,8 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   // Contacts the HubSpot export can add to, or fill on, an active My
   // Accounts company (Hubspot Mapping > Gap Fill), one row per account.
   issues.push(...gapFillIssues(hubspotGapFill, { prospects }));
+  // Companies on the Agents tab's BFO History task with no BFO Company
+  // Name (shown as "Missing" there), so the prompt has to skip them.
+  issues.push(...bfoHistoryMissing);
   return issues;
 }
