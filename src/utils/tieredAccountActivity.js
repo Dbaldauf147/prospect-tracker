@@ -377,3 +377,21 @@ export function rosterActivityPeople({ contacts, gates, myCdmGate = null, outrea
   if (gates) eachRosterMember({ contacts, gates, rosters, outreachIndex, localFields }, (i, contact, lastMs) => people[i].push({ contact, lastMs }));
   return rosters.map((r, i) => ({ key: r.key, label: r.label, people: people[i] }));
 }
+
+// Prospecting > DMs Without Activity: the Decision Makers roster above (the
+// same people the History chart counts) with no activity at all, or none
+// in the last `days` days. Never-reached first, then the longest since,
+// then by name.
+export function decisionMakersWithoutActivity({
+  contacts, gates, myCdmGate = null, outreachIndex = null, localFields = null,
+  days = null, nowMs = Date.now(),
+} = {}) {
+  const people = rosterActivityPeople({ contacts, gates, myCdmGate, outreachIndex, localFields })
+    .find(r => r.key === 'decisionMakers')?.people || [];
+  const cutoff = days == null ? null : nowMs - days * MS_PER_DAY;
+  return people
+    .filter(p => p.lastMs == null || (cutoff != null && p.lastMs < cutoff))
+    .sort((a, b) => (a.lastMs == null ? -1 : 0) - (b.lastMs == null ? -1 : 0)
+      || (a.lastMs ?? 0) - (b.lastMs ?? 0)
+      || nameOf(a.contact).localeCompare(nameOf(b.contact)));
+}

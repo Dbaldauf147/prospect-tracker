@@ -36,12 +36,14 @@ function prospectDomains(p) {
 }
 
 /**
- * A predicate (contact) => boolean, true when the contact's company is a
- * prospect on `cdmName`'s CDM. With no CDM name set there is nobody to
- * scope to, so every contact passes.
+ * A function (contact) => the prospect it is paired with when that
+ * prospect is on `cdmName`'s CDM, else null. The pairing is the gate's
+ * below, so a contact the gate lets through always has its account here.
+ * With no CDM name set there is nobody to scope to: every contact is let
+ * through by the gate, and this returns the paired prospect whoever's it is.
  */
-export function makeMyCdmContactGate({ prospects = [], cdmName = '', localFields = null } = {}) {
-  if (!String(cdmName || '').trim()) return () => true;
+export function makeMyCdmContactAccount({ prospects = [], cdmName = '', localFields = null } = {}) {
+  const anyCdm = !String(cdmName || '').trim();
   // First prospect wins on a duplicate name or domain, as it does in the
   // table's own lookup (Array.find).
   const byName = new Map();
@@ -53,7 +55,7 @@ export function makeMyCdmContactGate({ prospects = [], cdmName = '', localFields
     for (const d of prospectDomains(p)) if (!byDomain.has(d)) byDomain.set(d, p);
   }
   return (c) => {
-    if (!c) return false;
+    if (!c) return null;
     const local = localFields ? localFields[String(c.id || c.vid || '')] : null;
     const override = local && typeof local._companyOverride === 'string' ? local._companyOverride : '';
     const company = String(override || c.company || '').toLowerCase().trim();
@@ -66,6 +68,17 @@ export function makeMyCdmContactGate({ prospects = [], cdmName = '', localFields
       const domain = at >= 0 ? email.slice(at + 1).trim() : '';
       if (domain && !FREE_MAIL.has(domain)) p = byDomain.get(domain) || null;
     }
-    return !!p && matchesCdm(p.cdm, cdmName);
+    return p && (anyCdm || matchesCdm(p.cdm, cdmName)) ? p : null;
   };
+}
+
+/**
+ * A predicate (contact) => boolean, true when the contact's company is a
+ * prospect on `cdmName`'s CDM. With no CDM name set there is nobody to
+ * scope to, so every contact passes.
+ */
+export function makeMyCdmContactGate({ prospects = [], cdmName = '', localFields = null } = {}) {
+  if (!String(cdmName || '').trim()) return () => true;
+  const accountOf = makeMyCdmContactAccount({ prospects, cdmName, localFields });
+  return (c) => !!accountOf(c);
 }
