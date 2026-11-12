@@ -99,6 +99,13 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
         : (r.account?.company || r.contact.company || blank)),
     },
     {
+      key: 'bfoCompanyName', label: 'BFO Company Name', defaultWidth: 200,
+      headerTitle: 'The account\'s name as it appears in BFO (the company record\'s BFO Company Name).',
+      getSortValue: r => String(r.account?.bfoCompanyName || '').trim().toLowerCase() || null,
+      getFilterValue: r => String(r.account?.bfoCompanyName || '').trim(), exportValue: r => String(r.account?.bfoCompanyName || '').trim(),
+      render: r => String(r.account?.bfoCompanyName || '').trim() || blank,
+    },
+    {
       key: 'tier', label: 'Tier', defaultWidth: 100,
       getSortValue: r => r.tier || null, getFilterValue: r => r.tier, exportValue: r => r.tier,
       render: r => r.tier || blank,
