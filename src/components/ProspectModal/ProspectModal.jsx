@@ -3684,7 +3684,8 @@ function EquipmentByPropertyType({ sites, propertyType, equipment, onPick }) {
   );
 }
 
-function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
+// `customLabel(text)` words the "use what I typed" row (default: Use "text").
+function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true, customLabel = null }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0, up: false });
@@ -3808,7 +3809,7 @@ function SearchableSelect({ options, value, onChange, placeholder = 'Select…',
                 style={{ padding: '0.35rem 0.6rem', fontSize: '0.74rem', cursor: 'pointer', color: '#475569', borderTop: filtered.length > 0 ? '1px solid #F1F5F9' : 'none', fontStyle: 'italic' }}
                 onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
                 onMouseOut={e => e.currentTarget.style.background = 'transparent'}
-              >Use “{filter.trim()}”</div>
+              >{customLabel ? customLabel(filter.trim()) : `Use “${filter.trim()}”`}</div>
             )}
           </div>
         </div>,
@@ -5827,6 +5828,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Vertical's choices are the Dropdowns › Vertical list. A value no longer
   // on that list (renamed or removed there) stays selectable on the company
   // that already carries it, so opening the card doesn't blank it.
+  // Sets the Vertical; one typed in that isn't on Dropdowns › Vertical is
+  // added to the end of that list as well (matched without case, so
+  // "private equity" picks the existing "Private Equity").
+  function setVerticalAddingToList(v) {
+    const val = String(v || '').trim();
+    if (!val) { set('vertical', ''); return; }
+    const list = getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [];
+    const existing = list.find(o => String(o).trim().toLowerCase() === val.toLowerCase());
+    if (existing) { set('vertical', existing); return; }
+    updateSettings({ dropdownLists: { ...(settings?.dropdownLists || {}), vertical: [...list, val] } });
+    set('vertical', val);
+  }
   const verticalOptions = useMemo(() => {
     const opts = getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [];
     const current = String(fields.vertical || '').trim();
@@ -10522,15 +10535,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   {liveVerticalSuggestion?.loading ? 'Suggesting...' : 'Suggest'}
                 </button>
               </div>
-              {/* Type-to-filter over the Dropdowns › Vertical list. Custom
-                  values stay off so the list remains the single source. */}
-              <div title="Options come from Dropdowns › Vertical">
+              {/* Type-to-filter over the Dropdowns › Vertical list. A value
+                  that isn't on it can be typed in: it's added to that list
+                  too, so the list stays the single source of verticals. */}
+              <div title="Options come from Dropdowns › Vertical. Type a new one to add it there.">
                 <SearchableSelect
                   options={verticalOptions}
                   value={fields.vertical || ''}
-                  onChange={v => set('vertical', v)}
+                  onChange={setVerticalAddingToList}
                   placeholder="-"
-                  allowCustom={false}
+                  allowCustom
+                  customLabel={t => `Add “${t}” to Verticals`}
                 />
                 {/* From the Targets list, once the company is mapped there.
                     Shown only when it would change the field. */}
