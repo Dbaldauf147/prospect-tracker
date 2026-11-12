@@ -1,7 +1,7 @@
 // Assertion tests for the BFO History paste parser and the Agents task's
 // company list. Plain Node, no framework. Run:
 //   node scripts/bfoHistory.test.mjs
-import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, bfoHistoryMissingNameIssues, BFO_HISTORY_HEADER } from '../src/utils/bfoHistory.js';
+import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, bfoHistoryMissingNameIssues, BFO_HISTORY_HEADER, bfoHistoryRowKey, setBfoHistoryIgnored } from '../src/utils/bfoHistory.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -68,6 +68,17 @@ check('targets: one per company, dm counts, freshness', targets.map(t => [t.comp
   check('missing-name issue pluralises DMs', rows[1].detail.includes('4 DMs without activity'), true);
   check('missing-name issues: empty input', bfoHistoryMissingNameIssues(null), []);
 }
+
+// Ignored rows.
+check('row key: name + close date, normalized', bfoHistoryRowKey({ name: '  Renewal  Deal', closeDate: 'May 31, 2027' }), 'renewal deal|may 31, 2027');
+check('row key: same name, different year differs',
+  bfoHistoryRowKey({ name: 'Renewal', closeDate: 'Jan 1, 2025' }) === bfoHistoryRowKey({ name: 'Renewal', closeDate: 'Jan 1, 2026' }), false);
+const h0 = { rows: [{ name: 'A' }], pastedAt: 'x' };
+const h1 = setBfoHistoryIgnored(h0, ['b|', 'a|'], true);
+check('ignore: adds keys sorted, keeps rows', [h1.ignored, h1.rows, h1.pastedAt], [['a|', 'b|'], [{ name: 'A' }], 'x']);
+check('ignore: original untouched', h0.ignored, undefined);
+check('restore: removes a key', setBfoHistoryIgnored(h1, ['a|'], false).ignored, ['b|']);
+check('ignore: on no history', setBfoHistoryIgnored(null, ['a|'], true), { ignored: ['a|'] });
 
 if (failures) {
   console.log(`\n${failures} failure(s)`);
