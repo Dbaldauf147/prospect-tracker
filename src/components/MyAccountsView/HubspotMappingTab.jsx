@@ -29,6 +29,7 @@ import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, hubsp
 import { HubspotAgents } from './HubspotAgents';
 import { HubspotActivityTab } from './HubspotActivityTab';
 import { HubspotContactsTab } from './HubspotContactsTab';
+import { HubspotGapFillTab } from './HubspotGapFillTab';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
 import { HubspotMappingBackup } from './HubspotMappingBackup';
 import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, scheduledMailCheck, checkGmailNow, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
@@ -36,7 +37,7 @@ import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFile
 
 // Which subtab of the page is open, per viewer.
 const SUBTAB_KEY = 'hubspot-mapping-subtab';
-const SUBTABS = [['mapping', 'Mapping'], ['activity', 'Activity'], ['others', "Others' Activity"], ['contacts', 'Contacts'], ['agents', 'Agents']];
+const SUBTABS = [['mapping', 'Mapping'], ['activity', 'Activity'], ['others', "Others' Activity"], ['contacts', 'Contacts'], ['gapfill', 'Gap Fill'], ['agents', 'Agents']];
 const readSubtab = () => {
   try { const t = localStorage.getItem(SUBTAB_KEY); return SUBTABS.some(([k]) => k === t) ? t : 'mapping'; } catch { return 'mapping'; }
 };
@@ -810,6 +811,26 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const closeOthers = useCallback(() => setShowOthers(false), []);
 
   const m = data.meta || {};
+  if (subtab === 'gapfill') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+        {backupBar}
+        {subtabBar}
+        {contactsError && <div style={{ color: '#B91C1C', fontSize: '0.78rem' }}>{contactsError}</div>}
+        <HubspotGapFillTab
+          data={contactsData}
+          loaded={contactsLoaded}
+          mapping={mapping}
+          accounts={withNames}
+          byId={byId}
+          onSelect={onSelect}
+          cdmName={cdmName}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      </div>
+    );
+  }
   if (subtab === 'contacts') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
