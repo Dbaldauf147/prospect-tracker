@@ -26,10 +26,10 @@
 // Mail.ReadWrite (api/outlook-auth.js), so reading the inbox needs no new
 // permission. Reads only: nothing in the mailbox or in HubSpot is changed.
 
-import * as XLSX from 'xlsx';
-import JSZip from 'jszip';
-import { withAuth } from './_lib/http.js';
-import { adminDb } from './_lib/firebaseAdmin.js';
+import { withAuth, isAdminEmail } from './_lib/http.js';
+import { download, unzipIfNeeded, HttpError } from './_lib/hubspotExportFile.js';
+import { adminDb, adminAuth } from './_lib/firebaseAdmin.js';
+import { fetchExportFromGmail, gmailConfigured, exportLabel } from './_lib/hubspotExportGmail.js';
 import { readChunkedValue, writeChunkedValue } from './_lib/firestoreChunks.js';
 import { compactCompanies } from '../src/utils/seHubspotExisting.js';
 import { applyToMapping, applyToSeHubspot } from '../src/utils/hubspotExportMailApply.js';
@@ -39,9 +39,8 @@ const SCOPE = 'Mail.ReadWrite Calendars.Read offline_access';
 const LOOKBACK_DAYS = 14;
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 
-class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
-}
+// Kept exported from here for scripts/hubspotExportMailRoute.test.mjs.
+export { unzipIfNeeded };
 
 async function refresh(refreshToken) {
   const clientId = process.env.OUTLOOK_CLIENT_ID;
@@ -83,39 +82,6 @@ async function findExport(token, subject) {
   return full;
 }
 
-// HubSpot hands the export over as a .zip holding the CSV (or .xlsx). An
-// .xlsx is itself a zip, so a zip with Excel's own [Content_Types].xml is
-// passed through as is; any other zip is opened and its spreadsheet read.
-export async function unzipIfNeeded(buf) {
-  if (!(buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b)) return buf;
-  const zip = await JSZip.loadAsync(buf);
-  if (zip.file('[Content_Types].xml')) return buf;
-  const files = Object.values(zip.files)
-    .filter(f => !f.dir && !/(^|\/)(__MACOSX|\.)/.test(f.name) && /\.(csv|xlsx|xls)$/i.test(f.name));
-  if (!files.length) {
-    throw new HttpError(422, `The downloaded zip has no CSV or Excel file in it (it has: ${Object.keys(zip.files).join(', ') || 'nothing'}).`);
-  }
-  // Prefer a CSV; among several, the biggest is the report.
-  const sized = await Promise.all(files.map(async f => ({ f, data: await f.async('nodebuffer') })));
-  sized.sort((a, b) => (/\.csv$/i.test(b.f.name) - /\.csv$/i.test(a.f.name)) || (b.data.length - a.data.length));
-  return sized[0].data;
-}
-
-async function download(link) {
-  const r = await fetch(link, { redirect: 'follow' });
-  if (!r.ok) throw new HttpError(502, `The Download CSV link answered HTTP ${r.status}. It may have expired; the next email brings a new one.`);
-  const buf = Buffer.from(await r.arrayBuffer());
-  const type = String(r.headers.get('content-type') || '');
-  if (/text\/html/i.test(type) || /^\s*<(!doctype|html)/i.test(buf.subarray(0, 200).toString('utf8'))) {
-    throw new HttpError(502, 'The Download CSV link returned a web page instead of a file (it may now ask for a HubSpot login).');
-  }
-  const file = await unzipIfNeeded(buf);
-  // Reads CSV and Excel alike, as the manual upload does.
-  const wb = XLSX.read(file, { type: 'buffer' });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
-}
-
 /**
  * Find and read the newest export email. `onAuthorized(refreshToken)` is
  * called once Graph has accepted the sign-in, with the newest refresh
@@ -154,6 +120,7 @@ export async function fetchExport({ token = '', refreshToken = '', subject = EXP
 
 // ---- The scheduled check -------------------------------------------------
 
+const ADMIN_EMAIL = 'baldaufdan@gmail.com';
 const TOKEN_COL = 'integrationTokens';
 const TOKEN_FIELD = 'outlookExport';
 const LOG_COL = 'hubspotExportMail';
@@ -172,14 +139,23 @@ async function keepRefreshToken(db, uid, refreshToken) {
  * stores the way a browser check would. Logs and returns { at, ok,
  * message, mapping, seHubspot }; never throws.
  */
-export async function runForUser(db, uid, refreshToken, { now = () => new Date() } = {}) {
+export async function runForUser(db, uid, refreshToken, opts = {}) {
+  return runCheck(db, uid, () => fetchExport({ refreshToken, onAuthorized: (t) => keepRefreshToken(db, uid, t) }), opts);
+}
+
+/** The same, reading the email out of the app's Gmail label instead. */
+export async function runGmailForUser(db, uid, { gmail = {}, ...opts } = {}) {
+  return runCheck(db, uid, () => fetchExportFromGmail(gmail), { ...opts, source: 'Gmail' });
+}
+
+async function runCheck(db, uid, fetchFn, { now = () => new Date(), source = 'Outlook' } = {}) {
   const at = now().toISOString();
   const log = db.collection(LOG_COL).doc(uid);
   let entry;
   try {
-    const got = await fetchExport({ refreshToken, onAuthorized: (t) => keepRefreshToken(db, uid, t) });
+    const got = await fetchFn();
     if (!got.found) {
-      entry = { at, ok: true, message: `No "${EXPORT_SUBJECT}" email in the last ${LOOKBACK_DAYS} days.`, mapping: null, seHubspot: null };
+      entry = { at, ok: true, source, message: `No "${EXPORT_SUBJECT}" email in ${source} in the last ${LOOKBACK_DAYS} days.`, mapping: null, seHubspot: null };
     } else {
       const body = { messageId: got.msg.id, subject: got.msg.subject, receivedAt: got.msg.receivedDateTime, rows: got.rows, companies: got.companies };
       const mapRef = items(db, uid).doc('hubspot-mapping');
@@ -196,15 +172,15 @@ export async function runForUser(db, uid, refreshToken, { now = () => new Date()
         });
       }
       entry = {
-        at, ok: mapping.ok && se.ok, message: mapping.message,
+        at, ok: mapping.ok && se.ok, source, message: `${mapping.message} (from ${source})`,
         mapping: { ok: mapping.ok, message: mapping.message },
         seHubspot: { ok: se.ok, message: se.message },
       };
     }
   } catch (err) {
-    const expired = err?.status === 401;
+    const expired = source === 'Outlook' && err?.status === 401;
     entry = {
-      at, ok: false,
+      at, ok: false, source,
       message: expired
         ? 'The Outlook sign-in the scheduled check uses has expired. Click Connect Outlook (or Check Outlook now) on the Mapping subtab to renew it.'
         : String(err?.message || err).slice(0, 500),
@@ -215,11 +191,35 @@ export async function runForUser(db, uid, refreshToken, { now = () => new Date()
   return entry;
 }
 
-/** Every user who has left a refresh token, checked one after another. */
-export async function runScheduled(db) {
-  const snap = await db.collection(TOKEN_COL).get();
+// The account the app's Gmail mailbox feeds: the mailbox is the app's,
+// not any one user's, so its export goes to the admin, as the weekly
+// HubSpot files are built from the admin's data.
+async function adminUid() {
+  return (await adminAuth().getUserByEmail(ADMIN_EMAIL)).uid;
+}
+
+/**
+ * The Gmail label first (for the admin), then every user who has left an
+ * Outlook refresh token, one after another. An account that Gmail just
+ * loaded an email for isn't checked again through Outlook.
+ */
+export async function runScheduled(db, { env = process.env, resolveAdminUid = adminUid, gmail = {} } = {}) {
   const results = [];
+  let gmailUid = null;
+  if (gmailConfigured(env)) {
+    try {
+      gmailUid = await resolveAdminUid();
+      const r = await runGmailForUser(db, gmailUid, { gmail });
+      results.push({ uid: gmailUid, ...r });
+      if (!r.mapping) gmailUid = null;
+    } catch (err) {
+      results.push({ uid: null, ok: false, message: `Gmail check skipped: ${String(err?.message || err).slice(0, 200)}` });
+      gmailUid = null;
+    }
+  }
+  const snap = await db.collection(TOKEN_COL).get();
   for (const d of snap.docs) {
+    if (d.id === gmailUid) continue;
     const refreshToken = d.data()?.[TOKEN_FIELD]?.refreshToken;
     if (refreshToken) results.push({ uid: d.id, ...(await runForUser(db, d.id, refreshToken)) });
   }
@@ -228,8 +228,8 @@ export async function runScheduled(db) {
 
 // ---- The route -----------------------------------------------------------
 
-export async function handler(req, res, auth = null, { db = null } = {}) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+export async function handler(req, res, auth = null, { db = null, gmail: gmailOpts = {} } = {}) {
+  if (req.method !== 'GET' && !(req.method === 'POST' && req.query?.action === 'gmail')) return res.status(405).json({ error: 'Method not allowed' });
   if (req.query?.action === 'status') {
     if (!auth?.uid) return res.status(401).json({ error: 'Sign in first.' });
     const store = db || adminDb();
@@ -237,10 +237,22 @@ export async function handler(req, res, auth = null, { db = null } = {}) {
       store.collection(LOG_COL).doc(auth.uid).get(),
       store.collection(TOKEN_COL).doc(auth.uid).get(),
     ]);
+    // The Gmail route is the admin's (see adminUid), so only the admin is
+    // told where to forward to.
+    const gmail = isAdminEmail(auth.email) && gmailConfigured()
+      ? { address: process.env.GMAIL_USER, label: exportLabel() }
+      : null;
     return res.status(200).json({
-      scheduled: !!kept.data()?.[TOKEN_FIELD]?.refreshToken,
+      scheduled: !!kept.data()?.[TOKEN_FIELD]?.refreshToken || !!gmail,
+      gmail,
       last: log.exists ? log.data() : null,
     });
+  }
+  if (req.query?.action === 'gmail') {
+    if (!auth?.uid || !isAdminEmail(auth.email)) return res.status(403).json({ error: 'Only the admin account reads the app\'s Gmail mailbox.' });
+    if (!gmailConfigured()) return res.status(500).json({ error: 'Gmail is not configured on the server (GMAIL_USER and GMAIL_APP_PASSWORD).' });
+    const entry = await runGmailForUser(db || adminDb(), auth.uid, { gmail: gmailOpts });
+    return res.status(entry.ok ? 200 : 502).json(entry);
   }
   const token = String(req.headers['x-ms-token'] || '');
   const refreshToken = String(req.headers['x-ms-refresh-token'] || '');

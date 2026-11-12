@@ -159,7 +159,7 @@ export async function fetchNewsletterItems(since, until, {
   label = labelName(),
   allowed = senderList(),
   // Seam for the tests: they need to drive this without a mailbox.
-  connect = defaultConnect,
+  connect = openGmailLabel,
 } = {}) {
   if (!user || !pass) return { items: [], error: null, configured: false };
 
@@ -203,8 +203,10 @@ export async function fetchNewsletterItems(since, until, {
 
 // The real IMAP session. Kept behind the `connect` seam so everything above
 // is testable without a mailbox, and so the dependency loads only when the
-// feature is actually configured.
-async function defaultConnect({ user, pass, label }) {
+// feature is actually configured. Also how the HubSpot export check reads
+// its own label (hubspotExportGmail.js), which is why each message carries
+// its subject and attachments too.
+export async function openGmailLabel({ user, pass, label }) {
   const { ImapFlow } = await import('imapflow');
   const { simpleParser } = await import('mailparser');
 
@@ -240,6 +242,9 @@ async function defaultConnect({ user, pass, label }) {
           fromName: addr.name || '',
           date: (parsed.date || msg.envelope?.date || new Date(0)).getTime(),
           html: parsed.html || parsed.textAsHtml || '',
+          subject: parsed.subject || '',
+          messageId: parsed.messageId || String(msg.uid || ''),
+          attachments: (parsed.attachments || []).map(a => ({ filename: a.filename || '', content: a.content })),
         };
       }
     },

@@ -28,7 +28,7 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, hubspotAgentsPatch } from '../../utils/hubspotAgents';
 import { HubspotAgents } from './HubspotAgents';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
-import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, scheduledMailCheck, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
+import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, scheduledMailCheck, checkGmailNow, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
 import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName, buildHubspotCreateRows, buildHubspotCreateWorkbook, hubspotCreateFileName } from '../../utils/hubspotImportFile';
 
 // Which subtab of the page is open (Mapping or Agents), per viewer.
@@ -150,6 +150,18 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   // Outlook sign-in the last check from here handed it.
   const [scheduled, setScheduled] = useState(null);
   useEffect(() => { scheduledMailCheck().then(setScheduled); }, [mailStatus]);
+  // The same check against the app's Gmail label (the email forwarded there),
+  // for when Outlook can't be connected. The server writes the companies, so
+  // they're read back afterwards.
+  const [checkingGmail, setCheckingGmail] = useState(false);
+  const checkGmail = async () => {
+    setCheckingGmail(true);
+    try {
+      const last = await checkGmailNow();
+      setScheduled(prev => ({ ...(prev || {}), last }));
+      loadHubspotMapping().then(setData).catch(() => {});
+    } finally { setCheckingGmail(false); }
+  };
   const checkMail = async () => {
     setCheckingMail(true);
     try { await syncHubspotExportMail(); setMailStatus(lastMappingMailCheck()); }
@@ -879,6 +891,17 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
           </span>
         )}
       </div>
+      {scheduled?.gmail && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.75rem', color: '#475569' }}>
+          <span>
+            Or forward the email to <strong>{scheduled.gmail.address}</strong>, where a Gmail filter files it under the label
+            &quot;{scheduled.gmail.label}&quot; (checked every 3 hours too):
+          </span>
+          <button type="button" onClick={checkGmail} disabled={checkingGmail || busy}
+            style={{ ...linkBtn, fontSize: '0.72rem', padding: '1px 8px', cursor: checkingGmail ? 'wait' : 'pointer' }}
+          >{checkingGmail ? 'Checking Gmail...' : 'Check Gmail now'}</button>
+        </div>
+      )}
       {scheduled && (
         <div style={{ fontSize: '0.72rem', color: scheduled.last && !scheduled.last.ok ? '#B91C1C' : '#64748B' }}>
           {!scheduled.scheduled

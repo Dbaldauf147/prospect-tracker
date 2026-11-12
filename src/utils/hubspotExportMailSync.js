@@ -147,3 +147,19 @@ export async function scheduledMailCheck() {
     return null;
   }
 }
+
+/**
+ * Read the export out of the app's Gmail label now (admin only), the same
+ * check the schedule runs. Resolves to the logged { at, ok, message };
+ * never throws.
+ */
+export async function checkGmailNow() {
+  try {
+    const r = await apiFetch('/api/hubspot-export-mail?action=gmail', { method: 'POST' });
+    const body = await r.json().catch(() => ({}));
+    if (body?.message) return body;
+    return { at: new Date().toISOString(), ok: false, message: body?.error || `Check failed (HTTP ${r.status}).` };
+  } catch (err) {
+    return { at: new Date().toISOString(), ok: false, message: err?.message || String(err) };
+  }
+}
