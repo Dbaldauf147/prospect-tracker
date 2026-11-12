@@ -4,17 +4,55 @@
 // has with fields left blank that the export can fill
 // (utils/hubspotContactGaps.js). The cells the export can fill are tinted
 // green; Export Excel takes the list away to work through.
-import { useState, useMemo, useEffect } from 'react';
+//
+// Add puts a Not in the app contact into the app (create-contact, the same
+// call the company popup's Paste Contacts makes) with Lead Source "Added
+// from HubSpot"; Fill writes the blank fields HubSpot has onto the app's
+// contact (update-contact). Both go row by row or for every row on screen,
+// and a row drops off the list once it is done, since the app then has it.
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
 import { contactMatcher, contactRows } from '../../utils/hubspotContacts';
 import { accountTier, formatActivityDate } from '../../utils/hubspotActivity';
-import { appContactsByEmail, contactGapRows, appContactName, GAP, GAP_FIELDS } from '../../utils/hubspotContactGaps';
-import { getHubspotCacheShared } from '../../utils/hubspotContactsCache';
+import { appContactsByEmail, contactGapRows, appContactName, GAP, GAP_FIELDS, gapFillPlan } from '../../utils/hubspotContactGaps';
+import { getHubspotCacheShared, updateHubspotCache } from '../../utils/hubspotContactsCache';
+import { apiFetch } from '../../utils/apiFetch';
+import { HUBSPOT_EXPORT_LEAD_SOURCE } from '../../utils/contactLeadSource';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 const chipStyle = (active) => ({ padding: '0.2rem 0.6rem', borderRadius: 999, border: `1px solid ${active ? '#1D4ED8' : '#E2E8F0'}`, background: active ? '#EFF6FF' : '#fff', color: active ? '#1D4ED8' : '#475569', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' });
 const linkStyle = { color: '#1D4ED8', textDecoration: 'none' };
+const actionBtn = (kind) => ({ padding: '0 8px', borderRadius: 5, border: `1px solid ${kind === 'add' ? '#1D4ED8' : '#15803D'}`, background: '#fff', color: kind === 'add' ? '#1D4ED8' : '#15803D', fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' });
+const bulkBtn = (kind, disabled) => ({ ...actionBtn(kind), padding: '0.2rem 0.6rem', fontSize: '0.72rem', borderRadius: 6, opacity: disabled ? 0.5 : 1, cursor: disabled ? 'default' : 'pointer' });
+// How many rows go into the cache in one write: the cache is the whole
+// contact list, so a write per row would rewrite it thousands of times.
+const FLUSH_EVERY = 25;
+
+// One row through HubSpot: the call, then the record the cache should hold.
+async function sendPlan(plan) {
+  if (plan.kind === 'add') {
+    const res = await apiFetch('/api/hubspot?action=create-contact', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ properties: plan.properties }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success || !json.contact?.id) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+    // An email HubSpot already had hands back that record: kept as it is.
+    const record = json.alreadyExisted ? json.contact : { ...plan.properties, ...json.contact, _source: 'manual' };
+    return { id: String(json.contact.id), record, existed: !!json.alreadyExisted };
+  }
+  const res = await apiFetch('/api/hubspot?action=update-contact', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    // A blank company is linked, never renamed: renaming the Company record
+    // would rename it for everyone linked to it.
+    body: JSON.stringify({ contactId: plan.contactId, properties: plan.properties, companyMode: 'relink' }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+  return { id: plan.contactId, record: { ...plan.properties, ...(json.contact || {}) }, existed: false };
+}
+
 const FILL_TINT = { background: '#DCFCE7', color: '#166534', borderRadius: 4, padding: '0 5px', fontWeight: 600 };
 const GAP_TINTS = {
   [GAP.notInApp]: { bg: '#EFF6FF', border: '#BFDBFE', ink: '#1D4ED8' },
@@ -38,6 +76,81 @@ const text = (key, label, width, extra = {}) => ({
 export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], byId, onSelect, cdmName = '', settings, updateSettings }) {
   const [filter, setFilter] = useState('');
   const [onlyMine, setOnlyMine] = useState(false);
+  // Add / Fill: the run in progress ({ kind, done, total }), what the last
+  // one did, and each email's failure, kept on its row.
+  const [running, setRunning] = useState(null);
+  const [runNote, setRunNote] = useState('');
+  const [failed, setFailed] = useState({});
+  const [shownRows, setShownRows] = useState([]);
+  const stopRef = useRef(false);
+  const settingsRef = useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+
+  // Run rows through HubSpot one at a time, writing the cache every
+  // FLUSH_EVERY rows and at the end; added contacts get Lead Source
+  // "Added from HubSpot". Stop finishes the row in hand and stops.
+  const run = async (list) => {
+    const work = list.map(r => ({ row: r, plan: gapFillPlan(r) })).filter(w => w.plan);
+    if (!work.length || running) return;
+    const kind = work.every(w => w.plan.kind === 'add') ? 'add' : work.every(w => w.plan.kind === 'fill') ? 'fill' : 'mixed';
+    stopRef.current = false;
+    setRunNote('');
+    setRunning({ kind, done: 0, total: work.length });
+    let added = 0; let existed = 0; let filled = 0;
+    const errors = {};
+    let pending = [];
+    const leadSources = {};
+    const flush = async () => {
+      if (pending.length) {
+        const batch = pending; pending = [];
+        await updateHubspotCache(draft => {
+          for (const { kind: k, id, record } of batch) {
+            const i = draft.contacts.findIndex(c => String(c.id || c.vid) === id);
+            if (k === 'add') { if (i < 0) draft.contacts.push(record); }
+            else if (i >= 0) draft.contacts[i] = { ...draft.contacts[i], ...record };
+          }
+        });
+      }
+      if (Object.keys(leadSources).length && updateSettings) {
+        const cur = settingsRef.current?.contactLeadSource || {};
+        const next = { ...cur };
+        for (const [id, v] of Object.entries(leadSources)) if (!cur[id]) next[id] = v;
+        for (const id of Object.keys(leadSources)) delete leadSources[id];
+        updateSettings({ contactLeadSource: next });
+      }
+    };
+    for (let i = 0; i < work.length; i++) {
+      if (stopRef.current) break;
+      const { row, plan } = work[i];
+      try {
+        const out = await sendPlan(plan);
+        pending.push({ kind: plan.kind, id: out.id, record: out.record });
+        if (plan.kind === 'add') {
+          if (out.existed) existed += 1;
+          else { added += 1; leadSources[out.id] = HUBSPOT_EXPORT_LEAD_SOURCE; }
+        } else filled += 1;
+      } catch (err) {
+        errors[row.gapEmail] = String(err?.message || err).slice(0, 300);
+      }
+      if (pending.length >= FLUSH_EVERY) await flush().catch(() => {});
+      setRunning(r => (r ? { ...r, done: i + 1 } : r));
+    }
+    await flush().catch(err => { errors._cache = `Couldn't save to the app's contacts: ${err?.message || err}`; });
+    setFailed(prev => {
+      const next = { ...prev };
+      for (const w of work) delete next[w.row.gapEmail];
+      return { ...next, ...errors };
+    });
+    const nErr = Object.keys(errors).length;
+    setRunNote([
+      added ? `${fmt(added)} added (Lead Source "${HUBSPOT_EXPORT_LEAD_SOURCE}")` : '',
+      existed ? `${fmt(existed)} already in HubSpot, picked up as they are` : '',
+      filled ? `${fmt(filled)} filled` : '',
+      nErr ? `${fmt(nErr)} failed (the reason is on the row)` : '',
+      stopRef.current ? 'stopped' : '',
+    ].filter(Boolean).join(', ') || 'Nothing to do.');
+    setRunning(null);
+  };
 
   // The contacts the app holds, re-read whenever the cache changes.
   const [appContacts, setAppContacts] = useState(null);
@@ -67,6 +180,26 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
   const rows = useMemo(() => allRows.filter(FILTERS.find(([k]) => k === filter)?.[2] || (() => true)), [allRows, FILTERS, filter]);
 
   const columns = useMemo(() => [
+    {
+      key: 'action', label: 'Action', defaultWidth: 90,
+      headerTitle: 'Add: put this contact in the app, with Lead Source "Added from HubSpot". Fill: write the green values onto the app\'s contact.',
+      getSortValue: r => (failed[r.gapEmail] ? 0 : 1), getFilterValue: r => (failed[r.gapEmail] ? 'Failed' : ''), exportValue: () => '',
+      render: r => {
+        const plan = gapFillPlan(r);
+        if (!plan) return blank;
+        return (
+          <button type="button" disabled={!!running} onClick={() => run([r])} style={{ ...actionBtn(plan.kind), opacity: running ? 0.5 : 1 }}
+            title={plan.kind === 'add' ? 'Add this contact to the app' : `Fill ${r.fillLabels} on the app's contact`}
+          >{plan.kind === 'add' ? '+ Add' : 'Fill'}</button>
+        );
+      },
+    },
+    {
+      key: 'failed', label: 'Last Try', defaultWidth: 200,
+      headerTitle: 'Why the last Add or Fill of this row failed.',
+      getSortValue: r => failed[r.gapEmail] || null, getFilterValue: r => failed[r.gapEmail] || '', exportValue: r => failed[r.gapEmail] || '',
+      render: r => (failed[r.gapEmail] ? <span title={failed[r.gapEmail]} style={{ color: '#B91C1C', fontSize: '0.72rem' }}>{failed[r.gapEmail]}</span> : blank),
+    },
     {
       key: 'gap', label: 'Gap', defaultWidth: 130,
       getSortValue: r => r.gap, getFilterValue: r => r.gap, exportValue: r => r.gap,
@@ -135,7 +268,15 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
       render: r => (r.app ? appContactName(r.app) : blank),
     },
     text('how', 'Matched By', 125, { headerTitle: 'How the contact was put on a My Accounts company: its HubSpot Company ID, else the company name, else its email domain.' }),
-  ], [byId, onSelect]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [byId, onSelect, failed, running]);
+  const shownAdds = shownRows.filter(r => gapFillPlan(r)?.kind === 'add');
+  const shownFills = shownRows.filter(r => gapFillPlan(r)?.kind === 'fill');
+  const confirmRun = (list, verb) => {
+    if (!list.length) return;
+    if (list.length > 1 && !window.confirm(`${verb} ${fmt(list.length)} contacts in the app's HubSpot? ${verb === 'Add' ? `Each is created with Lead Source "${HUBSPOT_EXPORT_LEAD_SOURCE}".` : 'Only the blank fields are written.'} Stop finishes the one in hand.`)) return;
+    run(list);
+  };
 
   if (!loaded || appContacts == null) return <div style={{ fontSize: '0.78rem', color: '#64748B' }}>Loading...</div>;
   if (!data.contacts.length) {
@@ -156,7 +297,25 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
           <input type="checkbox" checked={onlyMine} onChange={e => setOnlyMine(e.target.checked)} />
           On My Accounts only
         </label>
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          {running ? (
+            <>
+              <span style={{ fontSize: '0.72rem', color: '#475569' }}>{running.kind === 'fill' ? 'Filling' : 'Adding'} {fmt(running.done)} of {fmt(running.total)}...</span>
+              <button type="button" onClick={() => { stopRef.current = true; }} style={{ ...bulkBtn('fill', false), color: '#B91C1C', border: '1px solid #FCA5A5' }}>Stop</button>
+            </>
+          ) : (
+            <>
+              <button type="button" disabled={!shownAdds.length} onClick={() => confirmRun(shownAdds, 'Add')} style={bulkBtn('add', !shownAdds.length)}
+                title={`Add every Not in the app contact on screen to the app, with Lead Source "${HUBSPOT_EXPORT_LEAD_SOURCE}". Filter first to add just some.`}
+              >+ Add all shown ({fmt(shownAdds.length)})</button>
+              <button type="button" disabled={!shownFills.length} onClick={() => confirmRun(shownFills, 'Fill')} style={bulkBtn('fill', !shownFills.length)}
+                title="Write the green values onto every app contact on screen. Only blank fields are written. Filter first to fill just some."
+              >Fill all shown ({fmt(shownFills.length)})</button>
+            </>
+          )}
+        </span>
       </div>
+      {runNote && <div style={{ fontSize: '0.75rem', color: '#475569' }}>{runNote}</div>}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
         <DataTable
           tableId="my-accounts-hubspot-gap-fill"
@@ -164,8 +323,9 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
           columns={columns}
           rows={rows}
           defaultSort={{ key: 'account', direction: 'asc' }}
-          alwaysVisible={['gapEmail', 'gap']}
+          alwaysVisible={['action', 'gapEmail', 'gap']}
           defaultHidden={['firstName', 'lastName', 'how', 'lastContacted']}
+          onFilteredRowsChange={setShownRows}
           emptyMessage={allRows.length ? 'Nothing matches' : 'No gaps: the app has every contact in the export, with nothing blank that HubSpot has.'}
           settings={settings}
           updateSettings={updateSettings}

@@ -10,14 +10,19 @@
 //
 // The Marketing Leads page stamps MARKETING_LEAD_SOURCE on every contact it
 // creates, and Bulk Add Contacts stamps BULK_ADD_LEAD_SOURCE, so leads from
-// either are tracked from the moment they land.
+// either are tracked from the moment they land. Hubspot Mapping > Gap Fill
+// stamps HUBSPOT_EXPORT_LEAD_SOURCE on the contacts it adds.
 
 export const MARKETING_LEAD_SOURCE = 'Marketing Lead';
 export const BULK_ADD_LEAD_SOURCE = 'Bulk Added';
+// Stamped by Hubspot Mapping > Gap Fill on each contact it adds from the
+// HubSpot contacts export.
+export const HUBSPOT_EXPORT_LEAD_SOURCE = 'Added from HubSpot';
 
 export const LEAD_SOURCE_OPTIONS = [
   MARKETING_LEAD_SOURCE,
   BULK_ADD_LEAD_SOURCE,
+  HUBSPOT_EXPORT_LEAD_SOURCE,
   'Event',
   'Referral',
   'Inbound',
