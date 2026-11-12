@@ -118,10 +118,12 @@ export function buildEmailFromPattern(emailDomainField, firstname, lastname) {
  *   reason      why there are no candidates, when there are none:
  *               'no-contacts', 'no-work-emails' or 'no-pattern'.
  *
- * Ranking is domain first (the busiest domain's options all come before a
- * quieter domain's, ties broken on the name), then votes within a domain,
- * then EMAIL_PATTERN_RULES order - the same order detectLocalPattern reads
- * them in, so the same roster always ranks the same way.
+ * Ranking is by majority: the format the most contacts are written in
+ * comes first, whatever domain it is on. Ties go to the busier domain, then
+ * the domain's name, then EMAIL_PATTERN_RULES order - the same order
+ * detectLocalPattern reads them in, so the same roster always ranks the
+ * same way. The ranking is also the tier order the card offers: 1st, 2nd,
+ * 3rd... (buildEmailFromPattern walks the field in that order).
  */
 export function estimateEmailDomainCandidates(contacts = []) {
   const byDomain = new Map();
@@ -181,12 +183,12 @@ export function estimateEmailDomainCandidates(contacts = []) {
     }
     domains.push({ domain, count: bucket.count, unmatched: bucket.count - voted });
   }
-  // Votes decide the order within a domain; the domain order above is kept
-  // by sorting only inside each domain's run.
-  candidates.sort((a, b) => {
-    if (a.domain !== b.domain) return domainNames.indexOf(a.domain) - domainNames.indexOf(b.domain);
-    return b.votes - a.votes;
-  });
+  // Majority first: the most votes wins across every domain. A tie goes to
+  // the busier domain (domainNames is in that order, name breaking its own
+  // ties), and within one domain the sort is stable, so EMAIL_PATTERN_RULES
+  // order breaks the last tie.
+  candidates.sort((a, b) => (b.votes - a.votes)
+    || (domainNames.indexOf(a.domain) - domainNames.indexOf(b.domain)));
 
   return {
     candidates,
@@ -199,10 +201,8 @@ export function estimateEmailDomainCandidates(contacts = []) {
 /**
  * What a set of contacts says this company's Email Domains entry should be.
  *
- * The busiest work domain wins, and then the commonest naming pattern
- * AMONG THE PEOPLE ON THAT DOMAIN - counting patterns across every domain
- * at once would let a handful of people at a parent company decide the
- * convention for a subsidiary that spells its addresses differently.
+ * The format the most contacts are written in wins (a majority vote, each
+ * format counted on its own domain), ties going to the busier domain.
  *
  * Free-mail addresses are ignored: a contact who gave us a gmail address
  * says nothing about how their employer builds addresses.

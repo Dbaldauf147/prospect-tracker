@@ -50,8 +50,8 @@ check('the winning entry', est.entry, 'firstname.lastname@ahr.com');
 check('counted off the domain, free-mail excluded', [est.domainCount, est.votes, est.total], [4, 3, 4]);
 check('and says which address taught it', est.sample, 'john.smith@ahr.com');
 
-// The busiest domain decides, and only the people ON it get a vote - a
-// handful at a parent company must not set a subsidiary's convention.
+// Each format is counted on its own domain, and the one the most people
+// are written in wins.
 const twoDomains = [
   c('john.smith@ahr.com', 'John', 'Smith'),
   c('jane.doe@ahr.com', 'Jane', 'Doe'),
@@ -60,7 +60,7 @@ const twoDomains = [
   c('mia.czarnecki@ahr.com', 'Mia', 'Czarnecki'),
 ];
 check(
-  'the busiest domain wins, with its own people voting',
+  'the format most people are written in wins',
   estimateEmailDomain(twoDomains).entry,
   'firstname.lastname@ahr.com',
 );
@@ -169,6 +169,29 @@ for (const rule of EMAIL_PATTERN_RULES) {
 check('a bare domain builds nothing', buildEmailFromPattern('ahr.com', 'John', 'Smith'), '');
 check('an unknown pattern builds nothing', buildEmailFromPattern('initials@ahr.com', 'John', 'Smith'), '');
 check('no name, no address', buildEmailFromPattern('firstname.lastname@ahr.com', '', ''), '');
+
+// --- majority, across domains --------------------------------------------
+// The busiest domain no longer decides on its own: four people at ahr.com
+// split four ways lose to three at parentco.com who agree.
+const split = [
+  c('john.smith@ahr.com', 'John', 'Smith'),
+  c('jdoe@ahr.com', 'Jane', 'Doe'),
+  c('mia_c@ahr.com', 'Mia', 'C'),
+  c('info@ahr.com', 'Front', 'Desk'),
+  c('info2@ahr.com', 'Back', 'Desk'),
+  c('alice.doe@parentco.com', 'Alice', 'Doe'),
+  c('bob.smith@parentco.com', 'Bob', 'Smith'),
+  c('cy.ray@parentco.com', 'Cy', 'Ray'),
+];
+check('the majority format wins over the busiest domain', estimateEmailDomain(split).entry, 'firstname.lastname@parentco.com');
+check('and the rest follow by votes, a tie going to the busier domain',
+  estimateEmailDomainCandidates(split).candidates.map(o => [o.entry, o.votes]),
+  [
+    ['firstname.lastname@parentco.com', 3],
+    ['firstname.lastname@ahr.com', 1],
+    ['firstname_lastname@ahr.com', 1],
+    ['firstinitiallastname@ahr.com', 1],
+  ]);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
