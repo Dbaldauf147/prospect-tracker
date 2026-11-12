@@ -11,9 +11,13 @@
 // Rows can also be marked OK (checked, nothing to do): they stay on screen
 // with a green tick and an OK column to filter on, and the mark also
 // survives a new paste; see setBfoHistoryOk.
+//
+// "No BFO history" records that the company was checked and BFO holds no
+// opportunities for it, so the Agents task skips it like a fresh paste; see
+// markBfoHistoryNone.
 import { useCallback, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { BFO_HISTORY_COLUMNS, BFO_HISTORY_HEADER, parseBfoHistory, bfoHistoryRowKey, setBfoHistoryIgnored, setBfoHistoryOk, bfoHistoryMarks } from '../../utils/bfoHistory';
+import { BFO_HISTORY_COLUMNS, BFO_HISTORY_HEADER, parseBfoHistory, bfoHistoryRowKey, setBfoHistoryIgnored, setBfoHistoryOk, bfoHistoryMarks, bfoHistoryIsNone, markBfoHistoryNone } from '../../utils/bfoHistory';
 
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 const RIGHT = new Set(['amount', 'probability']);
@@ -55,6 +59,16 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
     : '';
   const openCount = allRows.filter(r => r.status === 'Open' && !r._ignored).length;
   const closedCount = allRows.filter(r => r.status === 'Closed' && !r._ignored).length;
+  const isNone = bfoHistoryIsNone(history);
+  const markNone = () => {
+    if (allRows.length && !window.confirm('Replace the pasted opportunities with "No BFO history"?')) return;
+    onChange(markBfoHistoryNone(history));
+    setPasteOpen(false);
+    setText('');
+    setError('');
+    setFlash('Marked as no BFO history.');
+    window.setTimeout(() => setFlash(''), 4000);
+  };
 
   // Selection only ever holds rows on screen: a row that gets hidden, or
   // filtered out, drops out of it so a bulk action can't reach it unseen.
@@ -174,7 +188,16 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
         The opportunities BFO holds for {bfoCompanyName ? <strong>{bfoCompanyName}</strong> : 'this account'}, from {bfoCompanyName.includes(',') ? 'each account\'s' : 'its'} Oppty 360 tab
         (Opportunities of this Account: All of the above, both the Open and the Closed subtabs). The Agents tab&apos;s BFO History task fills this in; a new paste replaces the list.
       </div>
-      {pastedLabel && (
+      {pastedLabel && isNone && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.8rem' }}>
+          <span
+            title={new Date(history.pastedAt).toString()}
+            style={{ padding: '0.2rem 0.6rem', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#334155', fontWeight: 600 }}
+          >No BFO history, marked: {pastedLabel}</span>
+          <span style={{ color: '#475569' }}>Checked in BFO and it holds no opportunities for this company.</span>
+        </div>
+      )}
+      {pastedLabel && !isNone && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.8rem' }}>
           <span
             title={new Date(history.pastedAt).toString()}
@@ -191,7 +214,15 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
           onClick={() => { setPasteOpen(o => !o); setError(''); }}
           style={{ padding: '0.3rem 0.75rem', borderRadius: 6, border: '1px solid #2563EB', background: pasteOpen ? '#EFF6FF' : '#2563EB', color: pasteOpen ? '#2563EB' : '#fff', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
         >{pasteOpen ? 'Cancel paste' : 'Paste BFO history'}</button>
-        {allRows.length > 0 && (
+        {!isNone && (
+          <button
+            type="button"
+            onClick={markNone}
+            title="BFO holds no opportunities for this company (or it has no account there). Takes it off the Agents tab's BFO History prompt for the next 30 days, like a paste."
+            style={smallBtn}
+          >No BFO history</button>
+        )}
+        {(allRows.length > 0 || isNone) && (
           <button
             type="button"
             onClick={() => { if (window.confirm('Clear the BFO History for this company?')) onChange(null); }}
@@ -263,7 +294,7 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
             updateSettings={updateSettings}
           />
         </div>
-      ) : !pasteOpen && (
+      ) : !pasteOpen && !isNone && (
         <div style={{ fontSize: '0.8rem', color: '#94A3B8', padding: '1rem 0' }}>No BFO history pasted yet.</div>
       )}
     </div>

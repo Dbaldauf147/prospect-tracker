@@ -151,8 +151,9 @@ const DEFAULT_AI_PROMPT_BFO_HISTORY = `1.  Work through the companies listed bel
 ${BFO_HISTORY_HEADER}
     Status is Open or Closed, by the subtab the row came from. BFO Account is the BFO name you searched to find the row. One line per opportunity, no blank lines. If the same opportunity shows up under two of the accounts, list it once.
 10. Go to https://prospect-tracker-ashen.vercel.app/, open the Agents tab and find the AI Prompt (BFO History) section. Click the company's name in that section's table to open its company pop-up, then click the BFO History tab, click "Paste BFO history", paste the table into the box and click "Save BFO history". Check the green "Saved N opportunities (X open, Y closed)" message matches your counts, and note the "Pasted into the tracker" date and time shown at the top of the tab: it should be today.
+    If the company has NO opportunities at all (every one of its accounts showed 0 open and 0 closed, or none of its BFO names found an account), don't paste anything. Instead, on the same BFO History tab, click "No BFO history" and check the grey "No BFO history, marked:" date and time at the top of the tab: it should be today. Use that as the Pasted Date in step 12.
 11. Close the pop-up and repeat for the next company. Paste each company once, with all of its accounts in the one table: a new paste replaces that company's whole list.
-12. When every company is done, give me a summary table, one line per BFO account you opened (so a BFO name with three same-named accounts gets three lines): Company, BFO Name, Account # (1 of N, 2 of N, ... when several accounts share the name, otherwise 1 of 1), Account Location (the billing city / country BFO shows for it, so the duplicates can be told apart), Open count, Closed count, Pasted Date (the "Pasted into the tracker" date and time from step 10) and Result (saved / not found / error).`;
+12. When every company is done, give me a summary table, one line per BFO account you opened (so a BFO name with three same-named accounts gets three lines): Company, BFO Name, Account # (1 of N, 2 of N, ... when several accounts share the name, otherwise 1 of 1), Account Location (the billing city / country BFO shows for it, so the duplicates can be told apart), Open count, Closed count, Pasted Date (the "Pasted into the tracker" date and time from step 10) and Result (saved / no BFO history / not found / error).`;
 
 // Opps 2 Stage → expected BFO Sales Stage. When the BFO Activity tab's
 // Sales Stage value for an opp doesn't match the expected stage for the
@@ -5097,20 +5098,22 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
             key: 'pastedAt', label: 'BFO History Pasted', defaultWidth: 190,
             headerTitle: 'When the BFO History was last pasted back into the tracker',
             getSortValue: r => Date.parse(r.pastedAt) || null,
-            getFilterValue: r => (r.pastedAt ? new Date(r.pastedAt).toLocaleDateString() : 'Never'),
-            exportValue: r => r.pastedAt,
-            render: r => (r.pastedAt ? new Date(r.pastedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : <span className={styles.muted}>Never</span>),
+            getFilterValue: r => (r.pastedAt ? `${new Date(r.pastedAt).toLocaleDateString()}${r.noHistory ? ' (no BFO history)' : ''}` : 'Never'),
+            exportValue: r => (r.pastedAt && r.noHistory ? `${r.pastedAt} (no BFO history)` : r.pastedAt),
+            render: r => (r.pastedAt
+              ? <span>{new Date(r.pastedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}{r.noHistory && <span className={styles.muted} title="Marked as having no BFO history"> · No BFO history</span>}</span>
+              : <span className={styles.muted}>Never</span>),
           },
           {
             key: 'inPrompt', label: 'In Prompt', defaultWidth: 200,
             getSortValue: r => (r.noBfoName ? 3 : !r.bfoCompanyName ? 2 : r.fresh ? 1 : 0),
-            getFilterValue: r => (r.noBfoName ? 'Not in BFO' : !r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? 'Pasted recently' : 'Yes'),
-            exportValue: r => (r.noBfoName ? 'Not in BFO' : !r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? 'Pasted recently' : 'Yes'),
+            getFilterValue: r => (r.noBfoName ? 'Not in BFO' : !r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? (r.noHistory ? 'No BFO history' : 'Pasted recently') : 'Yes'),
+            exportValue: r => (r.noBfoName ? 'Not in BFO' : !r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? (r.noHistory ? 'No BFO history' : 'Pasted recently') : 'Yes'),
             render: r => (r.noBfoName
               ? <span className={styles.muted}>No, not in BFO</span>
               : !r.bfoCompanyName
                 ? <span className={styles.missing}>No, no BFO Company Name</span>
-                : r.fresh ? <span className={styles.muted}>No, pasted recently</span> : 'Yes'),
+                : r.fresh ? <span className={styles.muted}>{r.noHistory ? 'No, marked no BFO history' : 'No, pasted recently'}</span> : 'Yes'),
           },
         ];
         return (
