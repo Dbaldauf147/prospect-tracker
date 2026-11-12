@@ -42,8 +42,74 @@ const HEADERS = {
   engagementId: ['engagement id', 'activity id', 'activity record id'],
   createdBy: ['activity created by', 'created by', 'logged by', 'activity creator'],
   assignedTo: ['activity assigned to', 'assigned to', 'activity owner', 'hubspot user', 'hubspot owner', 'owner'],
-  subject: ['subject', 'activity subject', 'email subject', 'call title', 'meeting name', 'task title', 'title', 'body preview', 'activity body'],
+  subject: ['subject', 'activity subject', 'email subject', 'call title', 'meeting name', 'task title', 'title'],
+  toAddress: ['email to address', 'email to', 'to address', 'to', 'recipients'],
+  ccAddress: ['email cc address', 'email cc', 'cc address', 'cc'],
+  body: ['email body', 'body', 'activity body', 'body preview', 'call notes', 'meeting description', 'note body'],
 };
+
+// The longest an email body is kept, in characters. HubSpot's Email body
+// is the whole quoted thread; the newest message is what is kept (see
+// emailBody), and this caps a long one so thousands of rows still fit.
+export const BODY_MAX = 4000;
+
+/**
+ * Email To / CC Address as the addresses in it, "; " between, lowercase.
+ * Text with no address in it is kept as it is ("(No value)" reads as '').
+ */
+export function emailAddresses(v) {
+  const s = clean(v);
+  if (!s) return '';
+  const found = s.match(/[A-Z0-9._%+'-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
+  return found ? [...new Set(found.map(e => e.toLowerCase()))].join('; ') : s;
+}
+
+// Text that was UTF-8 read as Windows-1252 on the way out of HubSpot or
+// Excel: "Iâ€™m" for "I'm", "2â€“3" for "2-3". The usual few are put back.
+const MOJIBAKE = [
+  ['\u00E2\u20AC\u2122', "'"], ['\u00E2\u20AC\u02DC', "'"],
+  ['\u00E2\u20AC\u0153', '"'], ['\u00E2\u20AC\u009D', '"'],
+  ['\u00E2\u20AC\u201C', '\u2013'], ['\u00E2\u20AC\u201D', '-'],
+  ['\u00E2\u20AC\u00A6', '...'], ['\u00E2\u20AC\u00A2', '\u2022'],
+  ['\u00C2\u00A0', ' '], ['\u00C2 ', ' '],
+];
+const decodeEntities = (t) => t
+  .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"')
+  .replace(/&#39;|&apos;/gi, "'").replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&');
+
+// Where the quoted thread starts: an Outlook "From: ... Sent:" header, an
+// "-----Original Message-----" line, or a Gmail "On ... wrote:".
+const THREAD_START = /(^|\n)[ \t]*(From:[^\n]*\n[ \t]*Sent:|-{2,}\s*Original (Message|Appointment)\s*-{2,}|On [^\n]{6,120} wrote:)/i;
+// Lines that are mail-system noise, not what anybody wrote.
+const NOISE = [
+  /\[External email:[^\]]*\]/gi,
+  /You don't often get email from [^\n]*?Learn why this is important/gi,
+  /Caution: This email originated from outside of the organization\.[^\n]*?(recognize or trust the sender\.)/gi,
+  /CGBANNERINDICATOR/g,
+];
+
+/**
+ * An Email body as the newest message in it: entities decoded, the usual
+ * mis-encoded characters put back, mail-system banners dropped, the quoted
+ * thread below the first reply header cut off, blank runs collapsed, and
+ * capped at BODY_MAX. HubSpot puts a one-paragraph preview of the message
+ * before a CGBANNERINDICATOR marker and the message itself after it; the
+ * message is kept.
+ */
+export function emailBody(v) {
+  let t = String(v ?? '').replace(/\r\n?/g, '\n');
+  if (/^\s*\(no value\)\s*$/i.test(t)) return '';
+  t = decodeEntities(t);
+  for (const [bad, good] of MOJIBAKE) t = t.split(bad).join(good);
+  const banner = t.indexOf('CGBANNERINDICATOR');
+  if (banner >= 0) t = t.slice(banner);
+  for (const re of NOISE) t = t.replace(re, ' ');
+  const cut = t.search(THREAD_START);
+  if (cut > 0) t = t.slice(0, cut);
+  t = t.split('\n').map(l => l.replace(/[ \t\u00A0]+/g, ' ').trim()).join('\n')
+    .replace(/\n{3,}/g, '\n\n').trim();
+  return t.length > BODY_MAX ? `${t.slice(0, BODY_MAX).trimEnd()}...` : t;
+}
 
 /** Which header of `headers` each field reads from, '' for none. */
 export function activityColumns(headers = []) {
@@ -153,6 +219,9 @@ export function compactActivities(rows = []) {
       createdBy: clean(get(r, 'createdBy')),
       assignedTo: clean(get(r, 'assignedTo')),
       subject: clean(get(r, 'subject')).slice(0, 300),
+      toAddress: emailAddresses(get(r, 'toAddress')),
+      ccAddress: emailAddresses(get(r, 'ccAddress')),
+      body: emailBody(get(r, 'body')),
     };
     if (!a.companyId && !a.companyName) continue;
     if (!a.date && !a.type) continue;
