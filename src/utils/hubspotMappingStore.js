@@ -32,3 +32,27 @@ export async function loadHubspotMapping() {
 export async function saveHubspotMapping(value) {
   await writeChunkedDoc(ref(), value, { meta: { companies: value.companies?.length || 0 } });
 }
+
+// The Activity subtab's activity export (utils/hubspotActivity.js), kept
+// beside the mapping at lookupTables/{uid}/items/hubspot-activity:
+//
+//   { activities: [{ companyId, companyName, companyOwner, date, type,
+//                    engagementId, createdBy, assignedTo, subject }],
+//     meta: { file, at, hasAssignee } }
+export const HUBSPOT_ACTIVITY_TABLE = 'hubspot-activity';
+export const EMPTY_HUBSPOT_ACTIVITY = { activities: [], meta: {} };
+
+function activityRef() {
+  const uid = getDbUserId();
+  if (!uid) throw new Error('Not signed in.');
+  return doc(firestore, 'lookupTables', String(uid), 'items', HUBSPOT_ACTIVITY_TABLE);
+}
+
+export async function loadHubspotActivity() {
+  const got = await readChunkedDoc(activityRef());
+  return { ...EMPTY_HUBSPOT_ACTIVITY, ...(got?.value || {}) };
+}
+
+export async function saveHubspotActivity(value) {
+  await writeChunkedDoc(activityRef(), value, { meta: { activities: value.activities?.length || 0 } });
+}
