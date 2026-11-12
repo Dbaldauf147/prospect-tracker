@@ -83,6 +83,8 @@ import { classifyHqCountry, hqRegionMissing, HQ_REGION_OPTIONS, OUTSIDE_NORTH_AM
 import { RelationshipPanel } from '../Relationship/RelationshipPanel';
 import { estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
 import { EmailDomainsField } from './EmailDomainsField';
+import { BfoNamesField } from './BfoNamesField';
+import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
 import { emailSuggestions } from '../../utils/emailSuggestions';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
@@ -853,7 +855,7 @@ const EMPTY = {
   deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
   rank: '', tier: 'Tier 3', substatus: '',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', hubspotCompanyNames: '', goesBy: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
-  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
+  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', bfoCompanyAltNames: '', contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
   trackAcquisitionNews: false,
@@ -10108,6 +10110,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <CommitOnBlurInput className={styles.input} value={fields.bfoCompanyName ?? ''} onCommit={v => set('bfoCompanyName', v)} placeholder="Name as it appears in BFO" />
             </div>
 
+            <div className={styles.tallField}>
+              <label className={styles.label}>Other BFO Names <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(more BFO accounts)</span></label>
+              <BfoNamesField value={fields.bfoCompanyAltNames} primary={fields.bfoCompanyName} onChange={v => set('bfoCompanyAltNames', v)} />
+            </div>
+
             <div>
               <label className={styles.label}>Contracting Entity</label>
               <CommitOnBlurInput className={styles.input} value={fields.contractingEntity ?? ''} onCommit={v => set('contractingEntity', v)} placeholder="Legal entity on the contract" />
@@ -12669,7 +12676,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           {!isNew && activeTab === 'bfoHistory' && (
             <BfoHistoryTab
               history={fields.bfoHistory}
-              bfoCompanyName={fields.bfoCompanyName}
+              bfoCompanyName={bfoCompanyNamesOf(fields).join(', ')}
               onChange={(next) => set('bfoHistory', next)}
               settings={settings}
               updateSettings={updateSettings}
