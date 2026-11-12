@@ -38,7 +38,8 @@ export async function saveHubspotMapping(value) {
 //
 //   { activities: [{ companyId, companyName, companyOwner, date, type,
 //                    engagementId, createdBy, assignedTo, subject }],
-//     meta: { file, at, hasAssignee } }
+//     meta: { file, at, hasAssignee },
+//     ignored: [activityKey] }   (Others' Activity rows Dan ignored)
 export const HUBSPOT_ACTIVITY_TABLE = 'hubspot-activity';
 export const EMPTY_HUBSPOT_ACTIVITY = { activities: [], meta: {} };
 

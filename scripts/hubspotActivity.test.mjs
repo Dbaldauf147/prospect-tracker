@@ -3,7 +3,7 @@
 //   node scripts/hubspotActivity.test.mjs
 import {
   activityColumns, activityStamp, cleanId, activityKey, compactActivities, mergeActivities,
-  activityMatcher, activityRows, othersActivityRows, salespeopleSummary, formatActivityDate, salespersonOf,
+  activityMatcher, activityRows, othersActivityRows, salespeopleSummary, formatActivityDate, salespersonOf, accountTier,
 } from '../src/utils/hubspotActivity.js';
 import { buildHubspotMapping, compactMappingCompanies, pastedSheetRows } from '../src/utils/hubspotMapping.js';
 
@@ -91,6 +91,11 @@ const others = othersActivityRows(rows, 'Dan Baldauf');
 check("others' activity is on my accounts and not by me", others.map(r => `${r.account.company}:${r.salesperson}`), ['Blackstone:Jane Smith', 'Blackstone:Jane Smith']);
 check('no name, no others', othersActivityRows(rows, ''), []);
 check('summary', salespeopleSummary(others), [{ name: 'Jane Smith', count: 2, accounts: 1, last: '2026-11-10 16:46' }]);
+
+// tier
+check('tier label first', accountTier({ tierLabel: 'Tier 1 (Dan target)', myTier: 'Tier 1' }), 'Tier 1 (Dan target)');
+check('my tier', accountTier({ myTier: 'Tier 2' }), 'Tier 2');
+check('no account, no tier', accountTier(null), '');
 
 console.log(`${failed ? 'FAIL' : 'PASS'} hubspotActivity: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
