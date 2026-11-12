@@ -232,9 +232,17 @@ export function buildResolution(row, ctx) {
       return {
         title: 'Set BFO Company Name',
         subtitle,
-        note: 'The account name to search for in BFO. Once set, the company goes into the Agents tab\'s BFO History prompt.',
-        fields: [field('bfoCompanyName', 'BFO Company Name', 'text', prospect.bfoCompanyName, { start: prospect.bfoCompanyName || prospect.company || '' })],
-        async save(v) { await updateProspect(prospect.id, { bfoCompanyName: String(v.bfoCompanyName || '').trim() }); },
+        note: 'The account name to search for in BFO. Once set, the company goes into the Agents tab\'s BFO History prompt. If the company has no account in BFO, tick the box instead and the issue clears.',
+        fields: [
+          field('bfoCompanyName', 'BFO Company Name', 'text', prospect.bfoCompanyName, { start: prospect.bfoCompanyName || prospect.company || '' }),
+          field('noBfoCompanyName', 'There is no BFO Company Name (the company has no account in BFO)', 'checkbox', !!prospect.noBfoCompanyName),
+        ],
+        async save(v) {
+          // Ticked: record the mark and leave the name alone (the box is
+          // prefilled with the company name, which isn't a BFO name).
+          if (v.noBfoCompanyName) { await updateProspect(prospect.id, { noBfoCompanyName: true }); return; }
+          await updateProspect(prospect.id, { bfoCompanyName: String(v.bfoCompanyName || '').trim(), noBfoCompanyName: false });
+        },
       };
 
     case 'newBfo': {

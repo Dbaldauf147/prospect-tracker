@@ -84,7 +84,7 @@ import { RelationshipPanel } from '../Relationship/RelationshipPanel';
 import { estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
 import { EmailDomainsField } from './EmailDomainsField';
 import { BfoNamesField } from './BfoNamesField';
-import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
+import { bfoCompanyNamesOf, markedNoBfoName } from '../../utils/bfoCompanyNames';
 import { emailSuggestions } from '../../utils/emailSuggestions';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
@@ -855,7 +855,7 @@ const EMPTY = {
   deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
   rank: '', tier: 'Tier 3', substatus: '',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', hubspotCompanyNames: '', goesBy: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
-  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', bfoCompanyAltNames: '', contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
+  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', bfoCompanyAltNames: '', noBfoCompanyName: false, contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
   trackAcquisitionNews: false,
@@ -10107,7 +10107,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>BFO Company Name</label>
-              <CommitOnBlurInput className={styles.input} value={fields.bfoCompanyName ?? ''} onCommit={v => set('bfoCompanyName', v)} placeholder="Name as it appears in BFO" />
+              <CommitOnBlurInput className={styles.input} value={fields.bfoCompanyName ?? ''} onCommit={v => set('bfoCompanyName', v)} placeholder={markedNoBfoName(fields) ? 'No BFO Company Name' : 'Name as it appears in BFO'} />
+              {/* Marks a company that has no account in BFO, so it stops
+                  showing as a missing BFO Company Name (Issues, Agents). */}
+              {!bfoCompanyNamesOf(fields).length && (
+                <button
+                  type="button"
+                  onClick={() => set('noBfoCompanyName', !fields.noBfoCompanyName)}
+                  title={fields.noBfoCompanyName
+                    ? 'Marked as having no BFO account. Click to undo.'
+                    : 'This company has no account in BFO. Stops it showing as a missing BFO Company Name on the Issues and Agents tabs.'}
+                  style={{
+                    marginTop: 4, padding: '0.15rem 0.55rem', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                    border: `1px solid ${fields.noBfoCompanyName ? '#94A3B8' : '#E2E8F0'}`,
+                    background: fields.noBfoCompanyName ? '#F1F5F9' : '#fff',
+                    color: fields.noBfoCompanyName ? '#334155' : '#64748B',
+                  }}
+                >{fields.noBfoCompanyName ? '\u2713 No BFO Company Name (undo)' : 'No BFO Company Name'}</button>
+              )}
             </div>
 
             <div className={styles.tallField}>

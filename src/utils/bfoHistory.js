@@ -1,4 +1,4 @@
-import { bfoCompanyNamesOf } from './bfoCompanyNames.js';
+import { bfoCompanyNamesOf, markedNoBfoName } from './bfoCompanyNames.js';
 
 // BFO History: the opportunities BFO (Salesforce) holds against an account,
 // transcribed by the Agents tab's "BFO History" task from the account's
@@ -109,6 +109,8 @@ export function bfoHistoryTargets(entries, accountOf, nowMs = Date.now()) {
       // Every BFO name the company has, "; "-separated: the prompt tells
       // the agent to search each.
       bfoCompanyName: bfoCompanyNamesOf(p).join('; '),
+      // Checked and has no BFO account: not "missing", just not searchable.
+      noBfoName: markedNoBfoName(p),
       dmCount: 1,
       fresh: bfoHistoryIsFresh(p.bfoHistory, nowMs),
       pastedAt: p.bfoHistory?.pastedAt || '',
@@ -124,7 +126,7 @@ export function bfoHistoryTargets(entries, accountOf, nowMs = Date.now()) {
 export function bfoHistoryMissingNameIssues(targets) {
   const out = [];
   for (const t of targets || []) {
-    if (t.bfoCompanyName || !t.prospect?.id) continue;
+    if (t.bfoCompanyName || t.noBfoName || !t.prospect?.id) continue;
     out.push({
       id: `bfo-history-no-name:${t.prospect.id}`,
       source: 'Agents',

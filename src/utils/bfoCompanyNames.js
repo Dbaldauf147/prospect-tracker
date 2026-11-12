@@ -21,3 +21,12 @@ export function bfoCompanyNamesOf(p) {
   }
   return out;
 }
+
+// Some companies have no account in BFO at all. `noBfoCompanyName: true` on
+// the company records that someone checked, so it stops reading as a name
+// still to be filled in (the Issues tab's "BFO Company Name missing", the
+// Agents BFO History task's "Missing"). A name typed in later wins: the mark
+// only counts while the company has no BFO name.
+export function markedNoBfoName(p) {
+  return !!p?.noBfoCompanyName && bfoCompanyNamesOf(p).length === 0;
+}

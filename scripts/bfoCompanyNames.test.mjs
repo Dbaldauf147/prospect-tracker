@@ -1,6 +1,6 @@
 // Assertion tests for a company's BFO names (primary + others). Plain Node.
 //   node scripts/bfoCompanyNames.test.mjs
-import { bfoCompanyNamesOf, splitBfoNames } from '../src/utils/bfoCompanyNames.js';
+import { bfoCompanyNamesOf, splitBfoNames, markedNoBfoName } from '../src/utils/bfoCompanyNames.js';
 import { bfoHistoryTargets, bfoHistoryMissingNameIssues } from '../src/utils/bfoHistory.js';
 
 let failures = 0;
@@ -23,6 +23,20 @@ const p2 = { id: '2', company: 'Alt Only', bfoCompanyAltNames: 'Alt Only LLC' };
 const targets = bfoHistoryTargets([{ contact: 1 }, { contact: 2 }], c => (c === 1 ? p1 : p2));
 check('history targets join every name', targets.map(t => t.bfoCompanyName), ['Alt Only LLC', 'CBRE; CBRE IM']);
 check('alt-only company is not missing', bfoHistoryMissingNameIssues(targets), []);
+
+
+// Marked as having no BFO Company Name.
+check('marked: flag and no names', markedNoBfoName({ noBfoCompanyName: true }), true);
+check('marked: a name typed in later wins', markedNoBfoName({ noBfoCompanyName: true, bfoCompanyName: 'ACME' }), false);
+check('marked: an alt name also wins', markedNoBfoName({ noBfoCompanyName: true, bfoCompanyAltNames: 'ACME EU' }), false);
+check('marked: no flag', markedNoBfoName({}), false);
+{
+  const pm = { id: 'm', company: 'Marked', noBfoCompanyName: true };
+  const pn = { id: 'n', company: 'Nameless' };
+  const t = bfoHistoryTargets([{ contact: 'm' }, { contact: 'n' }], c => (c === 'm' ? pm : pn));
+  check('targets carry the mark', t.map(x => [x.company, x.noBfoName]), [['Marked', true], ['Nameless', false]]);
+  check('marked company is not a missing-name issue', bfoHistoryMissingNameIssues(t).map(r => r.company), ['Nameless']);
+}
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll passed');
