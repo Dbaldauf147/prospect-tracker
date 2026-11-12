@@ -3,7 +3,7 @@
 //   node scripts/hubspotActivity.test.mjs
 import {
   activityColumns, activityStamp, cleanId, activityKey, compactActivities, mergeActivities,
-  activityMatcher, activityRows, othersActivityRows, salespeopleSummary, formatActivityDate, salespersonOf, accountTier,
+  activityMatcher, activityRows, othersActivityRows, salespeopleSummary, formatActivityDate, salespersonOf, accountTier, emailBody, emailAddresses, BODY_MAX,
 } from '../src/utils/hubspotActivity.js';
 import { buildHubspotMapping, compactMappingCompanies, pastedSheetRows } from '../src/utils/hubspotMapping.js';
 
@@ -38,7 +38,7 @@ check('two engagement IDs at one minute stay two',
 
 // columns
 const cols = activityColumns(['Company ID', 'Company name', 'Company owner', 'Activity date', 'Activity type', 'Company ID_1', 'Engagement ID', 'Activity created by', 'Activity assigned to']);
-check('columns found', cols, { companyId: 'Company ID', companyName: 'Company name', companyOwner: 'Company owner', date: 'Activity date', type: 'Activity type', engagementId: 'Engagement ID', createdBy: 'Activity created by', assignedTo: 'Activity assigned to', subject: '' });
+check('columns found', cols, { companyId: 'Company ID', companyName: 'Company name', companyOwner: 'Company owner', date: 'Activity date', type: 'Activity type', engagementId: 'Engagement ID', createdBy: 'Activity created by', assignedTo: 'Activity assigned to', subject: '', toAddress: '', ccAddress: '', body: '' });
 check('a plain Record ID is the company', activityColumns(['Record ID', 'Name', 'Activity date']).companyId, 'Record ID');
 
 // Dan's paste, as copied out of Excel (two Company ID columns).
@@ -54,7 +54,7 @@ const { activities, hasAssignee } = compactActivities(pastedSheetRows(paste));
 check('every row read', activities.length, 5);
 check('the export names who logged them', hasAssignee, true);
 check('N/A reads as no name', activities[3].companyName, '');
-check('first activity', activities[0], { companyId: '55356713483', companyName: 'Ferguson', companyOwner: 'Dan Baldauf', date: '2026-10-19 17:00', type: 'Email reply from contact', engagementId: '118921000000', createdBy: 'Dan Baldauf', assignedTo: '', subject: '' });
+check('first activity', activities[0], { companyId: '55356713483', companyName: 'Ferguson', companyOwner: 'Dan Baldauf', date: '2026-10-19 17:00', type: 'Email reply from contact', engagementId: '118921000000', createdBy: 'Dan Baldauf', assignedTo: '', subject: '', toAddress: '', ccAddress: '', body: '' });
 check('no created-by falls back to assigned-to', salespersonOf({ assignedTo: 'A' }), 'A');
 check('created-by wins', salespersonOf({ createdBy: 'C', assignedTo: 'A' }), 'C');
 check('without either, no one', compactActivities([{ 'Company name': 'X', 'Activity date': '1/1/2026' }]).hasAssignee, false);
@@ -91,6 +91,35 @@ const others = othersActivityRows(rows, 'Dan Baldauf');
 check("others' activity is on my accounts and not by me", others.map(r => `${r.account.company}:${r.salesperson}`), ['Blackstone:Jane Smith', 'Blackstone:Jane Smith']);
 check('no name, no others', othersActivityRows(rows, ''), []);
 check('summary', salespeopleSummary(others), [{ name: 'Jane Smith', count: 2, accounts: 1, last: '2026-11-10 16:46' }]);
+
+// email columns
+const emailCols = activityColumns(['Company ID', 'Activity date', 'Email To Address', 'Email CC Address', 'Email body']);
+check('email columns found', [emailCols.toAddress, emailCols.ccAddress, emailCols.body], ['Email To Address', 'Email CC Address', 'Email body']);
+check('addresses lowercased, once each', emailAddresses('rachael.roy@se.com; Daniel.Baldauf@se.com; daniel.baldauf@se.com'), 'rachael.roy@se.com; daniel.baldauf@se.com');
+check('(No value) is no address', emailAddresses('(No value)'), '');
+check('a name-only cell is kept', emailAddresses('Jackie Cobb'), 'Jackie Cobb');
+const thread = [
+  '    [External email: Use caution with links and attachments]',
+  '   ',
+  '     Hi Rachael, Yes, preview of it. Let me know.       CGBANNERINDICATOR    Hi Rachael,  ',
+  '   Yes, that sounds like a great plan.    ',
+  '   Tuesday, October 20: 2\u00E2\u20AC\u201C3 p.m. ET     Next week, I\u00E2\u20AC\u2122m available.   ',
+  ' Thank you,    ',
+  '   Vincent Black',
+  '        From: Rachael Roy &lt;rachael.roy@se.com&gt;',
+  ' Sent: Friday, October 16, 2026 2:35 PM',
+  ' Subject: RE: Climate Week',
+  ' HI Vincent and Malyn,',
+].join('\n');
+check('newest message only, banners and preview gone, characters fixed', emailBody(thread),
+  'Hi Rachael,\nYes, that sounds like a great plan.\nTuesday, October 20: 2\u20133 p.m. ET Next week, I\'m available.\nThank you,\nVincent Black');
+check('no thread, kept whole', emailBody('      Hi Brad,\n \n Hope you are enjoying your fall!  \n     \n          Dan Baldauf'), 'Hi Brad,\n\nHope you are enjoying your fall!\n\nDan Baldauf');
+check('Original Appointment cuts too', emailBody('Sure, Friday works.\n -----Original Appointment-----\n From: Andi'), 'Sure, Friday works.');
+check('entities decoded', emailBody('Tom &amp; Jerry &lt;x&gt;'), 'Tom & Jerry <x>');
+check('(No value) body', emailBody('(No value)'), '');
+check('a long body is capped', emailBody('a'.repeat(BODY_MAX + 50)).length, BODY_MAX + 3);
+const withEmail = compactActivities([{ 'Company ID': '1', 'Activity date': '11/9/2026 13:31', 'Activity type': 'Email sent to contact', 'Email To Address': 'Eric.Pan@warburgpincus.com', 'Email CC Address': '(No value)', 'Email body': '      Hi Eric,\n \n You might have already seen this.' }]).activities[0];
+check('email fields read', [withEmail.toAddress, withEmail.ccAddress, withEmail.body], ['eric.pan@warburgpincus.com', '', 'Hi Eric,\n\nYou might have already seen this.']);
 
 // tier
 check('tier label first', accountTier({ tierLabel: 'Tier 1 (Dan target)', myTier: 'Tier 1' }), 'Tier 1 (Dan target)');

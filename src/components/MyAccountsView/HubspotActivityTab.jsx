@@ -6,6 +6,7 @@
 // The activities are kept in Firestore (hubspotMappingStore.js) and each
 // drop merges into what is there, so history builds up across exports.
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { pastedSheetRows, pickExportFromZip } from '../../utils/hubspotMapping';
@@ -38,6 +39,37 @@ async function readActivitySheet(file) {
   return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: true });
 }
 
+// The whole stored email of one activity, over the page. Esc, x or a
+// click outside closes it.
+function BodyPopup({ row, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const line = (label, value) => (value ? <div><span style={{ color: '#64748B' }}>{label}:</span> {value}</div> : null);
+  return createPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10, width: 760, maxWidth: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
+        <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
+          <div style={{ fontSize: '0.75rem', color: '#334155', lineHeight: 1.5, minWidth: 0, overflowWrap: 'anywhere' }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>{row.type || 'Activity'}{row.account ? `, ${row.account.company}` : row.companyName ? `, ${row.companyName}` : ''}</div>
+            {line('Date', formatActivityDate(row.date))}
+            {line('By', row.salesperson)}
+            {line('To', row.toAddress)}
+            {line('CC', row.ccAddress)}
+            {line('Subject', row.subject)}
+          </div>
+          <button type="button" onClick={onClose} title="Close" style={{ border: 'none', background: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>×</button>
+        </div>
+        <div style={{ padding: '0.75rem 1rem', overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: '0.82rem', color: '#1E293B', lineHeight: 1.5 }}>{row.body}</div>
+        <div style={{ padding: '0.4rem 1rem', borderTop: '1px solid #E2E8F0', fontSize: '0.68rem', color: '#64748B' }}>The newest message only: the quoted thread below it is left out.</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 const text = (key, label, width, extra = {}) => ({
   key, label, defaultWidth: width,
   getSortValue: r => String(r[key] || '').toLowerCase() || null,
@@ -56,6 +88,7 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
   // Others' Activity: the ignored activity shown instead of the rest.
   const [showIgnored, setShowIgnored] = useState(false);
   const [shownRows, setShownRows] = useState([]);
+  const [openBody, setOpenBody] = useState(null);
   const firstName = String(cdmName || '').trim().split(/\s+/)[0] || 'Dan';
   const others = view === 'others';
 
@@ -177,6 +210,19 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
     text('assignedTo', 'Activity Assigned To', 160),
     text('how', 'Matched By', 125, { headerTitle: 'How the activity was put on a My Accounts company: its HubSpot Company ID (a company on the Mapping subtab), else its company name.' }),
     text('subject', 'Subject', 260),
+    text('toAddress', 'Email To', 240),
+    text('ccAddress', 'Email CC', 220),
+    {
+      key: 'body', label: 'Email Body', defaultWidth: 340,
+      headerTitle: 'The newest message of the email (the quoted thread is left out). Click one to read it all.',
+      getSortValue: r => r.body || null,
+      getFilterValue: r => r.body || '', exportValue: r => r.body || '',
+      render: r => (r.body ? (
+        <button type="button" onClick={() => setOpenBody(r)} title="Read the whole message"
+          style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: '#334155', cursor: 'pointer', textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%', display: 'block' }}
+        >{r.body.replace(/\s+/g, ' ').slice(0, 200)}</button>
+      ) : blank),
+    },
     text('companyId', 'Company ID', 130),
     text('engagementId', 'Engagement ID', 140, { headerTitle: 'From a paste, only as precise as Excel showed it (1.18921E+11). Drop the file itself for the full ID.' }),
     ...(others ? [{
@@ -206,7 +252,7 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
           <input type="file" accept=".csv,.xlsx,.xls,.zip" disabled={busy} style={{ display: 'none' }}
             onChange={e => { upload(e.target.files?.[0]); e.target.value = ''; }} />
           <strong style={{ color: '#0F172A' }}>Drop your HubSpot activity export here</strong>, click to choose it (CSV, Excel, or the zip HubSpot downloads), or copy the rows in Excel (header row included) and paste them anywhere on this page with Ctrl+V.
-          {' '}It reads Company ID, Company name, Company owner, Activity date, Activity type, Engagement ID, Activity created by and Activity assigned to. Each drop adds to the activity already here.
+          {' '}It reads Company ID, Company name, Company owner, Activity date, Activity type, Engagement ID, Activity created by, Activity assigned to, Email To Address, Email CC Address and Email body. Each drop adds to the activity already here.
           <div style={{ marginTop: 4, color: '#64748B' }}>
             {busy ? 'Reading...'
               : !loaded ? 'Loading...'
@@ -275,8 +321,8 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
             defaultSort={{ key: 'date', direction: 'desc' }}
             alwaysVisible={['date', 'account']}
             defaultHidden={others
-              ? ['companyOwner', 'createdBy', 'assignedTo', 'how', 'subject', 'companyId', 'engagementId']
-              : ['createdBy', 'assignedTo', 'subject', 'companyId', 'engagementId']}
+              ? ['companyOwner', 'createdBy', 'assignedTo', 'how', 'subject', 'toAddress', 'ccAddress', 'companyId', 'engagementId']
+              : ['createdBy', 'assignedTo', 'subject', 'ccAddress', 'companyId', 'engagementId']}
             emptyMessage="Nothing matches"
             settings={settings}
             updateSettings={updateSettings}
@@ -284,6 +330,7 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
           />
         </div>
       )}
+      {openBody && <BodyPopup row={openBody} onClose={() => setOpenBody(null)} />}
     </div>
   );
 }
