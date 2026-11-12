@@ -1,7 +1,7 @@
 // Assertion tests for the BFO History paste parser and the Agents task's
 // company list. Plain Node, no framework. Run:
 //   node scripts/bfoHistory.test.mjs
-import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, bfoHistoryMissingNameIssues, BFO_HISTORY_HEADER, bfoHistoryRowKey, setBfoHistoryIgnored } from '../src/utils/bfoHistory.js';
+import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, bfoHistoryMissingNameIssues, BFO_HISTORY_HEADER, bfoHistoryRowKey, setBfoHistoryIgnored, setBfoHistoryOk, bfoHistoryMarks } from '../src/utils/bfoHistory.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -83,6 +83,17 @@ check('ignore: on no history', setBfoHistoryIgnored(null, ['a|'], true), { ignor
 {
   const r = parseBfoHistory('Status\tOpportunity Name\tBFO Account\nOpen\tDeal\tB Corp').rows[0];
   check('parse: BFO Account column', r.account, 'B Corp');
+}
+
+// OK marks: set, cleared, independent of ignored, carried over by a paste.
+{
+  const h0 = { rows: [{ name: 'A', closeDate: 'Jan 1, 2026' }], ignored: ['x|'] };
+  const h1 = setBfoHistoryOk(h0, ['a|jan 1, 2026'], true);
+  check('ok: mark adds the key', h1.ok, ['a|jan 1, 2026']);
+  check('ok: ignored untouched', h1.ignored, ['x|']);
+  check('ok: unmark removes it', setBfoHistoryOk(h1, ['a|jan 1, 2026'], false).ok, []);
+  check('marks: paste keeps ignored and ok', bfoHistoryMarks(h1), { ignored: ['x|'], ok: ['a|jan 1, 2026'] });
+  check('marks: nothing to keep', bfoHistoryMarks({ rows: [] }), {});
 }
 
 if (failures) {

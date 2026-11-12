@@ -7,9 +7,13 @@
 // row or in bulk from the checkboxes. Ignored rows drop off the table (a
 // "Show ignored" toggle brings them back, greyed, to restore) and stay
 // ignored across a new paste; see setBfoHistoryIgnored.
+//
+// Rows can also be marked OK (checked, nothing to do): they stay on screen
+// with a green tick and an OK column to filter on, and the mark also
+// survives a new paste; see setBfoHistoryOk.
 import { useCallback, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { BFO_HISTORY_COLUMNS, BFO_HISTORY_HEADER, parseBfoHistory, bfoHistoryRowKey, setBfoHistoryIgnored } from '../../utils/bfoHistory';
+import { BFO_HISTORY_COLUMNS, BFO_HISTORY_HEADER, parseBfoHistory, bfoHistoryRowKey, setBfoHistoryIgnored, setBfoHistoryOk, bfoHistoryMarks } from '../../utils/bfoHistory';
 
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 const RIGHT = new Set(['amount', 'probability']);
@@ -38,11 +42,13 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
   const [selected, setSelected] = useState(() => new Set());
   const [filteredIds, setFilteredIds] = useState(null);
   const ignoredSet = useMemo(() => new Set(history?.ignored || []), [history]);
+  const okSet = useMemo(() => new Set(history?.ok || []), [history]);
   const allRows = useMemo(() => (history?.rows || []).map((r, i) => {
     const key = bfoHistoryRowKey(r);
-    return { id: String(i), ...r, _key: key, _ignored: ignoredSet.has(key) };
-  }), [history, ignoredSet]);
+    return { id: String(i), ...r, _key: key, _ignored: ignoredSet.has(key), _ok: okSet.has(key) };
+  }), [history, ignoredSet, okSet]);
   const ignoredCount = allRows.filter(r => r._ignored).length;
+  const okCount = allRows.filter(r => r._ok && !r._ignored).length;
   const rows = useMemo(() => (showIgnored ? allRows : allRows.filter(r => !r._ignored)), [allRows, showIgnored]);
   const pastedLabel = history?.pastedAt
     ? new Date(history.pastedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
@@ -60,6 +66,10 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
     onChange(setBfoHistoryIgnored(history, targets.map(r => r._key), ignore));
     setSelected(new Set());
   }, [history, onChange]);
+  const setOk = useCallback((targets, ok) => {
+    onChange(setBfoHistoryOk(history, targets.map(r => r._key), ok));
+    setSelected(new Set());
+  }, [history, onChange]);
   const toggleSelected = (id) => setSelected(prev => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -72,7 +82,7 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
   const selectCol = {
     key: '__select__',
     label: '',
-    defaultWidth: 64,
+    defaultWidth: 100,
     renderHeader: () => (
       <input
         type="checkbox"
@@ -94,6 +104,14 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
           onClick={(e) => e.stopPropagation()}
           style={{ cursor: 'pointer' }}
         />
+        {!r._ignored && (
+          <button type="button"
+            style={{ ...rowBtn, color: r._ok ? '#15803D' : '#94A3B8', fontWeight: r._ok ? 700 : 400 }}
+            title={r._ok ? 'Marked OK. Click to unmark' : 'Mark this row OK'}
+            aria-label={`${r._ok ? 'Unmark' : 'Mark'} ${r.name} OK`}
+            aria-pressed={r._ok}
+            onClick={(e) => { e.stopPropagation(); setOk([r], !r._ok); }}>&#10003;</button>
+        )}
         {r._ignored ? (
           <button type="button" style={{ ...rowBtn, color: '#2563EB' }} title="Restore this row" aria-label={`Restore ${r.name}`}
             onClick={(e) => { e.stopPropagation(); setIgnored([r], false); }}>&#8634;</button>
@@ -123,15 +141,26 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
       ? <span style={RIGHT.has(c.key) ? { display: 'block', textAlign: 'right' } : undefined}>{r[c.key]}</span>
       : blank),
   })), []);
-  const columns = [selectCol, ...dataColumns];
+  const okCol = {
+    key: '__ok__',
+    label: 'OK',
+    defaultWidth: 70,
+    getSortValue: r => (r._ok ? 1 : 0),
+    getFilterValue: r => (r._ok ? 'OK' : 'Not marked'),
+    exportValue: r => (r._ok ? 'OK' : ''),
+    render: r => (r._ok
+      ? <span style={{ padding: '0.05rem 0.45rem', borderRadius: 999, background: '#DCFCE7', color: '#15803D', fontSize: '0.72rem', fontWeight: 600 }}>OK</span>
+      : blank),
+  };
+  const columns = [selectCol, okCol, ...dataColumns];
 
   const save = () => {
     const { rows: parsed, error: err } = parseBfoHistory(text);
     if (err) { setError(err); return; }
     const open = parsed.filter(r => r.status === 'Open').length;
     const closed = parsed.filter(r => r.status === 'Closed').length;
-    // A new paste replaces the rows but keeps what was ignored.
-    onChange({ rows: parsed, pastedAt: new Date().toISOString(), ...(history?.ignored?.length ? { ignored: history.ignored } : {}) });
+    // A new paste replaces the rows but keeps what was ignored or marked OK.
+    onChange({ rows: parsed, pastedAt: new Date().toISOString(), ...bfoHistoryMarks(history) });
     setText('');
     setError('');
     setPasteOpen(false);
@@ -152,7 +181,7 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
             style={{ padding: '0.2rem 0.6rem', borderRadius: 999, background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', fontWeight: 600 }}
           >Pasted into the tracker: {pastedLabel}</span>
           <span style={{ color: '#475569' }}>
-            {allRows.length} opportunit{allRows.length === 1 ? 'y' : 'ies'}: {openCount} open, {closedCount} closed{ignoredCount ? `, ${ignoredCount} ignored` : ''}
+            {allRows.length} opportunit{allRows.length === 1 ? 'y' : 'ies'}: {openCount} open, {closedCount} closed{okCount ? `, ${okCount} OK` : ''}{ignoredCount ? `, ${ignoredCount} ignored` : ''}
           </span>
         </div>
       )}
@@ -168,6 +197,16 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
             onClick={() => { if (window.confirm('Clear the BFO History for this company?')) onChange(null); }}
             style={smallBtn}
           >Clear</button>
+        )}
+        {selectedRows.some(r => !r._ignored && !r._ok) && (
+          <button type="button" style={{ ...smallBtn, borderColor: '#86EFAC', color: '#15803D', fontWeight: 600 }}
+            onClick={() => setOk(selectedRows.filter(r => !r._ignored && !r._ok), true)}
+          >Mark OK ({selectedRows.filter(r => !r._ignored && !r._ok).length})</button>
+        )}
+        {selectedRows.some(r => !r._ignored && r._ok) && (
+          <button type="button" style={smallBtn}
+            onClick={() => setOk(selectedRows.filter(r => !r._ignored && r._ok), false)}
+          >Unmark OK ({selectedRows.filter(r => !r._ignored && r._ok).length})</button>
         )}
         {selectedRows.some(r => !r._ignored) && (
           <button type="button" style={{ ...smallBtn, borderColor: '#FCA5A5', color: '#B91C1C', fontWeight: 600 }}
@@ -217,7 +256,7 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
             columns={columns}
             rows={rows}
             alwaysVisible={['__select__', 'name']}
-            rowStyle={r => (r._ignored ? { opacity: 0.5 } : undefined)}
+            rowStyle={r => (r._ignored ? { opacity: 0.5 } : r._ok ? { background: '#F0FDF4' } : undefined)}
             onFilteredRowsChange={onFilteredRowsChange}
             emptyMessage={ignoredCount ? `Every row is ignored. Tick "Show ignored" to see them.` : 'No data found'}
             settings={settings}
