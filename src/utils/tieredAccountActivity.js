@@ -379,9 +379,10 @@ export function rosterActivityPeople({ contacts, gates, myCdmGate = null, outrea
   return rosters.map((r, i) => ({ key: r.key, label: r.label, people: people[i] }));
 }
 
-// The accounts DMs Without Activity leaves out: nobody is working them, so
-// their decision makers aren't owed outreach.
-export const DMS_HIDDEN_ACCOUNT_STATUSES = ['Hold Off', 'Lost - Not Sold', 'Old Client'];
+// The accounts DMs Without Activity leaves out: nobody is working the first
+// three, so their decision makers aren't owed outreach, and a Client's
+// decision makers are worked on the Clients page instead.
+export const DMS_HIDDEN_ACCOUNT_STATUSES = ['Hold Off', 'Lost - Not Sold', 'Old Client', 'Client'];
 
 // An account's Status as these pages read it: a company with a Substatus
 // counts as Hold Off, whatever its Status says (as on Tiered Activity).

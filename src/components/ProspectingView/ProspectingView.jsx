@@ -1587,7 +1587,6 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           cdmName={cdmName}
           onSelectProspect={onSelectProspect}
           onOpenContact={openContact}
-          maxWidth={PAGE_MAX}
         />
       ) : subtab === 'tiered' ? (
         <ProspectingTiered

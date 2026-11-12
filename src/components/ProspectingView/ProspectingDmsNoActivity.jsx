@@ -41,7 +41,7 @@ const toIso = (ms) => {
 };
 const windowLabel = (w) => (w == null ? 'No activity ever' : `None in ${w} days`);
 
-export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, cdmName = '', onSelectProspect, onOpenContact = null, maxWidth }) {
+export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, cdmName = '', onSelectProspect, onOpenContact = null }) {
   const { user } = useAuth() || {};
   const { contacts, outreachIndex, noIndex, localFields } = useTieredActivity({ prospects, settings, cdmName });
   const oppsRecords = useOpps2Data(user?.uid)?.records ?? null;
@@ -56,7 +56,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
   };
 
   // Every window's list at once, for the chip counts. Decision makers at a
-  // Hold Off, Lost - Not Sold or Old Client account are left off all of them.
+  // Hold Off, Lost - Not Sold, Old Client or Client account are left off all of them.
   const lists = useMemo(() => {
     if (!contacts || !gates) return null;
     return new Map(WINDOWS.map(w => [w, decisionMakersWithoutActivity({
@@ -155,10 +155,10 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
 
   const loading = !lists;
   return (
-    <div style={{ maxWidth, display: 'flex', flexDirection: 'column', gap: '0.6rem', minHeight: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', minHeight: 0, padding: '0 1.25rem 1.25rem' }}>
       <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
         Decision makers at your accounts that nothing has reached: no HubSpot email or call to them, and no Last Contacted date.
-        {' '}The History chart's Decision Makers (tagged Decision Maker, less Hide, Left and the clients every roster leaves out), without the Hold Off, Lost - Not Sold and Old Client accounts. A company with a Substatus counts as Hold Off.
+        {' '}The History chart's Decision Makers (tagged Decision Maker, less Hide, Left and the clients every roster leaves out), without the Hold Off, Lost - Not Sold, Old Client and Client accounts. A company with a Substatus counts as Hold Off.
         {noIndex && <span style={{ color: '#B45309' }}> HubSpot emails and calls count once the Activity tab has loaded its feed, so until then this list may hold people who were emailed.</span>}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>

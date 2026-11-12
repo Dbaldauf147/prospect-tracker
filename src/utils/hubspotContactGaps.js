@@ -19,7 +19,7 @@
 // Pure: runs under plain Node in scripts/hubspotContactGaps.test.mjs.
 
 import { reportingStatus } from './reportingStatus.js';
-import { DMS_HIDDEN_ACCOUNT_STATUSES, accountStatusOf } from './tieredAccountActivity.js';
+import { accountStatusOf } from './tieredAccountActivity.js';
 
 export const GAP = { notInApp: 'Not in the app', missingData: 'Missing data' };
 
@@ -165,9 +165,10 @@ export function gapFillPlan(row) {
   return null;
 }
 
-// Accounts nobody is working: Gap Fill leaves their contacts off, as DMs
-// Without Activity does. A company with a Substatus counts as Hold Off.
-export const GAP_FILL_HIDDEN_STATUSES = DMS_HIDDEN_ACCOUNT_STATUSES;
+// Accounts nobody is working: Gap Fill leaves their contacts off. A company
+// with a Substatus counts as Hold Off. Its own list, not DMs Without
+// Activity's: that page also leaves Clients off, and Gap Fill keeps them.
+export const GAP_FILL_HIDDEN_STATUSES = ['Hold Off', 'Lost - Not Sold', 'Old Client'];
 
 /**
  * `rows` without the ones whose My Account is Hold Off, Lost - Not Sold or
