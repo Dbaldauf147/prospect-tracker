@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense, Fragment, isValidElement, cloneElement } from 'react';
+import { BfoHistoryTab } from './BfoHistoryTab';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { lsHas, settingsHaveLoaded } from '../../utils/tablePrefsSync';
 import { useColumnPresets } from '../../hooks/useColumnPresets';
@@ -795,6 +796,11 @@ const PROSPECT_TABS = [
     key: 'opps',
     label: 'Opps',
     title: 'The opportunities whose Account is this company, and the note pages kept against them',
+  },
+  {
+    key: 'bfoHistory',
+    label: 'BFO History',
+    title: "The opportunities BFO holds for this account, transcribed from its Oppty 360 tab by the Agents tab's BFO History task",
   },
   {
     key: 'contracts',
@@ -7460,6 +7466,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         ? `${servicesExploredCount.explored}/${servicesExploredCount.total}`
         : '',
       opps: n(companyOppsSummary.total),
+      bfoHistory: n(fields.bfoHistory?.rows?.length || 0),
       contracts: n(activeContractCount),
       // What is on the Potential tab: the services still worth something,
       // which is the ones nobody has ruled on plus the ones somebody is
@@ -7473,7 +7480,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       portfolio: n((fields.portfolioCompanies || []).length),
     };
   }, [companyContacts.length, servicesExploredCount, companyOppsSummary.total,
-    accountPotentialReading, fields.portfolioCompanies, activeContractCount]);
+    accountPotentialReading, fields.portfolioCompanies, activeContractCount, fields.bfoHistory]);
 
   // What the Potential tab prices: the catalogue minus the services retired
   // on the Services tab.
@@ -12659,6 +12666,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               onChangeCoaRequirements={next => setFields(f => ({ ...f, coaRequirements: next }))}
             />
           )}
+          {!isNew && activeTab === 'bfoHistory' && (
+            <BfoHistoryTab
+              history={fields.bfoHistory}
+              bfoCompanyName={fields.bfoCompanyName}
+              onChange={(next) => set('bfoHistory', next)}
+              settings={settings}
+              updateSettings={updateSettings}
+            />
+          )}
+
           {!isNew && activeTab === 'potential' && fields.company?.trim() && (
             <div className={styles.potentialPane}>
             <AccountPotentialTab

@@ -37,6 +37,9 @@ import {
   agentsSnoozedUntilMs,
 } from '../../utils/agentsRunReminder';
 import { useAgentsRunDue } from '../../hooks/useAgentsRunDue';
+import { useDmsNoActivity, readDmsWindow, dmsWindowLabel } from '../../hooks/useDmsNoActivity';
+import { bfoHistoryTargets, BFO_HISTORY_HEADER, BFO_HISTORY_FRESH_DAYS } from '../../utils/bfoHistory';
+import { DataTable } from '../common/DataTable';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
 // (or meeting contact) that didn't auto-match an Opps-tab row. Keyed
@@ -64,6 +67,7 @@ const IMPORT_MARKETING_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-import-marke
 const MARKETING_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-leads';
 const MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-lead-status-update';
 const DUPLICATE_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-duplicate-leads';
+const BFO_HISTORY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-history';
 
 // The BFO Activity page's "Leads" subtab (pasted Salesforce Leads
 // printable view) persists under its own key in the same store. The
@@ -130,6 +134,23 @@ const DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY = `1.  When you are on this page cli
 2.  A new tab will pop up, go to that tab and change the number of records to 250
 3.  Copy all data in the table on that page starting with Account Name going all the way down to the bottom righthand corner of that table in the final row of data in the final column.
 4.  Navigate to this website https://prospect-tracker-ashen.vercel.app/ and then paste the data from the previous page into the BFO Activity tab .`;
+
+// BFO History: walk the DMs Without Activity companies through BFO's
+// Oppty 360 tab and paste each one's full opportunity list into the
+// company popup's BFO History tab (utils/bfoHistory reads the paste).
+const DEFAULT_AI_PROMPT_BFO_HISTORY = `1.  Work through the companies listed below one at a time. The BFO Company Name column is the name to search for in BFO.
+2.  In BFO (https://se.lightning.force.com/), search for the BFO Company Name in the search bar at the top and open the matching Account record (not a contact or an opportunity). If there is no matching account, note the company as not found and move on to the next one.
+3.  On the account page, click the Oppty 360 tab.
+4.  Click the "Opportunities of this Account" drop-down at the top left of the opportunities panel and choose "All of the above".
+5.  On the Open subtab, transcribe every row on the page: Opportunity Name, Leader, Stage, Amount, Close Date, Last Modified Date, Included in Reporting (write Yes when it shows a check mark, leave it blank otherwise) and % Probability. Copy the full text of each cell; if a value is cut off with "...", hover over it or widen the column to read all of it.
+6.  Click the next-page arrow (>) at the bottom right and transcribe that page too. Keep going until the last page ("Page N of N"), then check that your row count matches the "Showing ... of N records" total.
+7.  Click the Closed subtab and do the same: every row on every page.
+8.  Put it all in one tab-separated table, header line first, exactly:
+${BFO_HISTORY_HEADER}
+    Status is Open or Closed, by the subtab the row came from. One line per opportunity, no blank lines.
+9.  Go to https://prospect-tracker-ashen.vercel.app/, open the Agents tab and find the AI Prompt (BFO History) section. Click the company's name in that section's table to open its company pop-up, then click the BFO History tab, click "Paste BFO history", paste the table into the box and click "Save BFO history". Check the green "Saved N opportunities" message and that N matches your row count.
+10. Close the pop-up and repeat for the next company.
+11. When every company is done, give me a summary table: Company, BFO Company Name, Open count, Closed count, and Result (saved / not found / error).`;
 
 // Opps 2 Stage → expected BFO Sales Stage. When the BFO Activity tab's
 // Sales Stage value for an opp doesn't match the expected stage for the
@@ -937,6 +958,19 @@ function writeBfoPrepPrompt(next) {
   try { writeWorkKey(BFO_PREP_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
+function readBfoHistoryPrompt() {
+  try {
+    const raw = userLsGet(BFO_HISTORY_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_BFO_HISTORY : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_BFO_HISTORY;
+  }
+}
+
+function writeBfoHistoryPrompt(next) {
+  try { writeWorkKey(BFO_HISTORY_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
 function readImportMarketingLeadsPrompt() {
   try {
     const raw = userLsGet(IMPORT_MARKETING_LEADS_PROMPT_STORAGE_KEY);
@@ -1697,7 +1731,7 @@ function PromptLibrary({ prompts, onChange }) {
   );
 }
 
-export function AgentsView({ prospects = [], settings, updateProspect, updateSettings }) {
+export function AgentsView({ prospects = [], settings, updateProspect, updateSettings, cdmName = '', onSelectProspect = null }) {
   const { user } = useAuth();
   // "Run the prompts" reminder. The stamp lives on synced settings, so the
   // banner here and the Sidebar's red badge always agree — and marking a run
@@ -1802,6 +1836,22 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [marketingLeadsPrompt, setMarketingLeadsPrompt] = useState(readMarketingLeadsPrompt);
   const [marketingLeadStatusUpdatePrompt, setMarketingLeadStatusUpdatePrompt] = useState(readMarketingLeadStatusUpdatePrompt);
   const [duplicateLeadsPrompt, setDuplicateLeadsPrompt] = useState(readDuplicateLeadsPrompt);
+  const [bfoHistoryPrompt, setBfoHistoryPrompt] = useState(readBfoHistoryPrompt);
+  const [bfoHistoryCopyFlash, setBfoHistoryCopyFlash] = useState('');
+  // BFO History: the companies on Prospecting > DMs Without Activity (the
+  // window chip last picked there), one row per company. Companies with no
+  // BFO Company Name, or whose history was pasted in the last
+  // BFO_HISTORY_FRESH_DAYS days, stay in the table but out of the prompt.
+  const { lists: dmsLists, accountOf: dmsAccountOf } = useDmsNoActivity({ prospects, settings, cdmName });
+  const dmsWindow = readDmsWindow();
+  const bfoHistoryRows = useMemo(
+    () => (dmsLists ? bfoHistoryTargets(dmsLists.get(dmsWindow), dmsAccountOf) : []),
+    [dmsLists, dmsWindow, dmsAccountOf],
+  );
+  const bfoHistoryReady = useMemo(
+    () => bfoHistoryRows.filter(r => r.bfoCompanyName && !r.fresh),
+    [bfoHistoryRows],
+  );
 
   // A prompt (or one of the decision lists) edited on the user's other
   // machine arrives after sign-in, while this page may already be open —
@@ -1822,6 +1872,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       setMarketingLeadsPrompt(readMarketingLeadsPrompt());
       setMarketingLeadStatusUpdatePrompt(readMarketingLeadStatusUpdatePrompt());
       setDuplicateLeadsPrompt(readDuplicateLeadsPrompt());
+      setBfoHistoryPrompt(readBfoHistoryPrompt());
     };
     window.addEventListener(AGENT_SETTINGS_EVENT, onMirror);
     return () => window.removeEventListener(AGENT_SETTINGS_EVENT, onMirror);
@@ -1950,6 +2001,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     writeCloseNotSoldsPrompt(next);
   };
   const resetCloseNotSoldsPrompt = () => updateCloseNotSoldsPrompt(DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS);
+
+  const updateBfoHistoryPrompt = (next) => {
+    setBfoHistoryPrompt(next);
+    writeBfoHistoryPrompt(next);
+  };
+  const resetBfoHistoryPrompt = () => updateBfoHistoryPrompt(DEFAULT_AI_PROMPT_BFO_HISTORY);
 
   const updateUpdateBfoActivityPrompt = (next) => {
     setUpdateBfoActivityPrompt(next);
@@ -3418,6 +3475,8 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       ].join('\t')),
     ].join('\n');
 
+    const bfoHistoryBlock = ['Company\tBFO Company Name', ...bfoHistoryReady.map(r => `${r.company}\t${r.bfoCompanyName}`)].join('\n');
+
     const sections = [
       { title: 'BFO Prep', prompt: bfoPrepPrompt, block: bfoPrepBlock, hasData: bfoPrepOpps.length > 0 },
       { title: 'Activity', prompt: aiPrompt, block: activityBlock, hasData: activityLines.length > 1 },
@@ -3438,6 +3497,8 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       { title: 'Marketing Leads', prompt: withMarketingLeadsSafety(marketingLeadsPrompt), block: marketingLeadsBlock, hasData: marketingLeadsMissing.length > 0, always: true },
       { title: 'Marketing Lead Status Update', prompt: marketingLeadStatusUpdatePrompt, block: marketingLeadStatusBlock, hasData: marketingLeadStatusRows.length > 0, always: true },
       { title: 'Duplicate Leads', prompt: duplicateLeadsPrompt, block: duplicateLeadsBlock, hasData: duplicateLeadRows.length > 0, always: true },
+      // Second to last: just ahead of the Update BFO Activity suffix.
+      { title: 'BFO History', prompt: bfoHistoryPrompt, block: bfoHistoryBlock, hasData: bfoHistoryReady.length > 0 },
     ];
     // Skip sections that carry no data — when a section is just its prompt
     // with an empty data block (no BFO links, names, or opportunities to
@@ -3463,6 +3524,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     importMarketingLeadsPrompt, marketingLeadsPrompt, marketingLeadsMissing,
     marketingLeadStatusUpdatePrompt, marketingLeadStatusRows,
     duplicateLeadsPrompt, duplicateLeadRows,
+    bfoHistoryPrompt, bfoHistoryReady,
   ]);
 
   const [copyAllFlash, setCopyAllFlash] = useState('');
@@ -4971,6 +5033,108 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 </tbody>
               </table>
             </div>
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+      {(() => {
+        const block = ['Company\tBFO Company Name', ...bfoHistoryReady.map(r => `${r.company}\t${r.bfoCompanyName}`)].join('\n');
+        const fullPrompt = `${bfoHistoryPrompt}\n\n${block}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(withBfoActivitySuffix(fullPrompt));
+            setBfoHistoryCopyFlash('Copied!');
+          } catch {
+            setBfoHistoryCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setBfoHistoryCopyFlash(''), 1500);
+        };
+        const missingCount = bfoHistoryRows.filter(r => !r.bfoCompanyName).length;
+        const freshCount = bfoHistoryRows.filter(r => r.bfoCompanyName && r.fresh).length;
+        const columns = [
+          {
+            key: 'company', label: 'Company', defaultWidth: 220,
+            getSortValue: r => r.company.toLowerCase() || null, getFilterValue: r => r.company, exportValue: r => r.company,
+            render: r => (onSelectProspect
+              ? <button type="button" className={styles.linkBtn} style={{ textAlign: 'left', fontWeight: 600 }} title="Open the company (its BFO History tab is where the transcription is pasted)" onClick={() => onSelectProspect(r.prospect)}>{r.company}</button>
+              : r.company),
+          },
+          {
+            key: 'bfoCompanyName', label: 'BFO Company Name', defaultWidth: 220,
+            getSortValue: r => r.bfoCompanyName.toLowerCase() || null, getFilterValue: r => r.bfoCompanyName, exportValue: r => r.bfoCompanyName,
+            render: r => (r.bfoCompanyName || <span className={styles.missing}>Missing</span>),
+          },
+          {
+            key: 'dmCount', label: 'DMs Without Activity', defaultWidth: 150,
+            getSortValue: r => r.dmCount, getFilterValue: r => String(r.dmCount), exportValue: r => r.dmCount,
+            render: r => <span style={{ display: 'block', textAlign: 'right' }}>{r.dmCount}</span>,
+          },
+          {
+            key: 'pastedAt', label: 'BFO History Pasted', defaultWidth: 160,
+            getSortValue: r => Date.parse(r.pastedAt) || null,
+            getFilterValue: r => (r.pastedAt ? new Date(r.pastedAt).toLocaleDateString() : 'Never'),
+            exportValue: r => r.pastedAt,
+            render: r => (r.pastedAt ? new Date(r.pastedAt).toLocaleDateString() : <span className={styles.muted}>Never</span>),
+          },
+          {
+            key: 'inPrompt', label: 'In Prompt', defaultWidth: 200,
+            getSortValue: r => (!r.bfoCompanyName ? 2 : r.fresh ? 1 : 0),
+            getFilterValue: r => (!r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? 'Pasted recently' : 'Yes'),
+            exportValue: r => (!r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? 'Pasted recently' : 'Yes'),
+            render: r => (!r.bfoCompanyName
+              ? <span className={styles.missing}>No, no BFO Company Name</span>
+              : r.fresh ? <span className={styles.muted}>No, pasted recently</span> : 'Yes'),
+          },
+        ];
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (BFO History)
+              <span className={styles.sectionCount}>{bfoHistoryReady.length}</span>
+            </h2>
+            <p className={styles.subnote}>
+              The companies on Prospecting &rsaquo; DMs Without Activity ({dmsWindowLabel(dmsWindow)}), searched one by one in BFO by their BFO Company Name. The assistant opens each account&rsquo;s Oppty 360 tab, sets Opportunities of this Account to All of the above, transcribes every page of the Open and Closed lists, and pastes the table into the company pop-up&rsquo;s BFO History tab. Companies with no BFO Company Name (set it on the company&rsquo;s Company tab), or with a BFO History pasted in the last {BFO_HISTORY_FRESH_DAYS} days, are left out of the prompt.
+            </p>
+            {revealedPrompts.bfoHistory && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={bfoHistoryPrompt}
+                onChange={(e) => updateBfoHistoryPrompt(e.target.value)}
+                rows={12}
+                spellCheck={false}
+              />
+            )}
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy} disabled={!bfoHistoryReady.length}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('bfoHistory')}>
+                {revealedPrompts.bfoHistory ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.bfoHistory && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetBfoHistoryPrompt}>Reset to default</button>
+              )}
+              {bfoHistoryCopyFlash && <span className={styles.copyFlash}>{bfoHistoryCopyFlash}</span>}
+            </div>
+            {bfoHistoryRows.length > 0 && (
+              <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+                {bfoHistoryReady.length} in the prompt · {missingCount} missing a BFO Company Name · {freshCount} pasted in the last {BFO_HISTORY_FRESH_DAYS} days.
+              </div>
+            )}
+            {!dmsLists ? (
+              <div className={styles.subnote}>Loading the DMs Without Activity list...</div>
+            ) : (
+              <div style={{ marginTop: '0.5rem', height: Math.min(480, 80 + bfoHistoryRows.length * 34), minHeight: 160, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                <DataTable
+                  tableId="agents-bfo-history"
+                  exportFileName="BFO History Companies"
+                  columns={columns}
+                  rows={bfoHistoryRows.map(r => ({ ...r, id: r.prospect.id }))}
+                  alwaysVisible={['company']}
+                  emptyMessage="No companies on the DMs Without Activity list."
+                  settings={settings}
+                  updateSettings={updateSettings}
+                />
+              </div>
+            )}
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
         );

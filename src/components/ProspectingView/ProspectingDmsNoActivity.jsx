@@ -8,26 +8,10 @@
 // Contacted date (utils/tieredAccountActivity, decisionMakersWithoutActivity).
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { useAuth } from '../../contexts/AuthContext';
-import { useOpps2Data } from '../../hooks/useOpps2Data';
-import { useRosterGates } from '../../hooks/useRosterTagCoverage';
-import { useTieredActivity } from '../../hooks/useTieredActivity';
-import { makeMyCdmContactAccount, makeMyCdmContactGate } from '../../utils/myCdmContacts';
-import { decisionMakersWithoutActivity, daysSince, accountStatusOf, DMS_HIDDEN_ACCOUNT_STATUSES } from '../../utils/tieredAccountActivity';
+import { useDmsNoActivity, DMS_WINDOWS as WINDOWS, readDmsWindow as readWindow, writeDmsWindow, dmsWindowLabel as windowLabel } from '../../hooks/useDmsNoActivity';
+import { daysSince, accountStatusOf } from '../../utils/tieredAccountActivity';
 import { reportingTier } from '../../utils/tierSource.js';
 import { formatDateDisplay } from '../../utils/isoDate';
-
-const WINDOW_KEY = 'prospecting-dms-no-activity:window';
-// null is "no activity ever".
-const WINDOWS = [null, 30, 60, 90, 120];
-const readWindow = () => {
-  try {
-    const v = localStorage.getItem(WINDOW_KEY);
-    if (v === null || v === 'never') return null;
-    const n = Number(v);
-    return WINDOWS.includes(n) ? n : null;
-  } catch { return null; }
-};
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -39,31 +23,15 @@ const toIso = (ms) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
-const windowLabel = (w) => (w == null ? 'No activity ever' : `None in ${w} days`);
 
 export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, cdmName = '', onSelectProspect, onOpenContact = null }) {
-  const { user } = useAuth() || {};
-  const { contacts, outreachIndex, noIndex, localFields } = useTieredActivity({ prospects, settings, cdmName });
-  const oppsRecords = useOpps2Data(user?.uid)?.records ?? null;
-  const gates = useRosterGates({ prospects, cdmName, oppsRecords, userId: user?.uid, connected: settings?.contactConnected || null });
-  const myCdmGate = useMemo(() => makeMyCdmContactGate({ prospects: prospects || [], cdmName, localFields }), [prospects, cdmName, localFields]);
-  const accountOf = useMemo(() => makeMyCdmContactAccount({ prospects: prospects || [], cdmName, localFields }), [prospects, cdmName, localFields]);
+  const { lists, accountOf, noIndex } = useDmsNoActivity({ prospects, settings, cdmName });
 
   const [windowDays, setWindowState] = useState(readWindow);
   const setWindow = (w) => {
     setWindowState(w);
-    try { localStorage.setItem(WINDOW_KEY, w == null ? 'never' : String(w)); } catch { /* per-viewer convenience only */ }
+    writeDmsWindow(w);
   };
-
-  // Every window's list at once, for the chip counts. Decision makers at a
-  // Hold Off, Lost - Not Sold, Old Client or Client account are left off all of them.
-  const lists = useMemo(() => {
-    if (!contacts || !gates) return null;
-    return new Map(WINDOWS.map(w => [w, decisionMakersWithoutActivity({
-      contacts, gates, myCdmGate, outreachIndex, localFields, days: w,
-      accountOf, hiddenStatuses: DMS_HIDDEN_ACCOUNT_STATUSES,
-    })]));
-  }, [contacts, gates, myCdmGate, outreachIndex, localFields, accountOf]);
 
   const rows = useMemo(() => (lists?.get(windowDays) || []).map(({ contact, lastMs }) => {
     const account = accountOf(contact);
