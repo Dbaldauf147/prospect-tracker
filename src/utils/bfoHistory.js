@@ -19,6 +19,10 @@ export const BFO_HISTORY_COLUMNS = [
   { key: 'lastModified', label: 'Last Modified Date', aliases: ['last modified date', 'last modified', 'modified'] },
   { key: 'reporting', label: 'Included in Reporting', aliases: ['included in reporting', 'reporting', 'included'] },
   { key: 'probability', label: '% Probability', aliases: ['% probability', 'probability', 'probability (%)', 'prob'] },
+  // Which of the company's BFO accounts the row came from, when it has
+  // several (utils/bfoCompanyNames). Last so a headerless paste from before
+  // this column still lines up.
+  { key: 'account', label: 'BFO Account', aliases: ['bfo account', 'account', 'account name', 'bfo company name', 'bfo name'] },
 ];
 
 // The header line the agent is told to write, tab separated.

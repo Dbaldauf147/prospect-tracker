@@ -23,7 +23,11 @@ const dateValue = (s) => {
 };
 const smallBtn = { padding: '0.3rem 0.75rem', borderRadius: 6, border: '1px solid #E2E8F0', background: '#fff', color: '#64748B', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' };
 const rowBtn = { background: 'none', border: '1px solid transparent', borderRadius: 4, padding: '0 4px', lineHeight: 1.2, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' };
-const WIDTHS = { status: 90, name: 300, leader: 160, stage: 190, amount: 130, closeDate: 120, lastModified: 140, reporting: 110, probability: 110 };
+// BFO Account sits after Status on screen; it is last in the paste format
+// only so older headerless pastes still line up.
+const byKey = (k) => BFO_HISTORY_COLUMNS.find(c => c.key === k);
+const DISPLAY_COLUMNS = [byKey('status'), byKey('account'), ...BFO_HISTORY_COLUMNS.filter(c => c.key !== 'status' && c.key !== 'account')];
+const WIDTHS = { account: 180, status: 90, name: 300, leader: 160, stage: 190, amount: 130, closeDate: 120, lastModified: 140, reporting: 110, probability: 110 };
 
 export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings, updateSettings }) {
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -103,7 +107,7 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
     exportValue: () => '',
   };
 
-  const dataColumns = useMemo(() => BFO_HISTORY_COLUMNS.map(c => ({
+  const dataColumns = useMemo(() => DISPLAY_COLUMNS.map(c => ({
     key: c.key,
     label: c.label,
     defaultWidth: WIDTHS[c.key] || 140,
@@ -138,7 +142,7 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.5rem' }}>
       <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
-        The opportunities BFO holds for {bfoCompanyName ? <strong>{bfoCompanyName}</strong> : 'this account'}, from its Oppty 360 tab
+        The opportunities BFO holds for {bfoCompanyName ? <strong>{bfoCompanyName}</strong> : 'this account'}, from {bfoCompanyName.includes(',') ? 'each account\'s' : 'its'} Oppty 360 tab
         (Opportunities of this Account: All of the above, both the Open and the Closed subtabs). The Agents tab&apos;s BFO History task fills this in; a new paste replaces the list.
       </div>
       {pastedLabel && (

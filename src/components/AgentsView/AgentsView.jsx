@@ -139,20 +139,20 @@ const DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY = `1.  When you are on this page cli
 // BFO History: walk the DMs Without Activity companies through BFO's
 // Oppty 360 tab and paste each one's full opportunity list into the
 // company popup's BFO History tab (utils/bfoHistory reads the paste).
-const DEFAULT_AI_PROMPT_BFO_HISTORY = `1.  Work through the companies listed below one at a time. The BFO Company Name column is the name to search for in BFO. When it lists more than one name separated by "; ", the company has several BFO accounts: do steps 2 to 8 for each of them and put all of their rows in the one table in step 9.
-2.  In BFO (https://se.lightning.force.com/), search for the BFO Company Name in the search bar at the top and open the matching Account record (not a contact or an opportunity). If there is no matching account, note the company as not found and move on to the next one.
+const DEFAULT_AI_PROMPT_BFO_HISTORY = `1.  Work through the companies listed below one at a time. The BFO Company Name column holds the names to search for in BFO. A company can have more than one BFO name, separated by "; ": each one is a separate BFO account, and you need to do steps 2 to 8 for EVERY name before moving on to step 9.
+2.  In BFO (https://se.lightning.force.com/), search for the BFO name in the search bar at the top and open the matching Account record (not a contact or an opportunity). If there is no matching account, note that name as not found and move on to the company's next name.
 3.  On the account page, click the Oppty 360 tab.
 4.  Click the "Opportunities of this Account" drop-down at the top left of the opportunities panel and choose "All of the above".
-5.  Grab BOTH the open and the closed opportunities. The opportunities panel has two subtabs, Open and Closed: go through both of them for every company.
+5.  Grab BOTH the open and the closed opportunities. The opportunities panel has two subtabs, Open and Closed: go through both of them for every BFO name.
 6.  Start on the Open subtab. Transcribe every row on the page: Opportunity Name, Leader, Stage, Amount, Close Date, Last Modified Date, Included in Reporting (write Yes when it shows a check mark, leave it blank otherwise) and % Probability. Copy the full text of each cell; if a value is cut off with "...", hover over it or widen the column to read all of it.
 7.  Click the next-page arrow (>) at the bottom right and transcribe that page too. Keep going until the last page ("Page N of N"), then check that your Open row count matches the "Showing ... of N records" total.
-8.  Click the Closed subtab, check "Opportunities of this Account" still says "All of the above", and do the same: every row on every page, then check your Closed row count against its "Showing ... of N records" total. If a subtab shows no records, note 0 for it and carry on.
-9.  Put the open and closed rows together in one tab-separated table, header line first, exactly:
+8.  Click the Closed subtab, check "Opportunities of this Account" still says "All of the above", and do the same: every row on every page, then check your Closed row count against its "Showing ... of N records" total. If a subtab shows no records, note 0 for it and carry on. Then go back to step 2 for the company's next BFO name, if it has one.
+9.  Put the open and closed rows from ALL of the company's BFO names together in one tab-separated table, header line first, exactly:
 ${BFO_HISTORY_HEADER}
-    Status is Open or Closed, by the subtab the row came from. One line per opportunity, no blank lines.
+    Status is Open or Closed, by the subtab the row came from. BFO Account is the BFO name you searched to find the row. One line per opportunity, no blank lines. If the same opportunity shows up under two of the names, list it once.
 10. Go to https://prospect-tracker-ashen.vercel.app/, open the Agents tab and find the AI Prompt (BFO History) section. Click the company's name in that section's table to open its company pop-up, then click the BFO History tab, click "Paste BFO history", paste the table into the box and click "Save BFO history". Check the green "Saved N opportunities (X open, Y closed)" message matches your counts, and note the "Pasted into the tracker" date and time shown at the top of the tab: it should be today.
-11. Close the pop-up and repeat for the next company.
-12. When every company is done, give me a summary table: Company, BFO Company Name, Open count, Closed count, Pasted Date (the "Pasted into the tracker" date and time from step 10) and Result (saved / not found / error).`;
+11. Close the pop-up and repeat for the next company. Paste each company once, with all of its BFO names in the one table: a new paste replaces that company's whole list.
+12. When every company is done, give me a summary table, one line per BFO name: Company, BFO Name, Open count, Closed count, Pasted Date (the "Pasted into the tracker" date and time from step 10) and Result (saved / not found / error).`;
 
 // Opps 2 Stage → expected BFO Sales Stage. When the BFO Activity tab's
 // Sales Stage value for an opp doesn't match the expected stage for the

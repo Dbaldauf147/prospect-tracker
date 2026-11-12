@@ -19,7 +19,7 @@ const a = parseBfoHistory(tsv);
 check('tsv: two rows, no error', [a.rows.length, a.error], [2, '']);
 check('tsv: first row fields', a.rows[0], {
   status: 'Open', name: 'Bank of America - SAO - 3PH', leader: 'Cory Manley', stage: '5 - Prepare & Bid',
-  amount: '$2,500,000.00', closeDate: 'May 31, 2027', lastModified: 'Nov 12, 2026', reporting: 'Yes', probability: '30',
+  amount: '$2,500,000.00', closeDate: 'May 31, 2027', lastModified: 'Nov 12, 2026', reporting: 'Yes', probability: '30', account: '',
 });
 check('tsv: status normalised, blank reporting kept blank', [a.rows[1].status, a.rows[1].reporting], ['Closed', '']);
 
@@ -79,6 +79,11 @@ check('ignore: adds keys sorted, keeps rows', [h1.ignored, h1.rows, h1.pastedAt]
 check('ignore: original untouched', h0.ignored, undefined);
 check('restore: removes a key', setBfoHistoryIgnored(h1, ['a|'], false).ignored, ['b|']);
 check('ignore: on no history', setBfoHistoryIgnored(null, ['a|'], true), { ignored: ['a|'] });
+
+{
+  const r = parseBfoHistory('Status\tOpportunity Name\tBFO Account\nOpen\tDeal\tB Corp').rows[0];
+  check('parse: BFO Account column', r.account, 'B Corp');
+}
 
 if (failures) {
   console.log(`\n${failures} failure(s)`);

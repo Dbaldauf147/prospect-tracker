@@ -12,6 +12,7 @@ import { useDmsNoActivity, DMS_WINDOWS as WINDOWS, readDmsWindow as readWindow, 
 import { daysSince, accountStatusOf } from '../../utils/tieredAccountActivity';
 import { reportingTier } from '../../utils/tierSource.js';
 import { formatDateDisplay } from '../../utils/isoDate';
+import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -68,10 +69,10 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     },
     {
       key: 'bfoCompanyName', label: 'BFO Company Name', defaultWidth: 200,
-      headerTitle: 'The account\'s name as it appears in BFO (the company record\'s BFO Company Name).',
-      getSortValue: r => String(r.account?.bfoCompanyName || '').trim().toLowerCase() || null,
-      getFilterValue: r => String(r.account?.bfoCompanyName || '').trim(), exportValue: r => String(r.account?.bfoCompanyName || '').trim(),
-      render: r => String(r.account?.bfoCompanyName || '').trim() || blank,
+      headerTitle: 'The account\'s name as it appears in BFO (the company record\'s BFO Company Name), then any Other BFO Names, separated by ;.',
+      getSortValue: r => bfoCompanyNamesOf(r.account).join('; ').toLowerCase() || null,
+      getFilterValue: r => bfoCompanyNamesOf(r.account).join('; '), exportValue: r => bfoCompanyNamesOf(r.account).join('; '),
+      render: r => bfoCompanyNamesOf(r.account).join('; ') || blank,
     },
     {
       key: 'tier', label: 'Tier', defaultWidth: 100,
