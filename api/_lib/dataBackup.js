@@ -142,6 +142,28 @@ export async function collectUserBackup(db, uid, email) {
     if (refs.length) summary.captured.push('localMirrors');
   } catch (e) { summary.errors.push(`localMirrors: ${msg(e)}`); }
 
+  // The Hubspot Mapping page's own stores, kept apart from the settings at
+  // lookupTables/{uid}/items/{id} (src/utils/hubspotMappingStore.js): the
+  // company export with the links Dan made by hand between his accounts
+  // and their HubSpot records, and the activity history, which only builds
+  // up as each export is merged in (no single export holds what a wipe
+  // would take). Chunked like the mirrors, under `s`. Counted so the
+  // day-over-day check flags either one the morning after it shrinks.
+  backup.collections.lookupTables = {};
+  for (const id of HUBSPOT_LOOKUP_ITEMS) {
+    try {
+      const ref = db.collection('lookupTables').doc(uid).collection('items').doc(id);
+      const json = await readChunkedJson(ref, { field: 's' });
+      let value = null;
+      if (json != null) {
+        try { value = JSON.parse(json); } catch { value = { _unparseableJson: json }; }
+      }
+      backup.collections.lookupTables[id] = value;
+      Object.assign(summary.counts, hubspotLookupCounts(id, value));
+      if (value != null) summary.captured.push(`lookupTables/${id}`);
+    } catch (e) { summary.errors.push(`lookupTables/${id}: ${msg(e)}`); }
+  }
+
   // Prospects
   try {
     const useShared = !!email && email.toLowerCase() === SHARED_PROSPECTS_EMAIL;
@@ -179,6 +201,25 @@ export async function collectUserBackup(db, uid, email) {
   } catch (e) { summary.errors.push(`prospectAnalyses: ${msg(e)}`); }
 
   return { backup, summary };
+}
+
+// The lookupTables items the nightly backup carries: the Hubspot Mapping
+// export and links, and the Hubspot activity history.
+export const HUBSPOT_LOOKUP_ITEMS = ['hubspot-mapping', 'hubspot-activity'];
+
+// Their counts, always present (0 when the store is missing), so a wipe
+// that took the whole document still trips the alert.
+export function hubspotLookupCounts(id, value) {
+  const v = value && typeof value === 'object' ? value : {};
+  const len = (a) => (Array.isArray(a) ? a.length : 0);
+  if (id === 'hubspot-mapping') {
+    const links = v.links && typeof v.links === 'object' ? Object.keys(v.links).length : 0;
+    return { hubspotMappingCompanies: len(v.companies), hubspotMappingLinks: links };
+  }
+  if (id === 'hubspot-activity') {
+    return { hubspotActivities: len(v.activities), hubspotActivityIgnored: len(v.ignored) };
+  }
+  return {};
 }
 
 // The services board's counts: how many buckets, and how many services are

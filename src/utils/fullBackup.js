@@ -241,6 +241,9 @@ export function summarizeBackup(env) {
     opps2Records: Array.isArray(cloud.opps2?.records) ? cloud.opps2.records.length : 0,
     contractLanguage: Array.isArray(cloud.contractLanguage) ? cloud.contractLanguage.length : 0,
     emailDraftHistory: Array.isArray(cloud.emailDraftHistory) ? cloud.emailDraftHistory.length : 0,
+    hubspotMappingLinks: cloud.hubspotMapping?.links && typeof cloud.hubspotMapping.links === 'object' ? Object.keys(cloud.hubspotMapping.links).length : 0,
+    hubspotMappingCompanies: Array.isArray(cloud.hubspotMapping?.companies) ? cloud.hubspotMapping.companies.length : 0,
+    hubspotActivities: Array.isArray(cloud.hubspotActivity?.activities) ? cloud.hubspotActivity.activities.length : 0,
     skipped: Array.isArray(env.manifest?.skipped) ? env.manifest.skipped.length : 0,
     bytes: Number(env.manifest?.bytes) || 0,
   };
@@ -432,6 +435,18 @@ async function collectFirestore(uid, ctx, onProgress) {
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   });
 
+  // The Hubspot Mapping page's stores (utils/hubspotMappingStore): the
+  // company export with the hand-made account links, and the activity
+  // history that builds up export by export.
+  out.hubspotMapping = await step('hubspotMapping', async () => {
+    const { loadHubspotMapping } = await import('./hubspotMappingStore.js');
+    return loadHubspotMapping();
+  });
+  out.hubspotActivity = await step('hubspotActivity', async () => {
+    const { loadHubspotActivity } = await import('./hubspotMappingStore.js');
+    return loadHubspotActivity();
+  });
+
   out.opps2 = await step('opps2', async () => {
     const { loadOpps2Newest } = await import('./opps2Store.js');
     return loadOpps2Newest(uid);
@@ -544,6 +559,42 @@ async function republishMirrors(plan) {
   return touched.length;
 }
 
+/**
+ * The Hubspot Mapping store with a backup's copy put back into it. What is
+ * there now wins wherever both have something: the current export is the
+ * newer one, and a link made or changed since the backup stays as it is.
+ * The backup fills in what is missing: every link the current store lacks,
+ * and the export itself when the current store has none. Pure, for tests.
+ */
+export function mergeHubspotMappingRestore(current, backup) {
+  const cur = current && typeof current === 'object' ? current : {};
+  const bak = backup && typeof backup === 'object' ? backup : {};
+  const curCompanies = Array.isArray(cur.companies) ? cur.companies : [];
+  const useBackupExport = !curCompanies.length && Array.isArray(bak.companies) && bak.companies.length > 0;
+  return {
+    ...bak,
+    ...cur,
+    companies: useBackupExport ? bak.companies : curCompanies,
+    meta: useBackupExport ? (bak.meta || {}) : (cur.meta || {}),
+    links: { ...(bak.links || {}), ...(cur.links || {}) },
+  };
+}
+
+/**
+ * The Hubspot activity history with a backup's copy merged in: every
+ * activity from either, one per activity key, the current copy winning a
+ * tie; the ignored lists joined. `mergeActivities` is utils/hubspotActivity's,
+ * passed in so this stays free of imports. Pure, for tests.
+ */
+export function mergeHubspotActivityRestore(current, backup, mergeActivities) {
+  const cur = current && typeof current === 'object' ? current : {};
+  const bak = backup && typeof backup === 'object' ? backup : {};
+  const { activities } = mergeActivities(bak.activities || [], cur.activities || []);
+  const ignored = [...new Set([...(bak.ignored || []), ...(cur.ignored || [])])];
+  const meta = cur.meta && Object.keys(cur.meta).length ? cur.meta : (bak.meta || {});
+  return { ...bak, ...cur, activities, ignored, meta };
+}
+
 async function restoreCloud(env, uid, say) {
   const cloud = env.firestore || {};
   const done = [];
@@ -607,6 +658,24 @@ async function restoreCloud(env, uid, say) {
       await setDoc(doc(db, 'userSettings', uid, 'emailDraftHistory', id), data, { merge: true });
     }
     done.push(`${cloud.emailDraftHistory.length} email draft history entries`);
+  }
+
+  // The Hubspot stores are put back ADDITIVELY, so a restore from an older
+  // file can't take away anything added since: see mergeHubspot*Restore above.
+  if (cloud.hubspotMapping || cloud.hubspotActivity) {
+    say('Restoring Hubspot mapping and activity…');
+    const store = await import('./hubspotMappingStore.js');
+    const { mergeActivities } = await import('./hubspotActivity.js');
+    if (cloud.hubspotMapping && typeof cloud.hubspotMapping === 'object') {
+      const next = mergeHubspotMappingRestore(await store.loadHubspotMapping(), cloud.hubspotMapping);
+      await store.saveHubspotMapping(next);
+      done.push(`Hubspot mapping (${Object.keys(next.links || {}).length} links)`);
+    }
+    if (cloud.hubspotActivity && typeof cloud.hubspotActivity === 'object') {
+      const next = mergeHubspotActivityRestore(await store.loadHubspotActivity(), cloud.hubspotActivity, mergeActivities);
+      await store.saveHubspotActivity(next);
+      done.push(`${next.activities.length} Hubspot activities`);
+    }
   }
 
   return done;
