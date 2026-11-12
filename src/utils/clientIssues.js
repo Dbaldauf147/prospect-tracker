@@ -8,6 +8,7 @@
 import { RENEWAL_WARNING_DAYS } from './renewalWindow';
 import { localOnlyFileIssues } from './localOnlyFiles.js';
 import { othersActivityIssues } from './hubspotActivity.js';
+import { gapFillIssues } from './hubspotContactGaps.js';
 import { missingCommissionFileIssues } from './commissionMonthUploads.js';
 import { siteListSizeIssues } from './siteListSize.js';
 import { asDate, fmtDate, isInactiveAgreement } from './dealsFormat';
@@ -875,7 +876,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 //
 // Service Exploration Coverage is deliberately not among them — see
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], commissionUploads = null, hubspotOthersActivity = [], now = new Date() }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], commissionUploads = null, hubspotOthersActivity = [], hubspotGapFill = [], now = new Date() }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
   // handed to the opp-derived detectors so every issue row names its opp by
@@ -910,5 +911,8 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   // Activity somebody else logged in HubSpot on one of My Accounts (the
   // Hubspot Mapping page's Others' Activity), until it is ignored there.
   issues.push(...othersActivityIssues(hubspotOthersActivity, { prospects }));
+  // Contacts the HubSpot export can add to, or fill on, an active My
+  // Accounts company (Hubspot Mapping > Gap Fill), one row per account.
+  issues.push(...gapFillIssues(hubspotGapFill, { prospects }));
   return issues;
 }
