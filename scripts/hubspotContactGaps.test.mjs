@@ -3,7 +3,7 @@
 // Plain Node:
 //   node scripts/hubspotContactGaps.test.mjs
 import assert from 'node:assert/strict';
-import { appContactsByEmail, contactGapRows, appContactName, GAP, gapFillPlan } from '../src/utils/hubspotContactGaps.js';
+import { appContactsByEmail, contactGapRows, appContactName, GAP, gapFillPlan, gapFillBlocked } from '../src/utils/hubspotContactGaps.js';
 
 const app = [
   { id: '1', email: 'Full@Acme.com', firstname: 'Ann', lastname: 'Full', jobtitle: 'CFO', phone: '555', hs_linkedin_url: 'https://linkedin.com/in/ann', company: 'Acme' },
@@ -66,5 +66,13 @@ assert.deepEqual(gapFillPlan({
 assert.equal(gapFillPlan({ gap: GAP.missingData, gapEmail: 'j@a.com', fill: ['phone'], phone: '1', app: { id: 'local-1' } }), null, 'a local-only contact is not in HubSpot to update');
 assert.equal(gapFillPlan({ gap: GAP.missingData, gapEmail: 'j@a.com', fill: [], app: { id: '1' } }), null, 'nothing to fill');
 assert.equal(gapFillPlan(null), null);
+
+// Add / Fill only on an active My Accounts company.
+assert.equal(gapFillBlocked({ account: { company: 'Aegon', status: 'Client' } }), '', 'an active account');
+assert.equal(gapFillBlocked({ account: null }), 'Not one of your My Accounts companies');
+assert.equal(gapFillBlocked({ account: { company: 'X', status: 'Old Client' } }), 'X is Old Client');
+assert.equal(gapFillBlocked({ account: { company: 'X', status: 'Lost - Not Sold' } }), 'X is Lost - Not Sold');
+assert.equal(gapFillBlocked({ account: { company: 'X', status: 'Hold Off' } }), 'X is Hold Off');
+assert.equal(gapFillBlocked({ account: { company: 'X', status: 'Client' } }, () => 'Budget'), 'X is Hold Off', 'a substatus reads as Hold Off');
 
 console.log('hubspotContactGaps: all assertions passed');

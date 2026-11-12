@@ -18,7 +18,26 @@
 //
 // Pure: runs under plain Node in scripts/hubspotContactGaps.test.mjs.
 
+import { reportingStatus } from './reportingStatus.js';
+
 export const GAP = { notInApp: 'Not in the app', missingData: 'Missing data' };
+
+// Accounts out of active rotation, as on the rest of My Accounts.
+export const GAP_FILL_INACTIVE = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
+
+/**
+ * Why Add / Fill is off for a row, '' when it's on. They only work on a
+ * contact of an active My Accounts company: one the row maps to, whose
+ * reported status (a substatus reads as Hold Off) isn't Old Client, Hold
+ * Off or Lost - Not Sold. `substatusOf(account)` supplies the substatus
+ * when it lives on the tracker record rather than the account row.
+ */
+export function gapFillBlocked(row, substatusOf = (a) => a?.substatus) {
+  const a = row?.account;
+  if (!a) return 'Not one of your My Accounts companies';
+  const status = reportingStatus({ ...a, substatus: String(substatusOf(a) || '').trim() });
+  return GAP_FILL_INACTIVE.has(status) ? `${a.company} is ${status}` : '';
+}
 
 const s = (v) => String(v ?? '').trim();
 const lower = (v) => s(v).toLowerCase();

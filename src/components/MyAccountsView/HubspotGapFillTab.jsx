@@ -10,11 +10,13 @@
 // from HubSpot"; Fill writes the blank fields HubSpot has onto the app's
 // contact (update-contact). Both go row by row or for every row on screen,
 // and a row drops off the list once it is done, since the app then has it.
+// Both only work on a contact of an active My Accounts company (not Old
+// Client, Hold Off or Lost - Not Sold); other rows say why they can't.
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
 import { contactMatcher, contactRows } from '../../utils/hubspotContacts';
 import { accountTier, formatActivityDate } from '../../utils/hubspotActivity';
-import { appContactsByEmail, contactGapRows, appContactName, GAP, GAP_FIELDS, gapFillPlan } from '../../utils/hubspotContactGaps';
+import { appContactsByEmail, contactGapRows, appContactName, GAP, GAP_FIELDS, gapFillPlan, gapFillBlocked } from '../../utils/hubspotContactGaps';
 import { getHubspotCacheShared, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { apiFetch } from '../../utils/apiFetch';
 import { HUBSPOT_EXPORT_LEAD_SOURCE } from '../../utils/contactLeadSource';
@@ -89,8 +91,12 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
   // Run rows through HubSpot one at a time, writing the cache every
   // FLUSH_EVERY rows and at the end; added contacts get Lead Source
   // "Added from HubSpot". Stop finishes the row in hand and stops.
+  const substatusOf = (a) => a?.substatus || byId?.get(a?.id)?.substatus || '';
+  const blockedWhy = (r) => gapFillBlocked(r, substatusOf);
+  // The plan for a row Add / Fill may act on, else null.
+  const planFor = (r) => (blockedWhy(r) ? null : gapFillPlan(r));
   const run = async (list) => {
-    const work = list.map(r => ({ row: r, plan: gapFillPlan(r) })).filter(w => w.plan);
+    const work = list.map(r => ({ row: r, plan: planFor(r) })).filter(w => w.plan);
     if (!work.length || running) return;
     const kind = work.every(w => w.plan.kind === 'add') ? 'add' : work.every(w => w.plan.kind === 'fill') ? 'fill' : 'mixed';
     stopRef.current = false;
@@ -185,6 +191,8 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
       headerTitle: 'Add: put this contact in the app, with Lead Source "Added from HubSpot". Fill: write the green values onto the app\'s contact.',
       getSortValue: r => (failed[r.gapEmail] ? 0 : 1), getFilterValue: r => (failed[r.gapEmail] ? 'Failed' : ''), exportValue: () => '',
       render: r => {
+        const why = blockedWhy(r);
+        if (why) return <span title={`${why}: Add and Fill only work on your active My Accounts companies.`} style={{ color: '#94A3B8', fontSize: '0.68rem', whiteSpace: 'nowrap' }}>Not yours</span>;
         const plan = gapFillPlan(r);
         if (!plan) return blank;
         return (
@@ -269,9 +277,9 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
     },
     text('how', 'Matched By', 125, { headerTitle: 'How the contact was put on a My Accounts company: its HubSpot Company ID, else the company name, else its email domain.' }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [byId, onSelect, failed, running]);
-  const shownAdds = shownRows.filter(r => gapFillPlan(r)?.kind === 'add');
-  const shownFills = shownRows.filter(r => gapFillPlan(r)?.kind === 'fill');
+  ], [byId, onSelect, failed, running, settings]);
+  const shownAdds = shownRows.filter(r => planFor(r)?.kind === 'add');
+  const shownFills = shownRows.filter(r => planFor(r)?.kind === 'fill');
   const confirmRun = (list, verb) => {
     if (!list.length) return;
     if (list.length > 1 && !window.confirm(`${verb} ${fmt(list.length)} contacts in the app's HubSpot? ${verb === 'Add' ? `Each is created with Lead Source "${HUBSPOT_EXPORT_LEAD_SOURCE}".` : 'Only the blank fields are written.'} Stop finishes the one in hand.`)) return;
@@ -306,11 +314,11 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
           ) : (
             <>
               <button type="button" disabled={!shownAdds.length} onClick={() => confirmRun(shownAdds, 'Add')} style={bulkBtn('add', !shownAdds.length)}
-                title={`Add every Not in the app contact on screen to the app, with Lead Source "${HUBSPOT_EXPORT_LEAD_SOURCE}". Filter first to add just some.`}
-              >+ Add all shown ({fmt(shownAdds.length)})</button>
+                title={`Add every Not in the app contact on screen whose company is one of your active My Accounts (not Old Client, Hold Off or Lost - Not Sold) to the app, with Lead Source "${HUBSPOT_EXPORT_LEAD_SOURCE}". Filter first to add just some.`}
+              >+ Add all shown on My Accounts ({fmt(shownAdds.length)})</button>
               <button type="button" disabled={!shownFills.length} onClick={() => confirmRun(shownFills, 'Fill')} style={bulkBtn('fill', !shownFills.length)}
-                title="Write the green values onto every app contact on screen. Only blank fields are written. Filter first to fill just some."
-              >Fill all shown ({fmt(shownFills.length)})</button>
+                title="Write the green values onto every app contact on screen whose company is one of your active My Accounts (not Old Client, Hold Off or Lost - Not Sold). Only blank fields are written. Filter first to fill just some."
+              >Fill all shown on My Accounts ({fmt(shownFills.length)})</button>
             </>
           )}
         </span>
