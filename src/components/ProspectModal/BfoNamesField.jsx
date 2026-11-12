@@ -16,7 +16,7 @@ export function BfoNamesField({ value, primary = '', onChange }) {
     if (val && !taken(val)) onChange([...names, val].join('\n'));
   };
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.1rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', minHeight: '28px', alignItems: 'center' }}>
       {names.map((n, i) => (
         <span key={n} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.72rem', color: '#1E40AF' }}>
           {n}

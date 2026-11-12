@@ -109,7 +109,7 @@ export function EmailDomainsField({ value, onChange, options }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', position: 'relative' }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: `1px solid ${domains.length > 0 ? 'var(--color-border)' : estimated.length > 0 ? '#FCD34D' : '#FCA5A5'}`, borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.1rem 0.35rem', border: `1px solid ${domains.length > 0 ? 'var(--color-border)' : estimated.length > 0 ? '#FCD34D' : '#FCA5A5'}`, borderRadius: 'var(--radius-md)', minHeight: '28px', alignItems: 'center' }}>
         {/* Nothing on record is worth saying out loud: this
             field is what every guessed address on the account
             is built from, and an empty box reads exactly like

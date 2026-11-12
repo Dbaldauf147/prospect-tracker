@@ -10073,6 +10073,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           <div className={styles.grid}>
             <div className={styles.sectionHead}>Identity</div>
 
+            {/* Three to a row: the names, the other names it goes by
+                elsewhere, BFO, then the contracting entity. */}
             <div>
               <label className={styles.label}>Company</label>
               <CommitOnBlurInput
@@ -10096,8 +10098,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 {companyGoesBy} variable in Draft Emails. Blank falls back
                 to the Company name there. */}
             <div>
-              <label className={styles.label}>Goes By <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(opt., for emails)</span></label>
-              <CommitOnBlurInput className={styles.input} value={fields.goesBy ?? ''} onCommit={v => set('goesBy', (v || '').trim())} placeholder="e.g. Brookfield" />
+              <label className={styles.label} title="Optional. What the company is called in conversation, used for {companyGoesBy} in Draft Emails.">Goes By</label>
+              <CommitOnBlurInput className={styles.input} value={fields.goesBy ?? ''} onCommit={v => set('goesBy', (v || '').trim())} placeholder="Optional, for emails (e.g. Brookfield)" />
             </div>
 
             <div>
@@ -10105,61 +10107,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <CommitOnBlurInput className={styles.input} value={fields.website} onCommit={v => set('website', v)} placeholder="www.example.com" />
             </div>
 
-            <div>
-              <label className={styles.label}>BFO Company Name</label>
-              <CommitOnBlurInput className={styles.input} value={fields.bfoCompanyName ?? ''} onCommit={v => set('bfoCompanyName', v)} placeholder={markedNoBfoName(fields) ? 'No BFO Company Name' : 'Name as it appears in BFO'} />
-              {/* Marks a company that has no account in BFO, so it stops
-                  showing as a missing BFO Company Name (Issues, Agents). */}
-              {!bfoCompanyNamesOf(fields).length && (
-                <button
-                  type="button"
-                  onClick={() => set('noBfoCompanyName', !fields.noBfoCompanyName)}
-                  title={fields.noBfoCompanyName
-                    ? 'Marked as having no BFO account. Click to undo.'
-                    : 'This company has no account in BFO. Stops it showing as a missing BFO Company Name on the Issues and Agents tabs.'}
-                  style={{
-                    marginTop: 4, padding: '0.15rem 0.55rem', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
-                    border: `1px solid ${fields.noBfoCompanyName ? '#94A3B8' : '#E2E8F0'}`,
-                    background: fields.noBfoCompanyName ? '#F1F5F9' : '#fff',
-                    color: fields.noBfoCompanyName ? '#334155' : '#64748B',
-                  }}
-                >{fields.noBfoCompanyName ? '\u2713 No BFO Company Name (undo)' : 'No BFO Company Name'}</button>
-              )}
-            </div>
-
             <div className={styles.tallField}>
-              <label className={styles.label}>Other BFO Names <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(more BFO accounts)</span></label>
-              <BfoNamesField value={fields.bfoCompanyAltNames} primary={fields.bfoCompanyName} onChange={v => set('bfoCompanyAltNames', v)} />
-            </div>
-
-            <div>
-              <label className={styles.label}>Contracting Entity</label>
-              <CommitOnBlurInput className={styles.input} value={fields.contractingEntity ?? ''} onCommit={v => set('contractingEntity', v)} placeholder="Legal entity on the contract" />
-            </div>
-
-            <div>
-              <label className={styles.label}>PE Owner/Parent Company <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
-              <PeOwnerField value={fields.peOwner || ''} onChange={v => set('peOwner', v)} prospects={prospects} company={fields.company || ''} />
-            </div>
-
-            {/* The form flows two to a row, so this sits after PE Owner to
-                land in the right column, directly under Contracting Entity. */}
-            <div>
-              <label className={styles.label}>Contracting Entity Address</label>
-              <CommitOnBlurInput className={styles.input} value={fields.contractingEntityAddress ?? ''} onCommit={v => set('contractingEntityAddress', v)} placeholder="Address of the legal entity on the contract" />
-            </div>
-
-            <div className={styles.tallField}>
-              <label className={styles.label}>Email Domains</label>
-              <EmailDomainsField value={fields.emailDomain} onChange={v => set('emailDomain', v)} options={emailDomainOptions} />
-            </div>
-
-            <div className={styles.tallField}>
-              <label className={styles.label}>Also Known As <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(former names / rebrands)</span></label>
+              <label className={styles.label} title="Former names and rebrands">Also Known As</label>
               {(() => {
                 const aliases = (fields.aliases || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
                 return (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.1rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', minHeight: '28px', alignItems: 'center' }}>
                     {aliases.map((a, i) => (
                       <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: '999px', fontSize: '0.72rem', color: '#5B21B6' }}>
                         {a}
@@ -10175,7 +10128,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     ))}
                     <input
                       type="text"
-                      placeholder={aliases.length === 0 ? 'e.g. Andmore' : '+ Add former name'}
+                      placeholder={aliases.length === 0 ? '+ Former name (e.g. Andmore)' : '+ Add former name'}
                       title="Other names this company has gone by (e.g. after a rebrand). Decision-maker contacts whose HubSpot Company matches one of these will surface as Key Contacts for this company."
                       onKeyDown={e => {
                         if (e.key === 'Enter' && e.target.value.trim()) {
@@ -10209,7 +10162,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 or two HubSpot records for one account). Hubspot Mapping
                 matches the export against these too. */}
             <div className={styles.tallField}>
-              <label className={styles.label}>HubSpot Company Name(s)</label>
+              <label className={styles.label} title="The company's name(s) in HubSpot, if different">HubSpot Names</label>
               {(() => {
                 const names = splitNameList(fields.hubspotCompanyNames);
                 // What Hubspot Mapping matched, less anything typed here
@@ -10229,7 +10182,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   }
                 };
                 return (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.1rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', minHeight: '28px', alignItems: 'center' }}>
                     {mapped.map(c => (
                       <span
                         key={`m:${c.id || c.name}`}
@@ -10268,6 +10221,55 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </div>
                 );
               })()}
+            </div>
+
+            <div>
+              <label className={styles.label} title="PE owner or parent company, if this is a portfolio company">PE Owner / Parent</label>
+              <PeOwnerField value={fields.peOwner || ''} onChange={v => set('peOwner', v)} prospects={prospects} company={fields.company || ''} />
+            </div>
+
+            <div>
+              <label className={styles.label}>BFO Company Name</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <CommitOnBlurInput className={styles.input} value={fields.bfoCompanyName ?? ''} onCommit={v => set('bfoCompanyName', v)} placeholder={markedNoBfoName(fields) ? 'No BFO Company Name' : 'Name as it appears in BFO'} />
+                {/* Marks a company that has no account in BFO, so it stops
+                    showing as a missing BFO Company Name (Issues, Agents). */}
+                {!bfoCompanyNamesOf(fields).length && (
+                  <button
+                    type="button"
+                    onClick={() => set('noBfoCompanyName', !fields.noBfoCompanyName)}
+                    title={fields.noBfoCompanyName
+                      ? 'Marked as having no account in BFO. Click to undo.'
+                      : 'This company has no account in BFO. Stops it showing as a missing BFO Company Name on the Issues and Agents tabs.'}
+                    style={{
+                      flexShrink: 0, whiteSpace: 'nowrap', padding: '0.15rem 0.55rem', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                      border: `1px solid ${fields.noBfoCompanyName ? '#94A3B8' : '#E2E8F0'}`,
+                      background: fields.noBfoCompanyName ? '#F1F5F9' : '#fff',
+                      color: fields.noBfoCompanyName ? '#334155' : '#64748B',
+                    }}
+                  >{fields.noBfoCompanyName ? '\u2713 None in BFO' : 'None in BFO'}</button>
+                )}
+              </div>
+            </div>
+
+            <div className={styles.tallField}>
+              <label className={styles.label} title="More Accounts this company has in BFO">Other BFO Names</label>
+              <BfoNamesField value={fields.bfoCompanyAltNames} primary={fields.bfoCompanyName} onChange={v => set('bfoCompanyAltNames', v)} />
+            </div>
+
+            <div className={styles.tallField}>
+              <label className={styles.label}>Email Domains</label>
+              <EmailDomainsField value={fields.emailDomain} onChange={v => set('emailDomain', v)} options={emailDomainOptions} />
+            </div>
+
+            <div>
+              <label className={styles.label}>Contracting Entity</label>
+              <CommitOnBlurInput className={styles.input} value={fields.contractingEntity ?? ''} onCommit={v => set('contractingEntity', v)} placeholder="Legal entity on the contract" />
+            </div>
+
+            <div>
+              <label className={styles.label} title="Address of the contracting entity">Entity Address</label>
+              <CommitOnBlurInput className={styles.input} value={fields.contractingEntityAddress ?? ''} onCommit={v => set('contractingEntityAddress', v)} placeholder="Address of the legal entity on the contract" />
             </div>
 
             <div className={styles.sectionHead}>Classification</div>
