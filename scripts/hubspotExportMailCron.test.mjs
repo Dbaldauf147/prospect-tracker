@@ -156,7 +156,7 @@ db.docs.set(sePath, { chunkCount: 0, json: JSON.stringify({ companies: [{ id: '9
 
   db.writes.length = 0;
   const again = await runForUser(db, UID, 'rotated');
-  assert.match(again.message, /^Up to date with the 11\/12\/2026 email\.$/);
+  assert.match(again.message, /^Up to date with the 11\/12\/2026 email\. \(from Outlook\)$/);
   assert.deepEqual(db.writes.filter(p => p.startsWith('lookupTables')), []);
   ok('the same email again writes nothing');
 
