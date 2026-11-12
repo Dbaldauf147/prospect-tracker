@@ -13,6 +13,7 @@ import { daysSince, accountStatusOf } from '../../utils/tieredAccountActivity';
 import { reportingTier } from '../../utils/tierSource.js';
 import { formatDateDisplay } from '../../utils/isoDate';
 import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
+import { bfoHistoryIsNone } from '../../utils/bfoHistory';
 import { useBiggestDeals } from '../../hooks/useBiggestDeals';
 import { dealMid } from '../../utils/prospectingDeals.js';
 import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
@@ -150,6 +151,35 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       render: r => (r.lastMs == null
         ? <span style={{ color: '#B91C1C', fontWeight: 600 }}>Never</span>
         : formatDateDisplay(toIso(r.lastMs))),
+    },
+    {
+      // When the account's BFO History (company popup > BFO History tab)
+      // was last pasted, or marked as having no BFO history.
+      key: 'bfoHistoryUpdated', label: 'BFO History Updated', defaultWidth: 170,
+      headerTitle: 'When the account\'s BFO History (company pop-up > BFO History tab) was last pasted in, or marked as having no BFO history.',
+      getSortValue: r => Date.parse(r.account?.bfoHistory?.pastedAt || '') || null,
+      getFilterValue: r => {
+        const at = r.account?.bfoHistory?.pastedAt;
+        if (!at) return 'Never';
+        return `${formatDateDisplay(toIso(Date.parse(at)))}${bfoHistoryIsNone(r.account.bfoHistory) ? ' (no BFO history)' : ''}`;
+      },
+      exportValue: r => {
+        const at = r.account?.bfoHistory?.pastedAt;
+        if (!at) return '';
+        return `${toIso(Date.parse(at))}${bfoHistoryIsNone(r.account.bfoHistory) ? ' (no BFO history)' : ''}`;
+      },
+      render: r => {
+        const h = r.account?.bfoHistory;
+        if (!h?.pastedAt) return <span style={{ color: '#94A3B8' }}>Never</span>;
+        const none = bfoHistoryIsNone(h);
+        const n = (h.rows || []).length;
+        return (
+          <span title={none ? 'Marked as having no BFO history' : `${n} opportunit${n === 1 ? 'y' : 'ies'} pasted`}>
+            {formatDateDisplay(toIso(Date.parse(h.pastedAt)))}
+            {none && <span style={{ color: '#94A3B8', fontSize: '0.7rem' }}> no history</span>}
+          </span>
+        );
+      },
     },
     {
       key: 'daysSince', label: 'Days Since', defaultWidth: 110,
