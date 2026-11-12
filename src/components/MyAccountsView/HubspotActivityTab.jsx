@@ -11,7 +11,7 @@ import { DataTable } from '../common/DataTable';
 import { pastedSheetRows, pickExportFromZip } from '../../utils/hubspotMapping';
 import {
   compactActivities, mergeActivities, activityMatcher, activityRows, othersActivityRows,
-  salespeopleSummary, formatActivityDate,
+  salespeopleSummary, formatActivityDate, activityKey, accountTier,
 } from '../../utils/hubspotActivity';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -53,6 +53,9 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
   const [dragOver, setDragOver] = useState(false);
   const [filter, setFilter] = useState('');
   const [person, setPerson] = useState('');
+  // Others' Activity: the ignored activity shown instead of the rest.
+  const [showIgnored, setShowIgnored] = useState(false);
+  const [shownRows, setShownRows] = useState([]);
   const firstName = String(cdmName || '').trim().split(/\s+/)[0] || 'Dan';
   const others = view === 'others';
 
@@ -63,6 +66,7 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
       if (!activities.length) throw new Error(`No activity found. The ${source === 'paste' ? 'pasted rows need a header row with' : 'file needs'} Company ID or Company name, and Activity date or Activity type.`);
       const merged = mergeActivities(data.activities, activities);
       await onSave({
+        ...data,
         activities: merged.activities,
         meta: { file: source === 'paste' ? 'rows pasted from Excel' : source, at: new Date().toISOString(), hasAssignee: hasAssignee || !!data.meta?.hasAssignee },
       });
@@ -76,7 +80,7 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
   const upload = (file) => { if (file) loadRows(() => readActivitySheet(file), file.name); };
   const clearAll = async () => {
     if (!window.confirm(`Remove all ${fmt(data.activities.length)} stored activities? Drop the export again to bring them back.`)) return;
-    await onSave({ activities: [], meta: {} });
+    await onSave({ ...data, activities: [], meta: {} });
     setNote('');
   };
 
@@ -105,8 +109,18 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
 
   const match = useMemo(() => activityMatcher(mapping, accounts), [mapping, accounts]);
   const allRows = useMemo(() => activityRows(data.activities, match, cdmName), [data.activities, match, cdmName]);
-  const othersRows = useMemo(() => othersActivityRows(allRows, cdmName), [allRows, cdmName]);
+  // Activity Dan has ignored on Others' Activity, by activityKey. Kept with
+  // the activities, so a later drop of the same rows stays ignored.
+  const ignored = useMemo(() => new Set(data.ignored || []), [data.ignored]);
+  const othersAll = useMemo(() => othersActivityRows(allRows, cdmName).map(r => ({ ...r, ignored: ignored.has(activityKey(r)) })), [allRows, cdmName, ignored]);
+  const othersRows = useMemo(() => othersAll.filter(r => !r.ignored), [othersAll]);
+  const ignoredRows = useMemo(() => othersAll.filter(r => r.ignored), [othersAll]);
   const people = useMemo(() => salespeopleSummary(othersRows), [othersRows]);
+  const setIgnored = (list, on) => {
+    const next = new Set(ignored);
+    for (const r of list) { const k = activityKey(r); if (on) next.add(k); else next.delete(k); }
+    onSave({ ...data, ignored: [...next] });
+  };
 
   const FILTERS = [
     ['', 'All', () => true],
@@ -119,11 +133,14 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
   // eslint-disable-next-line react-hooks/exhaustive-deps
     [allRows, firstName]);
   const rows = useMemo(() => {
-    if (others) return person ? othersRows.filter(r => r.salesperson === person) : othersRows;
+    if (others) {
+      const list = showIgnored ? ignoredRows : othersRows;
+      return person && !showIgnored ? list.filter(r => r.salesperson === person) : list;
+    }
     const f = FILTERS.find(([k]) => k === filter)?.[2] || (() => true);
     return allRows.filter(f);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [others, person, othersRows, allRows, filter, firstName]);
+  }, [others, person, othersRows, ignoredRows, showIgnored, allRows, filter, firstName]);
 
   const columns = useMemo(() => [
     {
@@ -148,6 +165,12 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
         ) : <span style={{ fontWeight: 600 }}>{r.account.company}</span>;
       },
     },
+    {
+      key: 'tier', label: 'Tier', defaultWidth: 110,
+      getSortValue: r => accountTier(r.account) || null,
+      getFilterValue: r => accountTier(r.account), exportValue: r => accountTier(r.account),
+      render: r => accountTier(r.account) || blank,
+    },
     text('companyName', 'HubSpot Company', 220),
     text('companyOwner', 'Company Owner', 150),
     text('createdBy', 'Activity Created By', 160),
@@ -156,7 +179,18 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
     text('subject', 'Subject', 260),
     text('companyId', 'Company ID', 130),
     text('engagementId', 'Engagement ID', 140, { headerTitle: 'From a paste, only as precise as Excel showed it (1.18921E+11). Drop the file itself for the full ID.' }),
-  ], [byId, onSelect]);
+    ...(others ? [{
+      key: 'ignore', label: 'Ignore', defaultWidth: 90,
+      headerTitle: 'Take an activity off this list. The Ignored chip lists them, to bring one back.',
+      getSortValue: r => (r.ignored ? 1 : 0), getFilterValue: r => (r.ignored ? 'Ignored' : ''), exportValue: r => (r.ignored ? 'Ignored' : ''),
+      render: r => (
+        <button type="button" onClick={() => setIgnored([r], !r.ignored)} style={{ ...ghostBtn, padding: '0 8px' }}
+          title={r.ignored ? 'Put it back on the list' : 'Take it off the list'}
+        >{r.ignored ? 'Restore' : 'Ignore'}</button>
+      ),
+    }] : []),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [byId, onSelect, others, ignored, data]);
 
   const m = data.meta || {};
   const lastOf = (list) => list.reduce((x, r) => (r.date > x ? r.date : x), '');
@@ -201,12 +235,22 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           {others ? (
             <>
-              <button type="button" onClick={() => setPerson('')} style={chipStyle(!person)}>Everyone ({fmt(othersRows.length)})</button>
+              <button type="button" onClick={() => { setPerson(''); setShowIgnored(false); }} style={chipStyle(!person && !showIgnored)}>Everyone ({fmt(othersRows.length)})</button>
               {people.map(p => (
-                <button key={p.name} type="button" onClick={() => setPerson(p.name)} style={chipStyle(person === p.name)}
+                <button key={p.name} type="button" onClick={() => { setPerson(p.name); setShowIgnored(false); }} style={chipStyle(person === p.name && !showIgnored)}
                   title={`${p.count} activities on ${p.accounts} of your accounts, newest ${formatActivityDate(p.last)}`}
                 >{p.name} ({fmt(p.count)})</button>
               ))}
+              {ignoredRows.length > 0 && (
+                <button type="button" onClick={() => { setShowIgnored(true); setPerson(''); }} style={chipStyle(showIgnored)}
+                  title="The activity you've ignored. Restore puts one back."
+                >Ignored ({fmt(ignoredRows.length)})</button>
+              )}
+              {shownRows.length > 0 && (
+                <button type="button" onClick={() => setIgnored(shownRows, !showIgnored)} style={{ ...ghostBtn, marginLeft: 'auto' }}
+                  title={showIgnored ? 'Put every activity on screen back on the list.' : 'Take every activity on screen off the list (pick a salesperson chip or filter the columns first to ignore just some).'}
+                >{showIgnored ? `Restore all shown (${fmt(shownRows.length)})` : `Ignore all shown (${fmt(shownRows.length)})`}</button>
+              )}
             </>
           ) : (
             <>
@@ -236,6 +280,7 @@ export function HubspotActivityTab({ view, data, onSave, loaded, mapping = [], a
             emptyMessage="Nothing matches"
             settings={settings}
             updateSettings={updateSettings}
+            onFilteredRowsChange={setShownRows}
           />
         </div>
       )}

@@ -270,6 +270,9 @@ export function salespeopleSummary(rows = []) {
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
+/** A My Accounts account's tier, as the My Accounts Tier column shows it, '' for none. */
+export const accountTier = (account) => String(account?.tierLabel || account?.myTier || account?.tier || '').trim();
+
 /** "YYYY-MM-DD HH:MM" as "Oct 19, 2026 5:00 PM", '' for none. */
 export function formatActivityDate(s) {
   const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/);
