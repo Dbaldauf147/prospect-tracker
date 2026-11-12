@@ -6,8 +6,10 @@
 // and "activity" is the same per-contact outreach that chart counts: a
 // HubSpot email or call from the Activity tab's index, or HubSpot's Last
 // Contacted date (utils/tieredAccountActivity, decisionMakersWithoutActivity).
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
+import { BulkContactEditModal } from '../common/BulkContactEditModal';
+import { ContactsCampaignBulkAdd } from '../ProspectModal/ContactCampaignAdd';
 import { useDmsNoActivity, DMS_WINDOWS as WINDOWS, readDmsWindow as readWindow, writeDmsWindow, dmsWindowLabel as windowLabel } from '../../hooks/useDmsNoActivity';
 import { daysSince, accountStatusOf } from '../../utils/tieredAccountActivity';
 import { reportingTier } from '../../utils/tierSource.js';
@@ -63,7 +65,46 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     };
   }), [lists, windowDays, accountOf, deals]);
 
-  const columns = useMemo(() => [
+  // Bulk actions: tick rows (or the header box for every row on screen),
+  // then Add to Campaign or Bulk Edit. Only rows still on screen count, so
+  // a filter or a window change can't leave a hidden row in a bulk write.
+  const [selected, setSelected] = useState(() => new Set());
+  const [filteredIds, setFilteredIds] = useState(null);
+  const [campaignOpen, setCampaignOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [flash, setFlash] = useState('');
+  const onFilteredRowsChange = useCallback((list) => setFilteredIds(list.map(r => r.id)), []);
+  const onScreen = useMemo(() => {
+    const ids = filteredIds ? new Set(filteredIds) : null;
+    return ids ? rows.filter(r => ids.has(r.id)) : rows;
+  }, [rows, filteredIds]);
+  const selectedRows = onScreen.filter(r => selected.has(r.id));
+  const selectedContacts = selectedRows.map(r => r.contact);
+  const allSelected = onScreen.length > 0 && selectedRows.length === onScreen.length;
+  const toggle = (id) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(onScreen.map(r => r.id)));
+  const showFlash = (text) => { setFlash(text); window.setTimeout(() => setFlash(''), 5000); };
+
+  const selectCol = {
+    key: '__select__',
+    label: '',
+    defaultWidth: 36,
+    renderHeader: () => (
+      <input type="checkbox" aria-label="Select every row on screen" title="Select every row on screen"
+        checked={allSelected} onChange={toggleAll} onClick={e => e.stopPropagation()} style={{ cursor: 'pointer' }} />
+    ),
+    render: r => (
+      <input type="checkbox" aria-label={`Select ${r.name}`} checked={selected.has(r.id)}
+        onChange={() => toggle(r.id)} onClick={e => e.stopPropagation()} style={{ cursor: 'pointer' }} />
+    ),
+    exportValue: () => '',
+  };
+
+  const dataColumns = useMemo(() => [
     {
       key: 'name', label: 'Name', defaultWidth: 180,
       getSortValue: r => r.name.toLowerCase() || null, getFilterValue: r => r.name, exportValue: r => r.name,
@@ -215,6 +256,8 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       render: r => r.contact.company || blank,
     },
   ], [onOpenContact, onSelectProspect]);
+  const columns = [selectCol, ...dataColumns];
+  const barBtn = (primary) => ({ padding: '0.25rem 0.7rem', border: `1px solid ${primary ? '#2563EB' : '#4F46E5'}`, background: primary ? '#2563EB' : '#fff', color: primary ? '#fff' : '#4F46E5', borderRadius: 4, fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' });
 
   const loading = !lists;
   return (
@@ -231,6 +274,32 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
           </button>
         ))}
       </div>
+      {flash && <div style={{ fontSize: '0.78rem', color: '#15803D', fontWeight: 600 }}>{flash}</div>}
+      {campaignOpen && (
+        <ContactsCampaignBulkAdd
+          contacts={selectedContacts}
+          onClose={() => setCampaignOpen(false)}
+          onAdded={() => setSelected(new Set())}
+        />
+      )}
+      {selectedRows.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, fontSize: '0.75rem', color: '#1E3A8A' }}>
+          <strong>{selectedRows.length} selected</strong>
+          <div style={{ flex: 1 }} />
+          {!campaignOpen && <button type="button" onClick={() => setCampaignOpen(true)} style={barBtn(false)}>Add to Campaign</button>}
+          <button type="button" onClick={() => setEditOpen(true)} style={barBtn(true)}>Bulk Edit</button>
+          <button type="button" onClick={() => setSelected(new Set())} style={{ ...barBtn(false), border: '1px solid transparent', background: 'transparent', color: '#475569' }}>Clear</button>
+        </div>
+      )}
+      {editOpen && (
+        <BulkContactEditModal
+          contacts={selectedContacts}
+          settings={settings}
+          updateSettings={updateSettings}
+          onClose={() => setEditOpen(false)}
+          onDone={(msg) => { setEditOpen(false); setSelected(new Set()); showFlash(msg); }}
+        />
+      )}
       {loading ? (
         <div style={{ fontSize: '0.8rem', color: '#64748B' }}>Loading...</div>
       ) : (
@@ -240,7 +309,8 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
             exportFileName="Decision Makers Without Activity"
             columns={columns}
             rows={rows}
-            alwaysVisible={['name']}
+            alwaysVisible={['__select__', 'name']}
+            onFilteredRowsChange={onFilteredRowsChange}
             // Biggest deals first; rows with no priced deal sort to the end.
             defaultSort={{ key: 'deal', direction: 'desc' }}
             defaultHidden={['company', 'status']}
