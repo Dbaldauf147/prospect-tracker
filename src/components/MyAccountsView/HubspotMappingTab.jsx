@@ -813,6 +813,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   if (subtab === 'contacts') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+        {backupBar}
         {subtabBar}
         {contactsError && <div style={{ color: '#B91C1C', fontSize: '0.78rem' }}>{contactsError}</div>}
         <HubspotContactsTab
