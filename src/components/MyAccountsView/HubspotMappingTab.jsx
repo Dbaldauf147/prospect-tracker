@@ -30,6 +30,8 @@ import { HubspotAgents } from './HubspotAgents';
 import { HubspotActivityTab } from './HubspotActivityTab';
 import { HubspotContactsTab } from './HubspotContactsTab';
 import { HubspotGapFillTab } from './HubspotGapFillTab';
+import { activityMatcher, othersActivityIssueRecords } from '../../utils/hubspotActivity';
+import { saveHubspotOthersActivity } from '../../utils/hubspotOthersActivityStore';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
 import { HubspotMappingBackup } from './HubspotMappingBackup';
 import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, scheduledMailCheck, checkGmailNow, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
@@ -37,9 +39,23 @@ import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFile
 
 // Which subtab of the page is open, per viewer.
 const SUBTAB_KEY = 'hubspot-mapping-subtab';
-const SUBTABS = [['mapping', 'Mapping'], ['activity', 'Activity'], ['others', "Others' Activity"], ['contacts', 'Contacts'], ['gapfill', 'Gap Fill'], ['agents', 'Agents']];
+const SUBTABS = [['mapping', 'Mapping'], ['activity', 'Activity'], ['contacts', 'Contacts'], ['gapfill', 'Gap Fill'], ['agents', 'Agents']];
+// Others' Activity was a subtab of its own; it's the Activity subtab's
+// second view now, so a browser left on it opens there.
 const readSubtab = () => {
-  try { const t = localStorage.getItem(SUBTAB_KEY); return SUBTABS.some(([k]) => k === t) ? t : 'mapping'; } catch { return 'mapping'; }
+  try {
+    const t = localStorage.getItem(SUBTAB_KEY);
+    if (t === 'others') return 'activity';
+    return SUBTABS.some(([k]) => k === t) ? t : 'mapping';
+  } catch { return 'mapping'; }
+};
+// Which view of the Activity subtab is open: All Activity or Others' Activity.
+const ACTIVITY_VIEW_KEY = 'hubspot-mapping-activity-view';
+const readActivityView = () => {
+  try {
+    if (localStorage.getItem(SUBTAB_KEY) === 'others') return 'others';
+    return localStorage.getItem(ACTIVITY_VIEW_KEY) === 'others' ? 'others' : 'activity';
+  } catch { return 'activity'; }
 };
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -125,6 +141,8 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const [showUnmapped, setShowUnmapped] = useState(false);
   const [showOthers, setShowOthers] = useState(false);
   const [subtab, setSubtabState] = useState(readSubtab);
+  const [activityView, setActivityViewState] = useState(readActivityView);
+  const setActivityView = (v) => { setActivityViewState(v); try { localStorage.setItem(ACTIVITY_VIEW_KEY, v); } catch { /* per-viewer convenience only */ } };
   const setSubtab = (t) => { setSubtabState(t); try { localStorage.setItem(SUBTAB_KEY, t); } catch { /* per-viewer convenience only */ } };
   // The rows each table has on screen after its column filters, for the
   // bulk Accept, which takes only the suggestions you can see.
@@ -313,6 +331,23 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     if (!data.companies.length) return [];
     return buildHubspotMapping(withNames, data.companies, { links: data.links, tracker: prospects || [] });
   }, [withNames, prospects, data]);
+
+  // Others' Activity, published for the Issues tab (hubspotOthersActivityStore):
+  // one issue per row not ignored. Only once the activity, the mapping and
+  // the accounts are all in, so a half-loaded page doesn't wipe the list,
+  // and only when the rows actually changed.
+  const othersIssueRecords = useMemo(() => {
+    if (!loaded || !activityLoaded || !cdmName || !withNames.length) return null;
+    return othersActivityIssueRecords(activity, activityMatcher(mapping, withNames), cdmName);
+  }, [loaded, activityLoaded, cdmName, withNames, mapping, activity]);
+  const publishedOthers = useRef('');
+  useEffect(() => {
+    if (!othersIssueRecords) return;
+    const json = JSON.stringify(othersIssueRecords);
+    if (json === publishedOthers.current) return;
+    publishedOthers.current = json;
+    saveHubspotOthersActivity(othersIssueRecords);
+  }, [othersIssueRecords]);
 
   // Which account each HubSpot company is already mapped to, for the picker.
   const claimedBy = useMemo(() => {
@@ -853,15 +888,33 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       </div>
     );
   }
-  if (subtab === 'activity' || subtab === 'others') {
+  if (subtab === 'activity') {
+    const views = [
+      ['activity', 'All Activity', (activity.activities || []).length],
+      ['others', "Others' Activity", othersIssueRecords ? othersIssueRecords.length : null],
+    ];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
         {backupBar}
         {subtabBar}
+        <div style={{ display: 'flex', gap: '0.35rem' }}>
+          {views.map(([key, label, n]) => {
+            const on = activityView === key;
+            const alert = key === 'others' && n > 0;
+            return (
+              <button key={key} type="button" onClick={() => setActivityView(key)}
+                title={key === 'others' ? "Activity on your My Accounts companies logged by someone else, not ignored. Each one is also an issue on the Issues page." : 'Every activity from the HubSpot exports you dropped.'}
+                style={{ padding: '0.25rem 0.75rem', borderRadius: 6, border: `1px solid ${on ? '#1D4ED8' : '#E2E8F0'}`, background: on ? '#1D4ED8' : '#fff', color: on ? '#fff' : '#334155', fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >{label}{n != null && (
+                <span style={{ marginLeft: 6, padding: '0 6px', borderRadius: 999, fontSize: '0.66rem', background: on ? 'rgba(255,255,255,0.25)' : alert ? '#FEF2F2' : '#F1F5F9', color: on ? '#fff' : alert ? '#B91C1C' : '#475569' }}>{fmt(n)}</span>
+              )}</button>
+            );
+          })}
+        </div>
         {activityError && <div style={{ color: '#B91C1C', fontSize: '0.78rem' }}>{activityError}</div>}
         <HubspotActivityTab
-          key={subtab}
-          view={subtab}
+          key={activityView}
+          view={activityView}
           data={activity}
           onSave={saveActivity}
           loaded={activityLoaded}

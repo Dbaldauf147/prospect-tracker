@@ -3,7 +3,7 @@
 //   node scripts/hubspotActivity.test.mjs
 import {
   activityColumns, activityStamp, cleanId, activityKey, compactActivities, mergeActivities,
-  activityMatcher, activityRows, othersActivityRows, salespeopleSummary, formatActivityDate, salespersonOf, accountTier, emailBody, emailAddresses, BODY_MAX,
+  activityMatcher, activityRows, othersActivityRows, salespeopleSummary, formatActivityDate, salespersonOf, accountTier, emailBody, emailAddresses, BODY_MAX, othersActivityIssueRecords, othersActivityIssues, stampSortValue,
 } from '../src/utils/hubspotActivity.js';
 import { buildHubspotMapping, compactMappingCompanies, pastedSheetRows } from '../src/utils/hubspotMapping.js';
 
@@ -120,6 +120,22 @@ check('(No value) body', emailBody('(No value)'), '');
 check('a long body is capped', emailBody('a'.repeat(BODY_MAX + 50)).length, BODY_MAX + 3);
 const withEmail = compactActivities([{ 'Company ID': '1', 'Activity date': '11/9/2026 13:31', 'Activity type': 'Email sent to contact', 'Email To Address': 'Eric.Pan@warburgpincus.com', 'Email CC Address': '(No value)', 'Email body': '      Hi Eric,\n \n You might have already seen this.' }]).activities[0];
 check('email fields read', [withEmail.toAddress, withEmail.ccAddress, withEmail.body], ['eric.pan@warburgpincus.com', '', 'Hi Eric,\n\nYou might have already seen this.']);
+
+// Others' Activity as issues
+const issueData = { activities, ignored: [] };
+const recs = othersActivityIssueRecords(issueData, match, 'Dan Baldauf');
+check('one record per others\' row, newest first', recs.map(r => [r.company, r.salesperson, r.date]), [['Blackstone', 'Jane Smith', '2026-11-10 16:46'], ['Blackstone', 'Jane Smith', '2026-08-12 14:00']]);
+check('an ignored row is no issue', othersActivityIssueRecords({ activities, ignored: [recs[0].key] }, match, 'Dan Baldauf').length, 1);
+check('no name, no records', othersActivityIssueRecords(issueData, match, ''), []);
+const issues = othersActivityIssues(recs, { prospects: [{ id: 'a2', company: 'Blackstone Inc' }] });
+check('issue rows', issues.map(i => [i.id.startsWith('hubspot-others-activity:'), i.source, i.type, i.company, i.prospectId]),
+  [[true, 'Hubspot Mapping', 'Activity by another salesperson', 'Blackstone Inc', 'a2'], [true, 'Hubspot Mapping', 'Activity by another salesperson', 'Blackstone Inc', 'a2']]);
+check('issue detail', issues[0].detail, "Jane Smith logged Email sent to contact on Nov 10, 2026 4:46 PM in HubSpot. Ignore it on My Accounts > Hubspot Mapping > Activity > Others' Activity to clear it.");
+check('a deleted account drops its issue', othersActivityIssues(recs, { prospects: [{ id: 'zz', company: 'Other' }] }).length, 0);
+check('no prospects loaded yet keeps them', othersActivityIssues(recs).length, 2);
+
+// date sorting
+check('stamps sort by minute, not by year', [stampSortValue('2026-11-09 13:41') > stampSortValue('2026-10-28 14:38'), stampSortValue('')], [true, null]);
 
 // tier
 check('tier label first', accountTier({ tierLabel: 'Tier 1 (Dan target)', myTier: 'Tier 1' }), 'Tier 1 (Dan target)');
