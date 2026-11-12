@@ -104,6 +104,18 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       render: r => r.tier || blank,
     },
     {
+      key: 'vertical', label: 'Vertical', defaultWidth: 150,
+      getSortValue: r => String(r.account?.vertical || '').trim().toLowerCase() || null,
+      getFilterValue: r => String(r.account?.vertical || '').trim(), exportValue: r => String(r.account?.vertical || '').trim(),
+      render: r => String(r.account?.vertical || '').trim() || blank,
+    },
+    {
+      key: 'subVertical', label: 'Sub Vertical', defaultWidth: 160,
+      getSortValue: r => String(r.account?.subVertical || '').trim().toLowerCase() || null,
+      getFilterValue: r => String(r.account?.subVertical || '').trim(), exportValue: r => String(r.account?.subVertical || '').trim(),
+      render: r => String(r.account?.subVertical || '').trim() || blank,
+    },
+    {
       key: 'status', label: 'Status', defaultWidth: 130,
       getSortValue: r => r.status || null, getFilterValue: r => r.status, exportValue: r => r.status,
       render: r => r.status || blank,
