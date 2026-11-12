@@ -3021,11 +3021,11 @@ Fix that now?
     if (targetVerticals.size === 0) return out;
     for (const a of allAccounts) {
       if (!isBulkSelectable(a)) continue;
-      const hit = suggestTargetVertical({ targetNames: a.targetNames, vertical: a.vertical, verticalOverride: a.verticalOverride, index: targetVerticals, options: verticalListOptions });
+      const hit = suggestTargetVertical({ targetNames: a.targetNames, vertical: a.vertical, verticalOverride: a.verticalOverride, index: targetVerticals, options: verticalListOptions, settings });
       if (hit) out.set(a.id, hit);
     }
     return out;
-  }, [allAccounts, targetVerticals, verticalListOptions]);
+  }, [allAccounts, targetVerticals, verticalListOptions, settings]);
 
   const flagTests = useMemo(() => ({
     company: (a) => similarNamesByAccount.has((a.company || '').toLowerCase().trim()),

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { resolveTargetAccountVertical } from '../../utils/targetTier';
+import { resolveTargetAccountVertical, renameTargetVertical, targetVerticalEquivalentsOf, withTargetVerticalEquivalent } from '../../utils/targetTier';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import styles from './TargetAccountsView.module.css';
 
@@ -9,6 +9,11 @@ import styles from './TargetAccountsView.module.css';
 // my name }. The company popup's Target Accounts box and its Vertical import
 // read through renameTargetVertical, so a mapped vertical shows (and is
 // applied) under the user's name. Blank means use the list's own spelling.
+//
+// "Also counts as" lists the verticals mapped as the same as the list's
+// (settings.targetVerticalEquivalents, set from the company popup's Map
+// button): a company with one of those isn't flagged as disagreeing. The x
+// removes one.
 
 export function VerticalNamesTab({ data, settings, updateSettings }) {
   const [search, setSearch] = useState('');
@@ -64,6 +69,7 @@ export function VerticalNamesTab({ data, settings, updateSettings }) {
       <div className={styles.vnIntro}>
         Give each vertical on the Target Accounts list the name you use. The company popup then shows
         and imports your name instead of the list's. Leave a row blank to keep the list's spelling.
+        Also counts as: your verticals mapped as the same as the list's from a company popup (Map), so those companies aren't flagged.
       </div>
       <div className={styles.vnToolbar}>
         <input
@@ -86,6 +92,7 @@ export function VerticalNamesTab({ data, settings, updateSettings }) {
               <th>Target list vertical</th>
               <th className={styles.vnNum}>Companies</th>
               <th>My name</th>
+              <th>Also counts as</th>
             </tr>
           </thead>
           <tbody>
@@ -110,6 +117,25 @@ export function VerticalNamesTab({ data, settings, updateSettings }) {
                       onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                     />
                     {offList && <span className={styles.vnWarn} title="Not on your Dropdowns > Vertical list">not on Dropdowns list</span>}
+                  </td>
+                  <td>
+                    {(() => {
+                      const shownName = renameTargetVertical(r.vertical, settings);
+                      const eq = targetVerticalEquivalentsOf(shownName, settings);
+                      if (!eq.length) return <span style={{ color: '#CBD5E1' }}>-</span>;
+                      return eq.map(x => (
+                        <span key={x} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginRight: 6, padding: '0 0.35rem', borderRadius: 999, background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E40AF', fontSize: '0.72rem' }}>
+                          {x}
+                          <button
+                            type="button"
+                            aria-label={`Stop counting ${shownName} as ${x}`}
+                            title={`Stop counting ${shownName} as ${x}`}
+                            onClick={() => updateSettings({ targetVerticalEquivalents: withTargetVerticalEquivalent(settings?.targetVerticalEquivalents, shownName, x, { remove: true }) })}
+                            style={{ padding: 0, border: 0, background: 'none', color: '#64748B', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }}
+                          >&#10005;</button>
+                        </span>
+                      ));
+                    })()}
                   </td>
                 </tr>
               );

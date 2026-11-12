@@ -125,7 +125,7 @@ import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm, matchesCdm } from '../../utils/cdmMatch';
 import { coverageFromSettings, salespeopleForVertical, isCoverageVertical } from '../../utils/salesCoverage';
-import { buildTargetTierResolver, tierMismatch, targetVerticalFor } from '../../utils/targetTier';
+import { buildTargetTierResolver, tierMismatch, targetVerticalFor, targetVerticalAgrees, withTargetVerticalEquivalent } from '../../utils/targetTier';
 import { normalizeTierText } from '../../utils/tierText';
 import { targetAccountRows, suggestTargetMatches, mappedTargetNames, targetRowFlags } from '../../utils/targetAccountMatch';
 import {
@@ -5957,6 +5957,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return !!kept && kept === String(fields.vertical || '').trim().toLowerCase();
   })();
   const keepCardVertical = () => set('verticalOverride', String(fields.vertical || '').trim());
+  // "Map": count the Targets list's vertical and this card's as the same one
+  // from now on, for every company (settings.targetVerticalEquivalents, see
+  // utils/targetTier). Unlike Keep, which is this card only, and unlike
+  // Target Accounts > Vertical names, which renames the list's vertical
+  // everywhere.
+  const mapTargetVertical = (listVertical, cardVertical, remove = false) => updateSettings({
+    targetVerticalEquivalents: withTargetVerticalEquivalent(settings?.targetVerticalEquivalents, listVertical, cardVertical, { remove }),
+  });
+  const mapBtnStyle = { padding: '0 0.35rem', borderRadius: 4, background: '#EFF6FF', border: '1px solid #93C5FD', color: '#1E40AF', fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' };
 
   // "Suggest" beside Vertical: Claude picks one from the Dropdowns ›
   // Vertical list (never a value outside it) using what this card knows
@@ -10309,7 +10318,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   {mappedRows.length > 0 ? 'Targets list: mapped' : 'Targets list: suggested match'}
                 </div>
                 {mappedRows.length > 0 ? mappedRows.map(row => {
-                  const flags = targetRowFlags(row, fields, dropdownVerticals);
+                  const flags = targetRowFlags(row, fields, dropdownVerticals, settings);
+                  // The list's vertical differs in name but is mapped as the same as the card's.
+                  const verticalMapped = !flags.vertical && row.vertical && fields.vertical && row.vertical.trim().toLowerCase() !== String(fields.vertical).trim().toLowerCase();
                   const field = (label, value, flag, key) => (
                     <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 12 }}>
                       <span style={{ color: 'var(--color-text-muted)' }}>{label}</span>
@@ -10356,6 +10367,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 title={`Keep ${fields.vertical} as this company's Vertical, whatever the Targets list says. The warning comes back if the Vertical changes.`}
                                 style={{ marginLeft: -8, marginRight: 12, padding: '0 0.35rem', borderRadius: 4, background: '#fff', border: '1px solid #CBD5E1', color: '#334155', fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
                               >Keep {fields.vertical}</button>
+                            )}
+                            {flags.vertical && !verticalKept && fields.vertical && (
+                              <button
+                                type="button"
+                                onClick={() => mapTargetVertical(flags.vertical.row, fields.vertical)}
+                                title={`Count the Targets list's ${flags.vertical.row} as ${fields.vertical} from now on, for every company, so this stops showing as a mismatch.`}
+                                style={{ ...mapBtnStyle, marginLeft: -6, marginRight: 12 }}
+                              >Map {flags.vertical.row} = {fields.vertical}</button>
+                            )}
+                            {verticalMapped && (
+                              <span style={{ marginLeft: -8, marginRight: 12, color: '#64748B', fontSize: '0.62rem' }}>
+                                <span title={`The Targets list's ${row.vertical} is mapped as the same as ${fields.vertical}.`}>(mapped to {fields.vertical})</span>
+                                {' '}
+                                <button
+                                  type="button"
+                                  onClick={() => mapTargetVertical(row.vertical, fields.vertical, true)}
+                                  title={`Stop counting ${row.vertical} as ${fields.vertical}`}
+                                  style={{ padding: 0, border: 0, background: 'none', color: '#64748B', fontSize: '0.62rem', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
+                                >undo</button>
+                              </span>
                             )}
                             {flags.vertical && verticalKept && (
                               <span
@@ -10503,7 +10534,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 />
                 {/* From the Targets list, once the company is mapped there.
                     Shown only when it would change the field. */}
-                {targetsVertical?.vertical && targetsVertical.vertical !== String(fields.vertical || '').trim() && !verticalKept && (
+                {targetsVertical?.vertical && !targetVerticalAgrees(targetsVertical.vertical, fields.vertical, settings) && !verticalKept && (
                   <div
                     style={{
                       marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.4rem',
@@ -10529,6 +10560,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         title={`Keep ${fields.vertical} as this company's Vertical and stop suggesting ${targetsVertical.vertical}. The suggestion comes back if the Vertical changes.`}
                         style={{ padding: '0 0.4rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#334155', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
                       >Keep mine</button>
+                    )}
+                    {fields.vertical && (
+                      <button
+                        type="button"
+                        onClick={() => mapTargetVertical(targetsVertical.vertical, fields.vertical)}
+                        title={`Count the Targets list's ${targetsVertical.vertical} as ${fields.vertical} from now on, for every company.`}
+                        style={{ ...mapBtnStyle, fontSize: '0.66rem' }}
+                      >Map to {fields.vertical}</button>
                     )}
                   </div>
                 )}

@@ -1,8 +1,8 @@
 // Assertion tests for importing a company's vertical from the Target
 // Accounts list (targetVerticalFor in src/utils/targetTier.js). Run:
 //   node scripts/targetVertical.test.mjs
-import { targetVerticalFor, resolveTargetAccountVertical, renameTargetVertical } from '../src/utils/targetTier.js';
-import { targetAccountRows } from '../src/utils/targetAccountMatch.js';
+import { targetVerticalFor, resolveTargetAccountVertical, renameTargetVertical, targetVerticalAgrees, targetVerticalEquivalentsOf, withTargetVerticalEquivalent, suggestTargetVertical } from '../src/utils/targetTier.js';
+import { targetAccountRows, targetRowFlags, targetAcceptPatch } from '../src/utils/targetAccountMatch.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -74,6 +74,31 @@ check('no record, no vertical', resolveTargetAccountVertical(null), '');
   check('no mapping: unchanged', renameTargetVertical('Retail', names), 'Retail');
   check('popup Target Accounts box shows the renamed vertical',
     targetAccountRows(data, names).find(r => r.name === 'Acme Holdings')?.vertical, 'Grocery');
+}
+
+// Verticals mapped as the same (targetVerticalEquivalents).
+{
+  let map = withTargetVerticalEquivalent(undefined, 'Investment Management', 'Private Equity');
+  map = withTargetVerticalEquivalent(map, 'investment management', 'Asset Management');
+  map = withTargetVerticalEquivalent(map, 'Investment Management', 'private equity');
+  check('equivalents: keyed lower-case, no case-repeats', map, { 'investment management': ['Asset Management', 'private equity'] });
+  const settings = { targetVerticalEquivalents: map };
+  check('equivalents of', targetVerticalEquivalentsOf('INVESTMENT MANAGEMENT', settings), ['Asset Management', 'private equity']);
+  check('agrees: mapped pair', targetVerticalAgrees('Investment Management', 'Private Equity', settings), true);
+  check('agrees: same, ignoring case', targetVerticalAgrees('Retail', 'retail', null), true);
+  check('agrees: unmapped pair', targetVerticalAgrees('Investment Management', 'Retail', settings), false);
+  check('agrees: mapping is one way', targetVerticalAgrees('Private Equity', 'Investment Management', settings), false);
+  check('agrees: blank card is not a match', targetVerticalAgrees('Investment Management', '', settings), false);
+  const row = { name: 'CBRE IM', cdm: '', tier: '', vertical: 'Investment Management' };
+  check('row flags: mapped vertical is not flagged', targetRowFlags(row, { vertical: 'Private Equity' }, [], settings).vertical, null);
+  check('row flags: unmapped still flagged', !!targetRowFlags(row, { vertical: 'Retail' }, [], settings).vertical, true);
+  check('row flags: no settings, flagged as before', !!targetRowFlags(row, { vertical: 'Private Equity' }, []).vertical, true);
+  check('accept patch leaves a mapped vertical alone', targetAcceptPatch(row, { vertical: 'Private Equity' }, { settings }), {});
+  const index = new Map([['cbre im', 'Investment Management']]);
+  check('My Accounts suggestion: none for a mapped pair', suggestTargetVertical({ targetNames: ['CBRE IM'], vertical: 'Private Equity', index, settings }), null);
+  check('My Accounts suggestion: still for an unmapped one', suggestTargetVertical({ targetNames: ['CBRE IM'], vertical: 'Retail', index, settings })?.vertical, 'Investment Management');
+  const removed = withTargetVerticalEquivalent(withTargetVerticalEquivalent(map, 'Investment Management', 'Asset Management', { remove: true }), 'Investment Management', 'Private Equity', { remove: true });
+  check('remove: emptied entry dropped', removed, {});
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

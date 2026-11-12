@@ -78,7 +78,7 @@ export function matchScoreBucket(score) {
  * rowsByName: Map(lowercased name -> targetAccountRows row).
  * Returns [{ id, company, target, score, patch }].
  */
-export function planSuggestionAccepts(pairs, { prospectsById, rowsByName, targetMap, verticalOptions = [], canonicalCdm } = {}) {
+export function planSuggestionAccepts(pairs, { prospectsById, rowsByName, targetMap, verticalOptions = [], canonicalCdm, settings = null } = {}) {
   const best = new Map();
   for (const { target, entry } of pairs || []) {
     if (!entry?.auto || entry.id == null) continue;
@@ -91,7 +91,7 @@ export function planSuggestionAccepts(pairs, { prospectsById, rowsByName, target
   }
   return [...best.values()].map(({ row, ...pl }) => {
     const card = prospectsById?.get(pl.id) || { company: pl.company };
-    return { ...pl, patch: targetAcceptPatch(row, card, { verticalOptions, canonicalCdm }) };
+    return { ...pl, patch: targetAcceptPatch(row, card, { verticalOptions, canonicalCdm, settings }) };
   });
 }
 
