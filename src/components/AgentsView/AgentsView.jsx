@@ -5050,7 +5050,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           }
           window.setTimeout(() => setBfoHistoryCopyFlash(''), 1500);
         };
-        const missingCount = bfoHistoryRows.filter(r => !r.bfoCompanyName).length;
+        const missingCount = bfoHistoryRows.filter(r => !r.bfoCompanyName && !r.noBfoName).length;
+        const noBfoCount = bfoHistoryRows.filter(r => r.noBfoName).length;
+        // Marks (or unmarks) a company as having no account in BFO, so it
+        // stops showing as Missing here and on the Issues tab.
+        const markNoBfo = (r, on) => updateProspect && r.prospect?.id && updateProspect(r.prospect.id, { noBfoCompanyName: on });
+        const markBtn = { marginLeft: 6, padding: '0 0.4rem', borderRadius: 999, border: '1px solid #E2E8F0', background: '#fff', color: '#64748B', fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.6 };
         const freshCount = bfoHistoryRows.filter(r => r.bfoCompanyName && r.fresh).length;
         const columns = [
           {
@@ -5062,8 +5067,26 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           },
           {
             key: 'bfoCompanyName', label: 'BFO Company Name', defaultWidth: 220,
-            getSortValue: r => r.bfoCompanyName.toLowerCase() || null, getFilterValue: r => r.bfoCompanyName, exportValue: r => r.bfoCompanyName,
-            render: r => (r.bfoCompanyName || <span className={styles.missing}>Missing</span>),
+            getSortValue: r => r.bfoCompanyName.toLowerCase() || (r.noBfoName ? '~' : null),
+            getFilterValue: r => r.bfoCompanyName || (r.noBfoName ? 'Not in BFO' : 'Missing'),
+            exportValue: r => r.bfoCompanyName || (r.noBfoName ? 'Not in BFO' : ''),
+            render: r => {
+              if (r.bfoCompanyName) return r.bfoCompanyName;
+              if (r.noBfoName) {
+                return (
+                  <span className={styles.muted} title="Marked as having no BFO Company Name">
+                    Not in BFO
+                    {updateProspect && <button type="button" style={markBtn} title="Undo: this company may have a BFO account after all" onClick={() => markNoBfo(r, false)}>Undo</button>}
+                  </span>
+                );
+              }
+              return (
+                <span>
+                  <span className={styles.missing}>Missing</span>
+                  {updateProspect && <button type="button" style={markBtn} title="This company has no account in BFO. Stops it showing as Missing here and on the Issues tab." onClick={() => markNoBfo(r, true)}>No BFO name</button>}
+                </span>
+              );
+            },
           },
           {
             key: 'dmCount', label: 'DMs Without Activity', defaultWidth: 150,
@@ -5080,12 +5103,14 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           },
           {
             key: 'inPrompt', label: 'In Prompt', defaultWidth: 200,
-            getSortValue: r => (!r.bfoCompanyName ? 2 : r.fresh ? 1 : 0),
-            getFilterValue: r => (!r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? 'Pasted recently' : 'Yes'),
-            exportValue: r => (!r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? 'Pasted recently' : 'Yes'),
-            render: r => (!r.bfoCompanyName
-              ? <span className={styles.missing}>No, no BFO Company Name</span>
-              : r.fresh ? <span className={styles.muted}>No, pasted recently</span> : 'Yes'),
+            getSortValue: r => (r.noBfoName ? 3 : !r.bfoCompanyName ? 2 : r.fresh ? 1 : 0),
+            getFilterValue: r => (r.noBfoName ? 'Not in BFO' : !r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? 'Pasted recently' : 'Yes'),
+            exportValue: r => (r.noBfoName ? 'Not in BFO' : !r.bfoCompanyName ? 'No BFO Company Name' : r.fresh ? 'Pasted recently' : 'Yes'),
+            render: r => (r.noBfoName
+              ? <span className={styles.muted}>No, not in BFO</span>
+              : !r.bfoCompanyName
+                ? <span className={styles.missing}>No, no BFO Company Name</span>
+                : r.fresh ? <span className={styles.muted}>No, pasted recently</span> : 'Yes'),
           },
         ];
         return (
@@ -5118,7 +5143,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
             </div>
             {bfoHistoryRows.length > 0 && (
               <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
-                {bfoHistoryReady.length} in the prompt · {missingCount} missing a BFO Company Name · {freshCount} pasted in the last {BFO_HISTORY_FRESH_DAYS} days.
+                {bfoHistoryReady.length} in the prompt · {missingCount} missing a BFO Company Name{noBfoCount ? ` · ${noBfoCount} not in BFO` : ''} · {freshCount} pasted in the last {BFO_HISTORY_FRESH_DAYS} days.
               </div>
             )}
             {!dmsLists ? (
