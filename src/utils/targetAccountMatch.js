@@ -10,7 +10,7 @@
 
 import { normalizeCompanyName } from './companyKey.js';
 import { resolveTargetAccountCdm, matchesCdm, isBlankCdm } from './cdmMatch.js';
-import { renameTargetVertical, resolveTargetAccountVertical, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier, targetTierColumns } from './targetTier.js';
+import { renameTargetVertical, resolveTargetAccountVertical, targetVerticalAgrees, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier, targetTierColumns } from './targetTier.js';
 
 /**
  * Every account on the Target Accounts list, once each, with what the
@@ -148,8 +148,10 @@ export function mappedTargetNames(settings, prospectId) {
  * disagree. Each flag is null when they agree or the row says nothing,
  * else { row, card, apply } where `apply` is what to set the card to.
  * `verticalOptions` snaps the vertical to the Dropdowns spelling.
+ * `settings` brings settings.targetVerticalEquivalents: a card vertical
+ * mapped as the same as the row's isn't a disagreement.
  */
-export function targetRowFlags(row, card, verticalOptions = []) {
+export function targetRowFlags(row, card, verticalOptions = [], settings = null) {
   if (!row) return { cdm: null, tier: null, vertical: null };
   const cdm = row.cdm && !matchesCdm(card?.cdm || '', row.cdm)
     ? { row: row.cdm, card: card?.cdm || '', apply: row.cdm }
@@ -158,7 +160,7 @@ export function targetRowFlags(row, card, verticalOptions = []) {
   const tier = t ? { row: t.targetTier, card: t.cardTier, apply: t.apply } : null;
   const listed = (verticalOptions || []).find(o => String(o).trim().toLowerCase() === row.vertical.toLowerCase());
   const v = listed || row.vertical;
-  const vertical = v && v.toLowerCase() !== String(card?.vertical || '').trim().toLowerCase()
+  const vertical = v && !targetVerticalAgrees(v, card?.vertical, settings)
     ? { row: v, card: card?.vertical || '', apply: v }
     : null;
   return { cdm, tier, vertical };
@@ -225,8 +227,8 @@ export function targetSuggestionsForAccounts(accounts, rows, settings, { min = 0
  * vertical leaves that field alone rather than blanking it. The CDM is
  * spelled the way the CDM dropdown spells that person (canonicalCdm).
  */
-export function targetAcceptPatch(row, card, { verticalOptions = [], canonicalCdm = (n) => n } = {}) {
-  const flags = targetRowFlags(row, card, verticalOptions);
+export function targetAcceptPatch(row, card, { verticalOptions = [], canonicalCdm = (n) => n, settings = null } = {}) {
+  const flags = targetRowFlags(row, card, verticalOptions, settings);
   const patch = {};
   if (flags.cdm) patch.cdm = canonicalCdm(flags.cdm.apply) || flags.cdm.apply;
   if (flags.tier && row?.tier) patch.tier = flags.tier.apply;

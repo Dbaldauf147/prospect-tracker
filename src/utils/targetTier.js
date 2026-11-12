@@ -291,6 +291,47 @@ export function renameTargetVertical(vertical, settings) {
 }
 
 /**
+ * Verticals the user counts as the same as one the Targets list gives:
+ * settings.targetVerticalEquivalents maps the list's vertical (as shown,
+ * after renameTargetVertical, lower-cased) to a list of the user's own
+ * verticals. The list says "Investment Management" for a company the user
+ * files under "Private Equity"; mapping the pair once means no company with
+ * that combination is flagged as disagreeing, without renaming the list's
+ * vertical for every other company (which is what Vertical names does).
+ */
+export function targetVerticalEquivalentsOf(listVertical, settings) {
+  const v = String(listVertical || '').trim().toLowerCase();
+  if (!v) return [];
+  const raw = settings?.targetVerticalEquivalents?.[v];
+  return (Array.isArray(raw) ? raw : []).map(x => String(x || '').trim()).filter(Boolean);
+}
+
+/** True when the card's vertical agrees with the list's: the same, ignoring case, or mapped as the same. */
+export function targetVerticalAgrees(listVertical, cardVertical, settings) {
+  const list = String(listVertical || '').trim().toLowerCase();
+  const card = String(cardVertical || '').trim().toLowerCase();
+  if (!list || !card) return list === card;
+  if (list === card) return true;
+  return targetVerticalEquivalentsOf(list, settings).some(x => x.toLowerCase() === card);
+}
+
+/**
+ * The equivalents map with `cardVertical` added to (or, with remove, taken
+ * off) the list vertical's entry. Returns a new object; an emptied entry is
+ * dropped.
+ */
+export function withTargetVerticalEquivalent(map, listVertical, cardVertical, { remove = false } = {}) {
+  const key = String(listVertical || '').trim().toLowerCase();
+  const val = String(cardVertical || '').trim();
+  const next = { ...(map || {}) };
+  if (!key || !val) return next;
+  const cur = (Array.isArray(next[key]) ? next[key] : []).filter(x => String(x || '').trim().toLowerCase() !== val.toLowerCase());
+  const out = remove ? cur : [...cur, val];
+  if (out.length) next[key] = out; else delete next[key];
+  return next;
+}
+
+/**
  * The vertical the Target Accounts list gives a company, but only once the
  * company has been MAPPED to a target account (settings.targetMap, set on
  * My Accounts) - never off a name guess, since importing a field off the
@@ -361,7 +402,7 @@ export function targetVerticalIndex(targetAccountsData, settings) {
  * it to the list's spelling; `onList` says whether it is on the list.
  * Returns { vertical, from, onList }.
  */
-export function suggestTargetVertical({ targetNames = [], vertical = '', verticalOverride = '', index, options = [] }) {
+export function suggestTargetVertical({ targetNames = [], vertical = '', verticalOverride = '', index, options = [], settings = null }) {
   const current = String(vertical || '').trim().toLowerCase();
   const kept = String(verticalOverride || '').trim().toLowerCase();
   if (kept && kept === current) return null;
@@ -370,6 +411,8 @@ export function suggestTargetVertical({ targetNames = [], vertical = '', vertica
     const v = name && index?.get(name.toLowerCase());
     if (!v) continue;
     if (v.toLowerCase() === current) return null;
+    // Mapped as the same vertical (targetVerticalEquivalents): nothing to suggest.
+    if (current && targetVerticalAgrees(v, current, settings)) return null;
     const listed = (options || []).find(o => String(o).trim().toLowerCase() === v.toLowerCase());
     return { vertical: listed || v, from: name, onList: !!listed };
   }

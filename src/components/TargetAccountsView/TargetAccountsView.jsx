@@ -518,7 +518,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   );
   const planFor = (rows, only) => planSuggestionAccepts(
     rows.flatMap(r => mappedFor(r).filter(x => !only || x.id === only).map(entry => ({ target: nameKey ? r[nameKey] : '', entry }))),
-    { prospectsById, rowsByName: targetRowsByName, targetMap: settings?.targetMap, verticalOptions, canonicalCdm: n => canonicalCdmOption(n, cdmOptions) },
+    { prospectsById, rowsByName: targetRowsByName, targetMap: settings?.targetMap, verticalOptions, canonicalCdm: n => canonicalCdmOption(n, cdmOptions), settings },
   );
   const describePatch = (pl) => {
     const parts = Object.entries(pl.patch).map(([k, v]) => `${k === 'cdm' ? 'CDM' : k === 'tier' ? 'Tier' : 'Vertical'} ${String(prospectsById.get(pl.id)?.[k] || '').trim() || 'blank'} → ${v}`);

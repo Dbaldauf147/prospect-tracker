@@ -460,7 +460,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     const row = suggestionOf(r);
     if (!row) return null;
     const card = byId.get(subject.id) || subject;
-    const patch = targetAcceptPatch(row, card, { verticalOptions, canonicalCdm: n => canonicalCdmOption(n, cdmOptions) });
+    const patch = targetAcceptPatch(row, card, { verticalOptions, canonicalCdm: n => canonicalCdmOption(n, cdmOptions), settings });
     return { id: subject.id, company: subject.company, row, card, patch };
   };
   const describePatch = (plan) => {
