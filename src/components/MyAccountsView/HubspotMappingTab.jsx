@@ -18,7 +18,7 @@ import { DataTable } from '../common/DataTable';
 import { domainKey, companyMatcher } from '../../utils/seHubspotExisting';
 import { loadSeHubspot } from '../../utils/seHubspotStore';
 import { compactMappingCompanies, pastedSheetRows, pickExportFromZip, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE, otherOwners, ownedByOthersRows, splitNameList } from '../../utils/hubspotMapping';
-import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
+import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING, loadHubspotActivity, saveHubspotActivity, EMPTY_HUBSPOT_ACTIVITY } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { targetAccountRows, targetSuggestionsForAccounts, targetAcceptPatch, mappedTargetNames } from '../../utils/targetAccountMatch';
@@ -27,13 +27,17 @@ import { canonicalCdmOption } from '../../utils/targetAccountCdm';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, hubspotAgentsPatch } from '../../utils/hubspotAgents';
 import { HubspotAgents } from './HubspotAgents';
+import { HubspotActivityTab } from './HubspotActivityTab';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
 import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, scheduledMailCheck, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
 import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName, buildHubspotCreateRows, buildHubspotCreateWorkbook, hubspotCreateFileName } from '../../utils/hubspotImportFile';
 
-// Which subtab of the page is open (Mapping or Agents), per viewer.
+// Which subtab of the page is open, per viewer.
 const SUBTAB_KEY = 'hubspot-mapping-subtab';
-const readSubtab = () => { try { return localStorage.getItem(SUBTAB_KEY) === 'agents' ? 'agents' : 'mapping'; } catch { return 'mapping'; } };
+const SUBTABS = [['mapping', 'Mapping'], ['activity', 'Activity'], ['others', "Others' Activity"], ['agents', 'Agents']];
+const readSubtab = () => {
+  try { const t = localStorage.getItem(SUBTAB_KEY); return SUBTABS.some(([k]) => k === t) ? t : 'mapping'; } catch { return 'mapping'; }
+};
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -130,6 +134,19 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   useEffect(() => {
     loadHubspotMapping().then(setData).catch(err => setError(err.message)).finally(() => setLoaded(true));
   }, []);
+
+  // The Activity subtabs' activity export (HubspotActivityTab).
+  const [activity, setActivity] = useState(EMPTY_HUBSPOT_ACTIVITY);
+  const [activityLoaded, setActivityLoaded] = useState(false);
+  const [activityError, setActivityError] = useState('');
+  useEffect(() => {
+    loadHubspotActivity().then(setActivity).catch(err => setActivityError(err.message)).finally(() => setActivityLoaded(true));
+  }, []);
+  const saveActivity = async (next) => {
+    setActivity(next);
+    try { await saveHubspotActivity(next); setActivityError(''); }
+    catch (err) { setActivityError(`Couldn't save the activity: ${err.message}`); }
+  };
 
   // The "Dan's Company Export" email is this same report: the app's Outlook
   // check (utils/hubspotExportMailSync.js, every few hours while the app is
@@ -253,14 +270,14 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const trackerOf = (r) => (r.tracker || []).map(p => p.company).filter(Boolean).join(', ');
   const substatusOf = (r) => (r.account ? String(r.account.substatus || byId.get(r.account.id)?.substatus || '').trim() : '');
   const isInactiveRow = (r) => !!r.account && INACTIVE_STATUSES.has(reportingStatus({ ...r.account, substatus: substatusOf(r) }));
+  const withNames = useMemo(() => accounts.map(a => {
+    const p = byId.get(a.id);
+    return p ? { ...a, goesBy: a.goesBy || p.goesBy, aliases: a.aliases || p.aliases, hubspotCompanyNames: a.hubspotCompanyNames || p.hubspotCompanyNames, website: a.website || p.website, emailDomain: a.emailDomain || p.emailDomain } : a;
+  }), [accounts, byId]);
   const mapping = useMemo(() => {
     if (!data.companies.length) return [];
-    const withNames = accounts.map(a => {
-      const p = byId.get(a.id);
-      return p ? { ...a, goesBy: a.goesBy || p.goesBy, aliases: a.aliases || p.aliases, hubspotCompanyNames: a.hubspotCompanyNames || p.hubspotCompanyNames, website: a.website || p.website, emailDomain: a.emailDomain || p.emailDomain } : a;
-    });
     return buildHubspotMapping(withNames, data.companies, { links: data.links, tracker: prospects || [] });
-  }, [accounts, prospects, byId, data]);
+  }, [withNames, prospects, data]);
 
   // Which account each HubSpot company is already mapped to, for the picker.
   const claimedBy = useMemo(() => {
@@ -745,7 +762,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   };
   const subtabBar = (
     <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid #E2E8F0' }}>
-      {[['mapping', 'Mapping'], ['agents', 'Agents']].map(([key, label]) => (
+      {SUBTABS.map(([key, label]) => (
         <button key={key} type="button" onClick={() => setSubtab(key)}
           style={{ padding: '0.35rem 0.9rem', border: 'none', borderBottom: `2px solid ${subtab === key ? '#1D4ED8' : 'transparent'}`, background: 'none', color: subtab === key ? '#1D4ED8' : '#475569', fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', marginBottom: -1 }}
         >{label}</button>
@@ -756,6 +773,29 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const closeOthers = useCallback(() => setShowOthers(false), []);
 
   const m = data.meta || {};
+  if (subtab === 'activity' || subtab === 'others') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+        {subtabBar}
+        {activityError && <div style={{ color: '#B91C1C', fontSize: '0.78rem' }}>{activityError}</div>}
+        <HubspotActivityTab
+          key={subtab}
+          view={subtab}
+          data={activity}
+          onSave={saveActivity}
+          loaded={activityLoaded}
+          mapping={mapping}
+          accounts={withNames}
+          byId={byId}
+          onSelect={onSelect}
+          cdmName={cdmName}
+          hasMappingExport={data.companies.length > 0}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      </div>
+    );
+  }
   if (subtab === 'agents') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
