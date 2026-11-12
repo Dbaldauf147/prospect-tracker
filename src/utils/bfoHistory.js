@@ -131,3 +131,23 @@ export function bfoHistoryMissingNameIssues(targets) {
   }
   return out;
 }
+
+// Ignored rows. The popup's BFO History tab can set rows aside (an opp that
+// isn't really this account's, a duplicate); they're stored as keys on the
+// history, bfoHistory.ignored: [key], so they stay hidden across a new paste
+// (which replaces the rows) as long as BFO still lists them the same way.
+// The key is the opportunity name plus its close date: names repeat across
+// years ("Renewal"), and the pair is what the Oppty 360 tab shows.
+export function bfoHistoryRowKey(row) {
+  return `${norm(row?.name)}|${norm(row?.closeDate)}`;
+}
+
+// The history with these row keys ignored (ignore = true) or restored
+// (ignore = false). Returns a new object; rows are untouched.
+export function setBfoHistoryIgnored(history, keys, ignore) {
+  const cur = new Set(history?.ignored || []);
+  for (const k of keys || []) {
+    if (ignore) cur.add(k); else cur.delete(k);
+  }
+  return { ...(history || {}), ignored: [...cur].sort() };
+}
