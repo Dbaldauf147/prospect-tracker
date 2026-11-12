@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import { toggleContactInEvents, addContactToNewEvent } from '../../utils/eventsStore';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SF_INSTANCE_URL, resolveSfUrl } from '../../utils/salesforceLeads';
@@ -2866,6 +2867,9 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
           onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
           contactNotes={settings?.contactNotes || {}}
           onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}
+          events={settings?.events || []}
+          onToggleContactEvent={(eventId, c) => updateSettings?.({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
+          onAddContactEvent={(ev, c) => updateSettings?.({ events: addContactToNewEvent(settings?.events || [], ev, c) })}
           contactOldEmails={settings?.contactOldEmails || {}}
           onSaveOldEmails={(cid, v) => saveSettingsMap('contactOldEmails', cid, v)}
           contactOldCompany={settings?.contactOldCompany || {}}

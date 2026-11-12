@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { toggleContactInEvents, addContactToNewEvent } from '../../utils/eventsStore';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
 import { metInPersonUpdate } from '../../utils/metInPerson';
@@ -3405,6 +3406,9 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
           onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
           contactNotes={settings?.contactNotes || {}}
           onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}
+          events={settings?.events || []}
+          onToggleContactEvent={(eventId, c) => updateSettings?.({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
+          onAddContactEvent={(ev, c) => updateSettings?.({ events: addContactToNewEvent(settings?.events || [], ev, c) })}
           contactOldEmails={settings?.contactOldEmails || {}}
           onSaveOldEmails={(cid, v) => saveSettingsMap('contactOldEmails', cid, v)}
           contactOldCompany={settings?.contactOldCompany || {}}

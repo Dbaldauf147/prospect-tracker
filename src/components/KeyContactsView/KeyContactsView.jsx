@@ -19,7 +19,7 @@ import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { tagValuesOf, anyValueSelected } from '../../utils/tagColumnFilter';
 import { DM_TOPICS, matchesDmTopic } from '../../utils/procurementDmFilter';
 import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
-import { toggleContactInEvents } from '../../utils/eventsStore';
+import { toggleContactInEvents, addContactToNewEvent } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -5887,6 +5887,7 @@ function KeyContactsViewInner({
             onSaveTagPresets={(list) => updateSettings({ tagPresets: list })}
             events={settings?.events || []}
             onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
+            onAddContactEvent={(ev, c) => updateSettings({ events: addContactToNewEvent(settings?.events || [], ev, c) })}
             companyContacts={sameCompanyContacts}
             allContacts={allHs}
             emailDomains={emailDomains}
