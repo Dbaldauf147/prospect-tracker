@@ -153,9 +153,29 @@ export function bfoHistoryRowKey(row) {
 // The history with these row keys ignored (ignore = true) or restored
 // (ignore = false). Returns a new object; rows are untouched.
 export function setBfoHistoryIgnored(history, keys, ignore) {
-  const cur = new Set(history?.ignored || []);
+  return setHistoryKeys(history, 'ignored', keys, ignore);
+}
+
+// Rows marked OK: checked and fine. Unlike ignored they stay on screen,
+// marked as reviewed. Stored the same way, bfoHistory.ok: [key], so the
+// mark survives a new paste.
+export function setBfoHistoryOk(history, keys, ok) {
+  return setHistoryKeys(history, 'ok', keys, ok);
+}
+
+function setHistoryKeys(history, field, keys, on) {
+  const cur = new Set(history?.[field] || []);
   for (const k of keys || []) {
-    if (ignore) cur.add(k); else cur.delete(k);
+    if (on) cur.add(k); else cur.delete(k);
   }
-  return { ...(history || {}), ignored: [...cur].sort() };
+  return { ...(history || {}), [field]: [...cur].sort() };
+}
+
+// What a new paste carries over from the history it replaces: the ignored
+// and OK marks, which are keyed on the rows rather than stored on them.
+export function bfoHistoryMarks(history) {
+  const out = {};
+  if (history?.ignored?.length) out.ignored = history.ignored;
+  if (history?.ok?.length) out.ok = history.ok;
+  return out;
 }
