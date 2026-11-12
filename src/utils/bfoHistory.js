@@ -49,6 +49,19 @@ function splitLine(line) {
 
 const isMarkdownRule = (cells) => cells.length > 0 && cells.every(c => /^:?-{2,}:?$/.test(c));
 
+// "No BFO history": the company was checked in BFO and none of its accounts
+// hold any opportunities (or no account turned up). Stored like a paste with
+// no rows, bfoHistory: { rows: [], pastedAt, noHistory: true }, so it counts
+// as fresh and drops out of the Agents prompt for BFO_HISTORY_FRESH_DAYS,
+// then comes back to be checked again. A later paste replaces it.
+export function bfoHistoryIsNone(history) {
+  return history?.noHistory === true;
+}
+
+export function markBfoHistoryNone(history, nowIso = new Date().toISOString()) {
+  return { rows: [], pastedAt: nowIso, noHistory: true, ...bfoHistoryMarks(history) };
+}
+
 // Text -> { rows, error }. The first line is a header when any of its cells
 // names a known column; without one, cells are read in BFO_HISTORY_COLUMNS
 // order. A checkmark in Included in Reporting reads as "Yes".
@@ -114,6 +127,8 @@ export function bfoHistoryTargets(entries, accountOf, nowMs = Date.now()) {
       dmCount: 1,
       fresh: bfoHistoryIsFresh(p.bfoHistory, nowMs),
       pastedAt: p.bfoHistory?.pastedAt || '',
+      // Checked in BFO and it holds no opportunities for the company.
+      noHistory: bfoHistoryIsNone(p.bfoHistory),
     });
   }
   return [...byId.values()].sort((a, b) => a.company.localeCompare(b.company));

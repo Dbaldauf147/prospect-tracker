@@ -1,7 +1,7 @@
 // Assertion tests for the BFO History paste parser and the Agents task's
 // company list. Plain Node, no framework. Run:
 //   node scripts/bfoHistory.test.mjs
-import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, bfoHistoryMissingNameIssues, BFO_HISTORY_HEADER, bfoHistoryRowKey, setBfoHistoryIgnored, setBfoHistoryOk, bfoHistoryMarks } from '../src/utils/bfoHistory.js';
+import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, bfoHistoryMissingNameIssues, BFO_HISTORY_HEADER, bfoHistoryRowKey, setBfoHistoryIgnored, setBfoHistoryOk, bfoHistoryMarks, bfoHistoryIsNone, markBfoHistoryNone } from '../src/utils/bfoHistory.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -94,6 +94,16 @@ check('ignore: on no history', setBfoHistoryIgnored(null, ['a|'], true), { ignor
   check('ok: unmark removes it', setBfoHistoryOk(h1, ['a|jan 1, 2026'], false).ok, []);
   check('marks: paste keeps ignored and ok', bfoHistoryMarks(h1), { ignored: ['x|'], ok: ['a|jan 1, 2026'] });
   check('marks: nothing to keep', bfoHistoryMarks({ rows: [] }), {});
+}
+
+{
+  const none = markBfoHistoryNone({ rows: [{ name: 'A' }], ok: ['a|'] }, '2026-11-10T00:00:00Z');
+  check('none: empty rows, flagged, marks kept', none, { rows: [], pastedAt: '2026-11-10T00:00:00Z', noHistory: true, ok: ['a|'] });
+  check('none: detected', [bfoHistoryIsNone(none), bfoHistoryIsNone({ rows: [] }), bfoHistoryIsNone(null)], [true, false, false]);
+  check('none: counts as fresh', bfoHistoryIsFresh(none, now), true);
+  const p = { id: 'n', company: 'NoOpps', bfoCompanyName: 'NoOpps Inc', bfoHistory: none };
+  const [t] = bfoHistoryTargets([{ contact: {} }], () => p, now);
+  check('none: target fresh and flagged', [t.fresh, t.noHistory], [true, true]);
 }
 
 if (failures) {
