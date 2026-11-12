@@ -16,7 +16,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
 import { contactMatcher, contactRows } from '../../utils/hubspotContacts';
 import { accountTier, formatActivityDate } from '../../utils/hubspotActivity';
-import { appContactsByEmail, contactGapRows, appContactName, GAP, GAP_FIELDS, gapFillPlan, gapFillBlocked } from '../../utils/hubspotContactGaps';
+import { appContactsByEmail, contactGapRows, appContactName, GAP, GAP_FIELDS, gapFillPlan, gapFillBlocked, withoutInactiveAccounts } from '../../utils/hubspotContactGaps';
 import { getHubspotCacheShared, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { apiFetch } from '../../utils/apiFetch';
 import { HUBSPOT_EXPORT_LEAD_SOURCE } from '../../utils/contactLeadSource';
@@ -170,11 +170,13 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
 
   const match = useMemo(() => contactMatcher(mapping, accounts), [mapping, accounts]);
   const byEmail = useMemo(() => appContactsByEmail(appContacts || [], settings?.contactOldEmails), [appContacts, settings?.contactOldEmails]);
-  const allRows = useMemo(() => {
-    if (appContacts == null) return [];
-    const rows = contactGapRows(contactRows(data.contacts, match, cdmName), byEmail);
-    return onlyMine ? rows.filter(r => r.account) : rows;
-  }, [data.contacts, match, cdmName, byEmail, appContacts, onlyMine]);
+  // Contacts at Hold Off, Lost - Not Sold and Old Client accounts are left
+  // off: nobody is working those accounts.
+  const { rows: allRows, hidden: hiddenInactive } = useMemo(() => {
+    if (appContacts == null) return { rows: [], hidden: 0 };
+    const all = withoutInactiveAccounts(contactGapRows(contactRows(data.contacts, match, cdmName), byEmail), byId);
+    return onlyMine ? { ...all, rows: all.rows.filter(r => r.account) } : all;
+  }, [data.contacts, match, cdmName, byEmail, appContacts, onlyMine, byId]);
 
   const FILTERS = useMemo(() => [
     ['', 'All gaps', () => true],
@@ -295,6 +297,7 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
       <div style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.45 }}>
         The {fmt(data.contacts.length)} contacts in the HubSpot export on the Contacts subtab, set against the {fmt(appContacts.length)} contacts in the app, by email.
         {' '}Listed: the emails the app doesn't have, and the contacts it has with a phone, LinkedIn, job title, name or company left blank that HubSpot has. <span style={FILL_TINT}>Green</span> marks a value that fills a blank.
+        {hiddenInactive > 0 && ` ${fmt(hiddenInactive)} at Hold Off, Lost - Not Sold or Old Client accounts are left out.`}
         {appContacts.length === 0 && <span style={{ color: '#B45309' }}> The app's contacts haven't loaded on this browser yet (sync HubSpot), so every email reads as not in the app.</span>}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>

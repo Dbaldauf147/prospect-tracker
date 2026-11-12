@@ -19,6 +19,7 @@
 // Pure: runs under plain Node in scripts/hubspotContactGaps.test.mjs.
 
 import { reportingStatus } from './reportingStatus.js';
+import { DMS_HIDDEN_ACCOUNT_STATUSES, accountStatusOf } from './tieredAccountActivity.js';
 
 export const GAP = { notInApp: 'Not in the app', missingData: 'Missing data' };
 
@@ -162,4 +163,26 @@ export function gapFillPlan(row) {
     return Object.keys(properties).length ? { kind: 'fill', contactId, properties } : null;
   }
   return null;
+}
+
+// Accounts nobody is working: Gap Fill leaves their contacts off, as DMs
+// Without Activity does. A company with a Substatus counts as Hold Off.
+export const GAP_FILL_HIDDEN_STATUSES = DMS_HIDDEN_ACCOUNT_STATUSES;
+
+/**
+ * `rows` without the ones whose My Account is Hold Off, Lost - Not Sold or
+ * Old Client. The live prospect in `byId` is read over the row's copy, so
+ * a status changed in the tracker takes effect at once. Rows with no
+ * account are kept.
+ *
+ * Returns { rows, hidden } (hidden: how many were left out).
+ */
+export function withoutInactiveAccounts(rows = [], byId = null) {
+  const hide = new Set(GAP_FILL_HIDDEN_STATUSES);
+  const kept = (rows || []).filter(r => {
+    if (!r?.account) return true;
+    const p = byId?.get?.(r.account.id) || r.account;
+    return !hide.has(accountStatusOf(p));
+  });
+  return { rows: kept, hidden: (rows || []).length - kept.length };
 }

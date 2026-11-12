@@ -3,7 +3,7 @@
 // Plain Node:
 //   node scripts/hubspotContactGaps.test.mjs
 import assert from 'node:assert/strict';
-import { appContactsByEmail, contactGapRows, appContactName, GAP, gapFillPlan, gapFillBlocked } from '../src/utils/hubspotContactGaps.js';
+import { appContactsByEmail, contactGapRows, appContactName, GAP, gapFillPlan, gapFillBlocked, withoutInactiveAccounts } from '../src/utils/hubspotContactGaps.js';
 
 const app = [
   { id: '1', email: 'Full@Acme.com', firstname: 'Ann', lastname: 'Full', jobtitle: 'CFO', phone: '555', hs_linkedin_url: 'https://linkedin.com/in/ann', company: 'Acme' },
@@ -74,5 +74,26 @@ assert.equal(gapFillBlocked({ account: { company: 'X', status: 'Old Client' } })
 assert.equal(gapFillBlocked({ account: { company: 'X', status: 'Lost - Not Sold' } }), 'X is Lost - Not Sold');
 assert.equal(gapFillBlocked({ account: { company: 'X', status: 'Hold Off' } }), 'X is Hold Off');
 assert.equal(gapFillBlocked({ account: { company: 'X', status: 'Client' } }, () => 'Budget'), 'X is Hold Off', 'a substatus reads as Hold Off');
+
+// Hold Off, Lost - Not Sold and Old Client accounts are left off; a
+// Substatus counts as Hold Off; the live prospect wins over the row's copy.
+{
+  const acct = (id, status, substatus = '') => ({ id, company: id, status, substatus });
+  const r = (id, account) => ({ id, account });
+  const byId = new Map([['changed', acct('changed', 'Hold Off')]]);
+  const { rows: kept, hidden } = withoutInactiveAccounts([
+    r('a', acct('active', 'Prospect')),
+    r('b', acct('hold', 'Hold Off')),
+    r('c', acct('lost', 'Lost - Not Sold')),
+    r('d', acct('old', 'Old Client')),
+    r('e', acct('sub', 'Prospect', 'Waiting on budget')),
+    r('f', acct('changed', 'Prospect')),
+    r('g', null),
+    r('h', acct('client', 'Client')),
+  ], byId);
+  assert.deepEqual(kept.map(x => x.id), ['a', 'g', 'h']);
+  assert.equal(hidden, 5);
+  assert.deepEqual(withoutInactiveAccounts([], null), { rows: [], hidden: 0 });
+}
 
 console.log('hubspotContactGaps: all assertions passed');
