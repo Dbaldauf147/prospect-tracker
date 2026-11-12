@@ -13,7 +13,7 @@ import { useOpps2Data } from '../../hooks/useOpps2Data';
 import { useRosterGates } from '../../hooks/useRosterTagCoverage';
 import { useTieredActivity } from '../../hooks/useTieredActivity';
 import { makeMyCdmContactAccount, makeMyCdmContactGate } from '../../utils/myCdmContacts';
-import { decisionMakersWithoutActivity, daysSince } from '../../utils/tieredAccountActivity';
+import { decisionMakersWithoutActivity, daysSince, accountStatusOf, DMS_HIDDEN_ACCOUNT_STATUSES } from '../../utils/tieredAccountActivity';
 import { reportingTier } from '../../utils/tierSource.js';
 import { formatDateDisplay } from '../../utils/isoDate';
 
@@ -55,11 +55,15 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     try { localStorage.setItem(WINDOW_KEY, w == null ? 'never' : String(w)); } catch { /* per-viewer convenience only */ }
   };
 
-  // Every window's list at once, for the chip counts.
+  // Every window's list at once, for the chip counts. Decision makers at a
+  // Hold Off, Lost - Not Sold or Old Client account are left off all of them.
   const lists = useMemo(() => {
     if (!contacts || !gates) return null;
-    return new Map(WINDOWS.map(w => [w, decisionMakersWithoutActivity({ contacts, gates, myCdmGate, outreachIndex, localFields, days: w })]));
-  }, [contacts, gates, myCdmGate, outreachIndex, localFields]);
+    return new Map(WINDOWS.map(w => [w, decisionMakersWithoutActivity({
+      contacts, gates, myCdmGate, outreachIndex, localFields, days: w,
+      accountOf, hiddenStatuses: DMS_HIDDEN_ACCOUNT_STATUSES,
+    })]));
+  }, [contacts, gates, myCdmGate, outreachIndex, localFields, accountOf]);
 
   const rows = useMemo(() => (lists?.get(windowDays) || []).map(({ contact, lastMs }) => {
     const account = accountOf(contact);
@@ -68,7 +72,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       contact, lastMs, account,
       name: nameOf(contact),
       tier: account ? reportingTier(account) : '',
-      status: account ? String(account.status || '').trim() : '',
+      status: accountStatusOf(account),
     };
   }), [lists, windowDays, accountOf]);
 
@@ -154,7 +158,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     <div style={{ maxWidth, display: 'flex', flexDirection: 'column', gap: '0.6rem', minHeight: 0 }}>
       <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
         Decision makers at your accounts that nothing has reached: no HubSpot email or call to them, and no Last Contacted date.
-        {' '}The same people the History chart counts as Decision Makers (tagged Decision Maker, less Hide, Left and the clients every roster leaves out).
+        {' '}The History chart's Decision Makers (tagged Decision Maker, less Hide, Left and the clients every roster leaves out), without the Hold Off, Lost - Not Sold and Old Client accounts. A company with a Substatus counts as Hold Off.
         {noIndex && <span style={{ color: '#B45309' }}> HubSpot emails and calls count once the Activity tab has loaded its feed, so until then this list may hold people who were emailed.</span>}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>

@@ -26,6 +26,7 @@ import { applyCompanyOverride, isSchneiderContact, rosterCompaniesMatch } from '
 import { isDecisionMakerContact, makeAccountContactIndex } from './decisionMakerCoverage.js';
 import { splitPeOwners } from './peOwners.js';
 import { onMyBook, reportingTier } from './tierSource.js';
+import { SUBSTATUS_HOLD_STATUS } from './reportingStatus.js';
 
 const MS_PER_DAY = 86400000;
 
@@ -378,18 +379,32 @@ export function rosterActivityPeople({ contacts, gates, myCdmGate = null, outrea
   return rosters.map((r, i) => ({ key: r.key, label: r.label, people: people[i] }));
 }
 
+// The accounts DMs Without Activity leaves out: nobody is working them, so
+// their decision makers aren't owed outreach.
+export const DMS_HIDDEN_ACCOUNT_STATUSES = ['Hold Off', 'Lost - Not Sold', 'Old Client'];
+
+// An account's Status as these pages read it: a company with a Substatus
+// counts as Hold Off, whatever its Status says (as on Tiered Activity).
+export function accountStatusOf(p) {
+  if (!p) return '';
+  return String(p.substatus || '').trim() ? SUBSTATUS_HOLD_STATUS : String(p.status || '').trim();
+}
+
 // Prospecting > DMs Without Activity: the Decision Makers roster above (the
 // same people the History chart counts) with no activity at all, or none
 // in the last `days` days. Never-reached first, then the longest since,
-// then by name.
+// then by name. With `accountOf` (contact => its account), a decision maker
+// at an account whose Status is one of `hiddenStatuses` is left out.
 export function decisionMakersWithoutActivity({
   contacts, gates, myCdmGate = null, outreachIndex = null, localFields = null,
-  days = null, nowMs = Date.now(),
+  days = null, nowMs = Date.now(), accountOf = null, hiddenStatuses = [],
 } = {}) {
   const people = rosterActivityPeople({ contacts, gates, myCdmGate, outreachIndex, localFields })
     .find(r => r.key === 'decisionMakers')?.people || [];
   const cutoff = days == null ? null : nowMs - days * MS_PER_DAY;
+  const hidden = new Set(hiddenStatuses || []);
   return people
+    .filter(p => !(accountOf && hidden.size && hidden.has(accountStatusOf(accountOf(p.contact)))))
     .filter(p => p.lastMs == null || (cutoff != null && p.lastMs < cutoff))
     .sort((a, b) => (a.lastMs == null ? -1 : 0) - (b.lastMs == null ? -1 : 0)
       || (a.lastMs ?? 0) - (b.lastMs ?? 0)
