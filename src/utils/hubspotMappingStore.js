@@ -57,3 +57,29 @@ export async function loadHubspotActivity() {
 export async function saveHubspotActivity(value) {
   await writeChunkedDoc(activityRef(), value, { meta: { activities: value.activities?.length || 0 } });
 }
+
+// The Contacts subtab's contacts export (utils/hubspotContacts.js), at
+// lookupTables/{uid}/items/hubspot-contacts. Each drop replaces it:
+//
+//   { contacts: [{ contactId, contactName, firstName, lastName, jobTitle,
+//                  contactOwner, email, workEmail, emailDomain, phone,
+//                  linkedIn, created, lastContacted, companyId,
+//                  zoomInfoId, companyName, companyOwner }],
+//     meta: { file, at } }
+export const HUBSPOT_CONTACTS_TABLE = 'hubspot-contacts';
+export const EMPTY_HUBSPOT_CONTACTS = { contacts: [], meta: {} };
+
+function contactsRef() {
+  const uid = getDbUserId();
+  if (!uid) throw new Error('Not signed in.');
+  return doc(firestore, 'lookupTables', String(uid), 'items', HUBSPOT_CONTACTS_TABLE);
+}
+
+export async function loadHubspotContacts() {
+  const got = await readChunkedDoc(contactsRef());
+  return { ...EMPTY_HUBSPOT_CONTACTS, ...(got?.value || {}) };
+}
+
+export async function saveHubspotContacts(value) {
+  await writeChunkedDoc(contactsRef(), value, { meta: { contacts: value.contacts?.length || 0 } });
+}

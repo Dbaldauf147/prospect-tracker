@@ -6,7 +6,7 @@
 //   node scripts/backupHubspotMapping.test.mjs
 import assert from 'node:assert/strict';
 import { collectUserBackup, detectAnomalies, hubspotLookupCounts } from '../api/_lib/dataBackup.js';
-import { mergeHubspotMappingRestore, mergeHubspotActivityRestore, summarizeBackup, FULL_BACKUP_FORMAT } from '../src/utils/fullBackup.js';
+import { mergeHubspotMappingRestore, mergeHubspotActivityRestore, mergeHubspotContactsRestore, summarizeBackup, FULL_BACKUP_FORMAT } from '../src/utils/fullBackup.js';
 import { mergeActivities } from '../src/utils/hubspotActivity.js';
 
 // An in-memory stand-in for firebase-admin: path -> data.
@@ -71,6 +71,15 @@ assert.deepEqual(summary.errors, []);
 
 // A missing store still reports zero, so a wipe of the whole document alerts.
 assert.deepEqual(hubspotLookupCounts('hubspot-mapping', null), { hubspotMappingCompanies: 0, hubspotMappingLinks: 0 });
+assert.deepEqual(hubspotLookupCounts('hubspot-contacts', null), { hubspotContacts: 0 });
+assert.deepEqual(hubspotLookupCounts('hubspot-contacts', { contacts: [{}, {}] }), { hubspotContacts: 2 });
+assert.ok(summary.captured.includes('lookupTables/hubspot-contacts') === false, 'no contacts store, nothing captured');
+
+// Contacts come back only into an empty store; a newer export is kept.
+const bakContacts = { contacts: [{ email: 'old@x.com' }], meta: { file: 'old.csv' } };
+assert.deepEqual(mergeHubspotContactsRestore({ contacts: [] }, bakContacts), { contacts: [{ email: 'old@x.com' }], meta: { file: 'old.csv' } });
+assert.deepEqual(mergeHubspotContactsRestore({ contacts: [{ email: 'new@x.com' }], meta: { file: 'new.csv' } }, bakContacts).contacts, [{ email: 'new@x.com' }]);
+assert.deepEqual(mergeHubspotContactsRestore(null, null), { contacts: [], meta: {} });
 const alerts = detectAnomalies({ hubspotMappingLinks: 300, hubspotActivities: 5000 }, { hubspotMappingLinks: 0, hubspotActivities: 5000 });
 assert.deepEqual(alerts.map(a => [a.field, a.dropPct]), [['hubspotMappingLinks', 100]]);
 
