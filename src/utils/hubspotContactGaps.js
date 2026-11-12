@@ -18,7 +18,26 @@
 //
 // Pure: runs under plain Node in scripts/hubspotContactGaps.test.mjs.
 
+import { reportingStatus } from './reportingStatus.js';
+
 export const GAP = { notInApp: 'Not in the app', missingData: 'Missing data' };
+
+// Accounts out of active rotation, as on the rest of My Accounts.
+export const GAP_FILL_INACTIVE = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
+
+/**
+ * Why Add / Fill is off for a row, '' when it's on. They only work on a
+ * contact of an active My Accounts company: one the row maps to, whose
+ * reported status (a substatus reads as Hold Off) isn't Old Client, Hold
+ * Off or Lost - Not Sold. `substatusOf(account)` supplies the substatus
+ * when it lives on the tracker record rather than the account row.
+ */
+export function gapFillBlocked(row, substatusOf = (a) => a?.substatus) {
+  const a = row?.account;
+  if (!a) return 'Not one of your My Accounts companies';
+  const status = reportingStatus({ ...a, substatus: String(substatusOf(a) || '').trim() });
+  return GAP_FILL_INACTIVE.has(status) ? `${a.company} is ${status}` : '';
+}
 
 const s = (v) => String(v ?? '').trim();
 const lower = (v) => s(v).toLowerCase();
@@ -98,4 +117,49 @@ export function contactGapRows(exportRows = [], byEmail = new Map()) {
 /** The app's name for a contact record, for the "In the app as" column. */
 export function appContactName(c) {
   return [s(c?.firstname), s(c?.lastname)].filter(Boolean).join(' ') || s(c?.email);
+}
+
+// The app's (HubSpot) property each GAP_FIELDS key is written to.
+export const GAP_PROPERTY = {
+  phone: 'phone',
+  linkedIn: 'hs_linkedin_url',
+  jobTitle: 'jobtitle',
+  firstName: 'firstname',
+  lastName: 'lastname',
+  companyName: 'company',
+};
+
+/**
+ * What Gap Fill sends for a row, or null when there is nothing to do:
+ *
+ *   * Not in the app: { kind: 'add', properties } for create-contact. The
+ *     company is the My Accounts company the row maps to (so the contact
+ *     lands on that company's popup), else HubSpot's company name.
+ *   * Missing data:   { kind: 'fill', contactId, properties } for
+ *     update-contact, with only the fields blank on the app's contact
+ *     (row.fill). A blank company is filled the same way as on add.
+ */
+export function gapFillPlan(row) {
+  if (!row || !row.gapEmail) return null;
+  const company = s(row.account?.company) || s(row.companyName);
+  const valueOf = (key) => (key === 'companyName' ? company : s(GAP_FIELDS.find(f => f.key === key)?.has(row)));
+  if (row.gap === GAP.notInApp) {
+    const properties = { email: row.gapEmail };
+    for (const f of GAP_FIELDS) {
+      const v = valueOf(f.key);
+      if (v) properties[GAP_PROPERTY[f.key]] = v;
+    }
+    return { kind: 'add', properties };
+  }
+  if (row.gap === GAP.missingData && row.app) {
+    const contactId = s(row.app.id || row.app.vid);
+    if (!contactId || String(contactId).startsWith('local-')) return null;
+    const properties = {};
+    for (const key of row.fill || []) {
+      const v = valueOf(key);
+      if (v) properties[GAP_PROPERTY[key]] = v;
+    }
+    return Object.keys(properties).length ? { kind: 'fill', contactId, properties } : null;
+  }
+  return null;
 }
