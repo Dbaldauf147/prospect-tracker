@@ -5,6 +5,7 @@ import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT, loadClientStatusMap, CL
 import { loadIssueSnoozedMap, issueSnoozeState, pruneExpiredSnoozes, ISSUE_SNOOZED_EVENT } from '../utils/issueSnoozeStore';
 import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } from '../utils/myAccountsFlagsStore';
 import { loadHubspotOthersActivity, HUBSPOT_OTHERS_ACTIVITY_EVENT, HUBSPOT_OTHERS_ACTIVITY_KEY } from '../utils/hubspotOthersActivityStore';
+import { loadHubspotGapFill, HUBSPOT_GAP_FILL_EVENT, HUBSPOT_GAP_FILL_KEY } from '../utils/hubspotGapFillStore';
 import { dbGet } from '../utils/db';
 import { getEffectiveDropdownLists } from '../utils/dropdownListsStore';
 import { useOpps2Data } from './useOpps2Data';
@@ -58,6 +59,8 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   const [myAccountsFlags, setMyAccountsFlags] = useState(() => loadMyAccountsFlags());
   // Others' Activity on the Hubspot Mapping page, published there.
   const [hubspotOthersActivity, setHubspotOthersActivity] = useState(() => loadHubspotOthersActivity());
+  // Gap Fill work left on each account, published there too.
+  const [hubspotGapFill, setHubspotGapFill] = useState(() => loadHubspotGapFill());
   // Files only this browser holds, for the "File not backed up" rows.
   const [localOnlyFiles, setLocalOnlyFiles] = useState(() => loadLocalOnlyFiles());
   // BFO Activity rows + Opps cache (both IndexedDB) drive the "BFO
@@ -153,6 +156,7 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     setSnoozedMap(loadIssueSnoozedMap());
     setMyAccountsFlags(loadMyAccountsFlags());
     setHubspotOthersActivity(loadHubspotOthersActivity());
+    setHubspotGapFill(loadHubspotGapFill());
     setLocalOnlyFiles(loadLocalOnlyFiles());
     dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {});
     loadPipelineDashboard().then(p => setCoverageServices(prev => keepIfSame(prev, coverageServicesOf(p)))).catch(() => {});
@@ -167,6 +171,7 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
       if (e.key === 'issues-snoozed-map') setSnoozedMap(loadIssueSnoozedMap());
       if (e.key === MY_ACCOUNTS_FLAGS_KEY) setMyAccountsFlags(loadMyAccountsFlags());
       if (String(e.key || '').endsWith(HUBSPOT_OTHERS_ACTIVITY_KEY)) setHubspotOthersActivity(loadHubspotOthersActivity());
+      if (String(e.key || '').endsWith(HUBSPOT_GAP_FILL_KEY)) setHubspotGapFill(loadHubspotGapFill());
       // Another tab's backup result (the key is user-prefixed by userLs).
       if (String(e.key || '').endsWith(':local-only-files')) setLocalOnlyFiles(loadLocalOnlyFiles());
     }
@@ -177,6 +182,7 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     function onSnoozed() { setSnoozedMap(loadIssueSnoozedMap()); }
     function onMaFlags() { setMyAccountsFlags(loadMyAccountsFlags()); }
     function onOthersActivity() { setHubspotOthersActivity(loadHubspotOthersActivity()); }
+    function onGapFill() { setHubspotGapFill(loadHubspotGapFill()); }
     function onLocalOnly() { setLocalOnlyFiles(loadLocalOnlyFiles()); }
     // BFO Activity (IndexedDB): refresh on window focus (a fresh paste) and
     // on the BFO Activity store's own change event, mirroring how the BFO
@@ -213,6 +219,7 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     window.addEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
     window.addEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
     window.addEventListener(HUBSPOT_OTHERS_ACTIVITY_EVENT, onOthersActivity);
+    window.addEventListener(HUBSPOT_GAP_FILL_EVENT, onGapFill);
     window.addEventListener(LOCAL_ONLY_FILES_EVENT, onLocalOnly);
     return () => {
       clearInterval(snoozeTimer);
@@ -229,17 +236,18 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
       window.removeEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
       window.removeEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
       window.removeEventListener(HUBSPOT_OTHERS_ACTIVITY_EVENT, onOthersActivity);
+      window.removeEventListener(HUBSPOT_GAP_FILL_EVENT, onGapFill);
       window.removeEventListener(LOCAL_ONLY_FILES_EVENT, onLocalOnly);
     };
   }, [setBfoActivity]);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, now: issuesNow });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, now: issuesNow });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, issuesNow]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, issuesNow]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map

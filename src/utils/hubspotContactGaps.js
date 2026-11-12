@@ -186,3 +186,64 @@ export function withoutInactiveAccounts(rows = [], byId = null) {
   });
   return { rows: kept, hidden: (rows || []).length - kept.length };
 }
+
+/**
+ * The Gap Fill work left on each active My Accounts company, for the
+ * Issues tab: the rows Add or Fill may act on (gapFillBlocked clear and a
+ * gapFillPlan to send), grouped by account, as
+ *   [{ accountId, company, add, fill, fields }]
+ * where `fields` counts the blanks Fill would write, by label. Sorted by
+ * company.
+ */
+export function gapFillIssueRecords(gapRows = [], substatusOf = (a) => a?.substatus) {
+  const by = new Map();
+  for (const r of gapRows || []) {
+    if (gapFillBlocked(r, substatusOf)) continue;
+    const plan = gapFillPlan(r);
+    if (!plan) continue;
+    const id = String(r.account.id || r.account.company);
+    const rec = by.get(id) || { accountId: String(r.account.id || ''), company: r.account.company || '', add: 0, fill: 0, fields: {} };
+    if (plan.kind === 'add') rec.add += 1;
+    else {
+      rec.fill += 1;
+      for (const k of r.fill || []) {
+        const label = GAP_FIELDS.find(f => f.key === k)?.label;
+        if (label) rec.fields[label] = (rec.fields[label] || 0) + 1;
+      }
+    }
+    by.set(id, rec);
+  }
+  return [...by.values()].sort((a, b) => a.company.localeCompare(b.company));
+}
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * The Issues tab's rows for those records, one per account. With
+ * `prospects` given, an account that is gone (merged or deleted) drops.
+ */
+export function gapFillIssues(records = [], { prospects = [] } = {}) {
+  const byId = new Map((prospects || []).map(p => [p.id, p]));
+  const check = byId.size > 0;
+  const out = [];
+  for (const r of records || []) {
+    if (!r || (!r.add && !r.fill)) continue;
+    const live = r.accountId ? byId.get(r.accountId) : null;
+    if (check && r.accountId && !live) continue;
+    const what = [
+      r.add ? `${plural(r.add, 'contact', 'contacts')} HubSpot has that the app doesn't` : '',
+      r.fill ? `${plural(r.fill, 'contact', 'contacts')} with blanks HubSpot can fill (${Object.entries(r.fields || {}).map(([k, n]) => `${k} ${n}`).join(', ')})` : '',
+    ].filter(Boolean).join(', and ');
+    out.push({
+      id: `hubspot-gap-fill:${r.accountId || r.company}`,
+      source: 'Hubspot Mapping',
+      type: r.add && r.fill ? 'Contacts to add and fill from HubSpot' : r.add ? 'Contacts to add from HubSpot' : 'Contact data to fill from HubSpot',
+      company: live?.company || r.company || '-',
+      prospectId: live?.id || r.accountId || null,
+      daysUntil: null,
+      expirationDate: null,
+      detail: `${what}. Add or Fill them on My Accounts > Hubspot Mapping > Gap Fill.`,
+    });
+  }
+  return out;
+}

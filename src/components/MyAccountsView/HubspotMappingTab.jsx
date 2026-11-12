@@ -32,6 +32,10 @@ import { HubspotContactsTab } from './HubspotContactsTab';
 import { HubspotGapFillTab } from './HubspotGapFillTab';
 import { activityMatcher, othersActivityIssueRecords } from '../../utils/hubspotActivity';
 import { saveHubspotOthersActivity } from '../../utils/hubspotOthersActivityStore';
+import { saveHubspotGapFill } from '../../utils/hubspotGapFillStore';
+import { contactMatcher, contactRows } from '../../utils/hubspotContacts';
+import { appContactsByEmail, contactGapRows, gapFillIssueRecords } from '../../utils/hubspotContactGaps';
+import { getHubspotCacheShared } from '../../utils/hubspotContactsCache';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
 import { HubspotMappingBackup } from './HubspotMappingBackup';
 import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, scheduledMailCheck, checkGmailNow, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
@@ -348,6 +352,39 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     publishedOthers.current = json;
     saveHubspotOthersActivity(othersIssueRecords);
   }, [othersIssueRecords]);
+
+  // The contacts the app holds (the HubSpot contacts cache), re-read when
+  // it changes: Gap Fill lists against them, and the Issues tab counts the
+  // Gap Fill work left on each account.
+  const [appContacts, setAppContacts] = useState(null);
+  useEffect(() => {
+    let live = true;
+    const read = () => getHubspotCacheShared().then(c => { if (live) setAppContacts(c?.contacts || []); }).catch(() => { if (live) setAppContacts([]); });
+    read();
+    window.addEventListener('hubspot-cache-updated', read);
+    return () => { live = false; window.removeEventListener('hubspot-cache-updated', read); };
+  }, []);
+  // Gap Fill's work per account, published for the Issues tab
+  // (hubspotGapFillStore): one issue per active My Accounts company with a
+  // contact to add or a blank to fill. Only once the export, the app's
+  // contacts and the accounts are all in (with no app contacts every email
+  // reads as missing), and only when it changed.
+  const gapFillRecords = useMemo(() => {
+    if (!contactsLoaded || !appContacts?.length || !withNames.length) return null;
+    const gapRows = contactGapRows(
+      contactRows(contactsData.contacts, contactMatcher(mapping, withNames), cdmName),
+      appContactsByEmail(appContacts, settings?.contactOldEmails),
+    );
+    return gapFillIssueRecords(gapRows, (a) => a?.substatus || byId.get(a?.id)?.substatus || '');
+  }, [contactsLoaded, appContacts, withNames, contactsData, mapping, cdmName, settings?.contactOldEmails, byId]);
+  const publishedGapFill = useRef('');
+  useEffect(() => {
+    if (!gapFillRecords) return;
+    const json = JSON.stringify(gapFillRecords);
+    if (json === publishedGapFill.current) return;
+    publishedGapFill.current = json;
+    saveHubspotGapFill(gapFillRecords);
+  }, [gapFillRecords]);
 
   // Which account each HubSpot company is already mapped to, for the picker.
   const claimedBy = useMemo(() => {
@@ -855,6 +892,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
         <HubspotGapFillTab
           data={contactsData}
           loaded={contactsLoaded}
+          appContacts={appContacts}
           mapping={mapping}
           accounts={withNames}
           byId={byId}

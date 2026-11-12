@@ -17,7 +17,7 @@ import { DataTable } from '../common/DataTable';
 import { contactMatcher, contactRows } from '../../utils/hubspotContacts';
 import { accountTier, formatActivityDate } from '../../utils/hubspotActivity';
 import { appContactsByEmail, contactGapRows, appContactName, GAP, GAP_FIELDS, gapFillPlan, gapFillBlocked, withoutInactiveAccounts } from '../../utils/hubspotContactGaps';
-import { getHubspotCacheShared, updateHubspotCache } from '../../utils/hubspotContactsCache';
+import { updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { apiFetch } from '../../utils/apiFetch';
 import { HUBSPOT_EXPORT_LEAD_SOURCE } from '../../utils/contactLeadSource';
 
@@ -75,7 +75,7 @@ const text = (key, label, width, extra = {}) => ({
   ...extra,
 });
 
-export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], byId, onSelect, cdmName = '', settings, updateSettings }) {
+export function HubspotGapFillTab({ data, loaded, appContacts = null, mapping = [], accounts = [], byId, onSelect, cdmName = '', settings, updateSettings }) {
   const [filter, setFilter] = useState('');
   const [onlyMine, setOnlyMine] = useState(false);
   // Add / Fill: the run in progress ({ kind, done, total }), what the last
@@ -158,15 +158,8 @@ export function HubspotGapFillTab({ data, loaded, mapping = [], accounts = [], b
     setRunning(null);
   };
 
-  // The contacts the app holds, re-read whenever the cache changes.
-  const [appContacts, setAppContacts] = useState(null);
-  useEffect(() => {
-    let live = true;
-    const read = () => getHubspotCacheShared().then(c => { if (live) setAppContacts(c?.contacts || []); }).catch(() => { if (live) setAppContacts([]); });
-    read();
-    window.addEventListener('hubspot-cache-updated', read);
-    return () => { live = false; window.removeEventListener('hubspot-cache-updated', read); };
-  }, []);
+  // The contacts the app holds (`appContacts`) come from HubspotMappingTab,
+  // which reads the cache once for this tab and for the Issues tab's count.
 
   const match = useMemo(() => contactMatcher(mapping, accounts), [mapping, accounts]);
   const byEmail = useMemo(() => appContactsByEmail(appContacts || [], settings?.contactOldEmails), [appContacts, settings?.contactOldEmails]);

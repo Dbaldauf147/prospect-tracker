@@ -3,7 +3,7 @@
 // Plain Node:
 //   node scripts/hubspotContactGaps.test.mjs
 import assert from 'node:assert/strict';
-import { appContactsByEmail, contactGapRows, appContactName, GAP, gapFillPlan, gapFillBlocked, withoutInactiveAccounts } from '../src/utils/hubspotContactGaps.js';
+import { appContactsByEmail, contactGapRows, appContactName, GAP, gapFillPlan, gapFillBlocked, withoutInactiveAccounts, gapFillIssueRecords, gapFillIssues } from '../src/utils/hubspotContactGaps.js';
 
 const app = [
   { id: '1', email: 'Full@Acme.com', firstname: 'Ann', lastname: 'Full', jobtitle: 'CFO', phone: '555', hs_linkedin_url: 'https://linkedin.com/in/ann', company: 'Acme' },
@@ -95,5 +95,28 @@ assert.equal(gapFillBlocked({ account: { company: 'X', status: 'Client' } }, () 
   assert.equal(hidden, 5);
   assert.deepEqual(withoutInactiveAccounts([], null), { rows: [], hidden: 0 });
 }
+
+// The Gap Fill work per account, for the Issues tab.
+const work = [
+  { gap: GAP.notInApp, gapEmail: 'a@aegon.com', account: { id: 'p1', company: 'Aegon', status: 'Client' } },
+  { gap: GAP.notInApp, gapEmail: 'b@aegon.com', account: { id: 'p1', company: 'Aegon', status: 'Client' } },
+  { gap: GAP.missingData, gapEmail: 'c@aegon.com', fill: ['phone', 'linkedIn'], phone: '1', linkedIn: 'x', account: { id: 'p1', company: 'Aegon', status: 'Client' }, app: { id: '9' } },
+  { gap: GAP.missingData, gapEmail: 'd@aimco.ca', fill: ['phone'], phone: '1', account: { id: 'p3', company: 'AIMCo', status: 'Client' }, app: { id: '8' } },
+  { gap: GAP.notInApp, gapEmail: 'e@old.com', account: { id: 'p2', company: 'OldCo', status: 'Old Client' } },
+  { gap: GAP.notInApp, gapEmail: 'f@nobody.com', account: null },
+];
+const recsGF = gapFillIssueRecords(work);
+assert.deepEqual(recsGF, [
+  { accountId: 'p1', company: 'Aegon', add: 2, fill: 1, fields: { Phone: 1, LinkedIn: 1 } },
+  { accountId: 'p3', company: 'AIMCo', add: 0, fill: 1, fields: { Phone: 1 } },
+], 'active My Accounts only, grouped by account');
+const gfIssues = gapFillIssues(recsGF, { prospects: [{ id: 'p1', company: 'Aegon' }, { id: 'p3', company: 'AIMCo' }] });
+assert.deepEqual(gfIssues.map(i => [i.id, i.source, i.type, i.company, i.prospectId]), [
+  ['hubspot-gap-fill:p1', 'Hubspot Mapping', 'Contacts to add and fill from HubSpot', 'Aegon', 'p1'],
+  ['hubspot-gap-fill:p3', 'Hubspot Mapping', 'Contact data to fill from HubSpot', 'AIMCo', 'p3'],
+]);
+assert.equal(gfIssues[0].detail, "2 contacts HubSpot has that the app doesn't, and 1 contact with blanks HubSpot can fill (Phone 1, LinkedIn 1). Add or Fill them on My Accounts > Hubspot Mapping > Gap Fill.");
+assert.equal(gapFillIssues([{ accountId: 'p9', company: 'Gone', add: 1, fill: 0 }], { prospects: [{ id: 'p1' }] }).length, 0, 'a deleted account drops');
+assert.equal(gapFillIssues([{ accountId: 'p1', company: 'Aegon', add: 0, fill: 0 }]).length, 0, 'nothing left, no issue');
 
 console.log('hubspotContactGaps: all assertions passed');

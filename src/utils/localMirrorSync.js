@@ -674,6 +674,7 @@ async function loadMirroredStores() {
     import('./issueSnoozeStore.js'),
     import('./myAccountsFlagsStore.js'),
     import('./hubspotOthersActivityStore.js'),
+    import('./hubspotGapFillStore.js'),
     import('./myAccountsSince.js'),
     import('./relationshipLog.js'),
     import('./pipelineDashboardStore.js'),
