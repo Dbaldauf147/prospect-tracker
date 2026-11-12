@@ -24,8 +24,11 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
   const [error, setError] = useState('');
   const [flash, setFlash] = useState('');
   const rows = useMemo(() => (history?.rows || []).map((r, i) => ({ id: String(i), ...r })), [history]);
-  const pastedLabel = history?.pastedAt ? new Date(history.pastedAt).toLocaleString() : '';
+  const pastedLabel = history?.pastedAt
+    ? new Date(history.pastedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+    : '';
   const openCount = rows.filter(r => r.status === 'Open').length;
+  const closedCount = rows.filter(r => r.status === 'Closed').length;
 
   const columns = useMemo(() => BFO_HISTORY_COLUMNS.map(c => ({
     key: c.key,
@@ -47,11 +50,13 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
   const save = () => {
     const { rows: parsed, error: err } = parseBfoHistory(text);
     if (err) { setError(err); return; }
+    const open = parsed.filter(r => r.status === 'Open').length;
+    const closed = parsed.filter(r => r.status === 'Closed').length;
     onChange({ rows: parsed, pastedAt: new Date().toISOString() });
     setText('');
     setError('');
     setPasteOpen(false);
-    setFlash(`Saved ${parsed.length} opportunit${parsed.length === 1 ? 'y' : 'ies'}.`);
+    setFlash(`Saved ${parsed.length} opportunit${parsed.length === 1 ? 'y' : 'ies'} (${open} open, ${closed} closed).`);
     window.setTimeout(() => setFlash(''), 4000);
   };
 
@@ -59,9 +64,19 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.5rem' }}>
       <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
         The opportunities BFO holds for {bfoCompanyName ? <strong>{bfoCompanyName}</strong> : 'this account'}, from its Oppty 360 tab
-        (Opportunities of this Account: All of the above, Open and Closed). The Agents tab&apos;s BFO History task fills this in; a new paste replaces the list.
-        {pastedLabel && <> Last pasted {pastedLabel}: {rows.length} opportunit{rows.length === 1 ? 'y' : 'ies'}, {openCount} open.</>}
+        (Opportunities of this Account: All of the above, both the Open and the Closed subtabs). The Agents tab&apos;s BFO History task fills this in; a new paste replaces the list.
       </div>
+      {pastedLabel && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.8rem' }}>
+          <span
+            title={new Date(history.pastedAt).toString()}
+            style={{ padding: '0.2rem 0.6rem', borderRadius: 999, background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', fontWeight: 600 }}
+          >Pasted into the tracker: {pastedLabel}</span>
+          <span style={{ color: '#475569' }}>
+            {rows.length} opportunit{rows.length === 1 ? 'y' : 'ies'}: {openCount} open, {closedCount} closed
+          </span>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
         <button
           type="button"
