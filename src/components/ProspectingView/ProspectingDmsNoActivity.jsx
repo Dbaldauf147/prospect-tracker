@@ -13,6 +13,9 @@ import { daysSince, accountStatusOf } from '../../utils/tieredAccountActivity';
 import { reportingTier } from '../../utils/tierSource.js';
 import { formatDateDisplay } from '../../utils/isoDate';
 import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
+import { useBiggestDeals } from '../../hooks/useBiggestDeals';
+import { dealMid } from '../../utils/prospectingDeals.js';
+import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -34,16 +37,30 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     writeDmsWindow(w);
   };
 
+  // Each account's Biggest Deal: the company card's own reading (the
+  // biggest service still open, priced through the rate card), so the
+  // figure here is the one on the card.
+  const dealAccounts = useMemo(() => {
+    const byId = new Map();
+    for (const { contact } of lists?.get(windowDays) || []) {
+      const a = accountOf(contact);
+      if (a?.id && !byId.has(a.id)) byId.set(a.id, a);
+    }
+    return [...byId.values()];
+  }, [lists, windowDays, accountOf]);
+  const deals = useBiggestDeals(dealAccounts, settings);
+
   const rows = useMemo(() => (lists?.get(windowDays) || []).map(({ contact, lastMs }) => {
     const account = accountOf(contact);
     return {
+      deal: (account?.id && deals.get(account.id)) || null,
       id: String(contact.id || contact.vid || contact.email),
       contact, lastMs, account,
       name: nameOf(contact),
       tier: account ? reportingTier(account) : '',
       status: accountStatusOf(account),
     };
-  }), [lists, windowDays, accountOf]);
+  }), [lists, windowDays, accountOf, deals]);
 
   const columns = useMemo(() => [
     {
@@ -66,6 +83,34 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       render: r => (r.account && onSelectProspect
         ? <button type="button" style={{ ...linkBtn, fontWeight: 600 }} title="Open the company" onClick={() => onSelectProspect(r.account)}>{r.account.company}</button>
         : (r.account?.company || r.contact.company || blank)),
+    },
+    {
+      key: 'deal', label: 'Biggest Deal', defaultWidth: 140,
+      headerTitle: 'The biggest service still open on the account, first-year fee, priced off its Scale figures through the Services Pricing rate card. Shown as the middle of its range; hover a figure for the range and the service. The same deal as Biggest Deal on the company card.',
+      getSortValue: r => (r.deal ? dealMid(r.deal) : null),
+      getFilterValue: r => (r.deal ? formatMoney(dealMid(r.deal)) : ''),
+      exportValue: r => (r.deal ? Math.round(dealMid(r.deal)) : ''),
+      render: r => (r.deal
+        ? (
+          <span
+            style={{ display: 'block', textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
+            title={`${r.deal.name}${r.deal.adds.length ? ` (with ${r.deal.adds.join(', ')})` : ''}: ${formatMoneyRange(r.deal.fee, r.deal.feeHigh)}`}
+          >{formatMoney(dealMid(r.deal))}</span>
+        )
+        : <span title="Nothing still open on this account can be priced" style={{ color: '#CBD5E1' }}>-</span>),
+    },
+    {
+      key: 'dealService', label: 'Biggest Deal Service', defaultWidth: 190,
+      headerTitle: 'The service that biggest deal is for, plus how many services its Auto-add cell sells with it.',
+      getSortValue: r => (r.deal?.name ? r.deal.name.toLowerCase() : null),
+      getFilterValue: r => r.deal?.name || '',
+      exportValue: r => (r.deal ? [r.deal.name, ...r.deal.adds].join(', ') : ''),
+      render: r => (r.deal ? (
+        <span style={{ color: '#475569' }} title={r.deal.adds.length ? `Sold with ${r.deal.adds.join(', ')}` : undefined}>
+          {r.deal.name}
+          {r.deal.adds.length > 0 && <span style={{ color: '#94A3B8', fontSize: '0.68rem' }}> +{r.deal.adds.length} with it</span>}
+        </span>
+      ) : blank),
     },
     {
       key: 'bfoCompanyName', label: 'BFO Company Name', defaultWidth: 200,
@@ -166,6 +211,8 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
             columns={columns}
             rows={rows}
             alwaysVisible={['name']}
+            // Biggest deals first; rows with no priced deal sort to the end.
+            defaultSort={{ key: 'deal', direction: 'desc' }}
             defaultHidden={['company', 'status']}
             emptyMessage={windowDays == null ? 'Every decision maker at your accounts has had some activity.' : `Every decision maker at your accounts has had activity in the last ${windowDays} days.`}
             settings={settings}
