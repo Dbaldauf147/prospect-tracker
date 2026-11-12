@@ -55,6 +55,7 @@ const GROUPS = [
       'agents-ai-prompt-marketing-leads',
       'agents-ai-prompt-marketing-lead-status-update',
       'agents-ai-prompt-duplicate-leads',
+      'agents-ai-prompt-bfo-history',
       'agents-bfo-overrides',
       'agents-excluded-recipients',
       'agents-ignored-emails',

@@ -762,7 +762,7 @@ function App() {
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'agents' ? (
-            <AgentsView prospects={prospects} settings={settings} updateProspect={updateProspect} updateSettings={updateSettings} />
+            <AgentsView prospects={prospects} settings={settings} updateProspect={updateProspect} updateSettings={updateSettings} cdmName={cdmName} onSelectProspect={handleSelect} />
           ) : view === 'pe' ? (
             <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} metInPersonMap={settings.contactMetInPerson || {}} onUpdateProspect={updateProspect} onAddProspect={addProspect} settings={settings} updateSettings={updateSettings} cdmName={cdmName} />
           ) : view === 'contacts' ? (
