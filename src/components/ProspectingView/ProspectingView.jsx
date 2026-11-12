@@ -51,6 +51,7 @@ import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQue
 import { ProspectingHistory } from './ProspectingHistory';
 import { ProspectingCompanies } from './ProspectingCompanies';
 import { ProspectingTiered } from './ProspectingTiered';
+import { ProspectingDmsNoActivity } from './ProspectingDmsNoActivity';
 import { ProspectingLogic } from './ProspectingLogic';
 
 // The contact popup, loaded when one is actually opened. It lives in
@@ -114,6 +115,7 @@ const SUBTABS = [
   { key: 'prospects', label: 'Prospects' },
   { key: 'pcs', label: 'PCs' },
   { key: 'tiered', label: 'Tiered Activity' },
+  { key: 'dmsNoActivity', label: 'DMs Without Activity' },
   { key: 'logic', label: 'Prospecting Logic' },
 ];
 function readSavedSubtab() {
@@ -1577,6 +1579,16 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
         <ProspectingHistory today={today} maxWidth={PAGE_MAX} prospects={prospects} settings={settings} cdmName={cdmName} />
       ) : subtab === 'logic' ? (
         <ProspectingLogic steps={steps} settings={settings} updateSettings={updateSettings} canEdit={canEdit} maxWidth={PAGE_MAX} />
+      ) : subtab === 'dmsNoActivity' ? (
+        <ProspectingDmsNoActivity
+          prospects={prospects}
+          settings={settings}
+          updateSettings={updateSettings}
+          cdmName={cdmName}
+          onSelectProspect={onSelectProspect}
+          onOpenContact={openContact}
+          maxWidth={PAGE_MAX}
+        />
       ) : subtab === 'tiered' ? (
         <ProspectingTiered
           prospects={prospects}
