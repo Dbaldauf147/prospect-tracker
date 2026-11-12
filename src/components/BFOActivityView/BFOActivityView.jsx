@@ -16,6 +16,7 @@ import { parseTSV, compareValues, cleanHeader } from '../../utils/tsvTable';
 import { LastUpdatedLine } from './LastUpdatedLine';
 import { useAuth } from '../../contexts/AuthContext';
 import { PasteTableView } from './PasteTableView';
+import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
 import {
   autoDetectLeadMapping, leadRowsFromTable, planLeadImport, summariseLeadNames,
 } from '../../utils/marketingLeadsImport';
@@ -364,7 +365,7 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
     return missing;
   }, [data, oppNameKeys]);
 
-  // Map of normalized company name → that company's BFO Company Name,
+  // Map of normalized company name → that company's BFO Company Names,
   // sourced from the Table View company records (prospects). Lets us
   // match a BFO Activity row to Opps 2 opps on the shared BFO Company
   // Name rather than relying on the raw Account text lining up.
@@ -372,8 +373,8 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
     const map = new Map();
     for (const p of (prospects || [])) {
       const key = normalizeCompany(p?.company || '');
-      const bfo = String(p?.bfoCompanyName || '').trim();
-      if (key && bfo) map.set(key, bfo);
+      const names = bfoCompanyNamesOf(p);
+      if (key && names.length) map.set(key, names);
     }
     return map;
   }, [prospects]);
@@ -406,8 +407,7 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
       const acctKey = normalizeCompany(r.Account || '');
       add(acctKey, r);
       add(normalizeCompany(r['BFO Company Name'] || ''), r);
-      const bfo = bfoCompanyByAccount.get(acctKey);
-      if (bfo) add(normalizeCompany(bfo), r);
+      for (const bfo of bfoCompanyByAccount.get(acctKey) || []) add(normalizeCompany(bfo), r);
     }
     return map;
   }, [opps, bfoCompanyByAccount]);

@@ -17,6 +17,7 @@
 // leaves those out of the prompt and the Issues tab reports them.
 import { normalizeCompany } from './companyNorm.js';
 import { detectBfoUrl } from './closeNotSoldOpps.js';
+import { bfoCompanyNamesOf } from './bfoCompanyNames.js';
 
 const QUALIFYING_OPPS_STAGES = new Set(['contracting', 'agreement sent']);
 const BLANK_SENTINELS = new Set(['', '-', '#n/a', 'n/a']);
@@ -51,7 +52,7 @@ export function computeAppDescriptionOpps({ bfoActivity = null, oppsCache = null
   };
   for (const p of (prospects || [])) {
     addProspect(normalizeCompany(p?.company || ''), p);
-    addProspect(normalizeCompany(p?.bfoCompanyName || ''), p);
+    for (const n of bfoCompanyNamesOf(p)) addProspect(normalizeCompany(n), p);
   }
   const rows = [];
   const seen = new Set();

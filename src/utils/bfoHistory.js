@@ -1,3 +1,5 @@
+import { bfoCompanyNamesOf } from './bfoCompanyNames.js';
+
 // BFO History: the opportunities BFO (Salesforce) holds against an account,
 // transcribed by the Agents tab's "BFO History" task from the account's
 // Oppty 360 tab ("Opportunities of this Account" set to "All of the above",
@@ -100,7 +102,9 @@ export function bfoHistoryTargets(entries, accountOf, nowMs = Date.now()) {
     byId.set(p.id, {
       prospect: p,
       company: String(p.company || '').trim(),
-      bfoCompanyName: String(p.bfoCompanyName || '').trim(),
+      // Every BFO name the company has, "; "-separated: the prompt tells
+      // the agent to search each.
+      bfoCompanyName: bfoCompanyNamesOf(p).join('; '),
       dmCount: 1,
       fresh: bfoHistoryIsFresh(p.bfoHistory, nowMs),
       pastedAt: p.bfoHistory?.pastedAt || '',

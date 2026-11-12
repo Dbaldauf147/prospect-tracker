@@ -85,7 +85,7 @@ export function useFilters(prospects, settings, updateSettings) {
         const text = [
           p.company, p.cdm, p.status, p.type, p.geography, p.publicPrivate,
           p.tier, p.hqRegion, p.notes, p.website, p.rank,
-          p.bfoCompanyName, p.zoomCompanyName, p.emailDomain,
+          p.bfoCompanyName, p.bfoCompanyAltNames, p.zoomCompanyName, p.emailDomain,
           p.contactTypes, p.salesperson, p.peOrRe, p.tierList,
           ...(p.assetTypes || []),
           ...(p.frameworks || []),

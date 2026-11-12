@@ -39,6 +39,7 @@ import {
 import { useAgentsRunDue } from '../../hooks/useAgentsRunDue';
 import { useDmsNoActivity, readDmsWindow, dmsWindowLabel } from '../../hooks/useDmsNoActivity';
 import { bfoHistoryTargets, BFO_HISTORY_HEADER, BFO_HISTORY_FRESH_DAYS } from '../../utils/bfoHistory';
+import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
 import { DataTable } from '../common/DataTable';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
@@ -138,7 +139,7 @@ const DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY = `1.  When you are on this page cli
 // BFO History: walk the DMs Without Activity companies through BFO's
 // Oppty 360 tab and paste each one's full opportunity list into the
 // company popup's BFO History tab (utils/bfoHistory reads the paste).
-const DEFAULT_AI_PROMPT_BFO_HISTORY = `1.  Work through the companies listed below one at a time. The BFO Company Name column is the name to search for in BFO.
+const DEFAULT_AI_PROMPT_BFO_HISTORY = `1.  Work through the companies listed below one at a time. The BFO Company Name column is the name to search for in BFO. When it lists more than one name separated by "; ", the company has several BFO accounts: do steps 2 to 8 for each of them and put all of their rows in the one table in step 9.
 2.  In BFO (https://se.lightning.force.com/), search for the BFO Company Name in the search bar at the top and open the matching Account record (not a contact or an opportunity). If there is no matching account, note the company as not found and move on to the next one.
 3.  On the account page, click the Oppty 360 tab.
 4.  Click the "Opportunities of this Account" drop-down at the top left of the opportunities panel and choose "All of the above".
@@ -3358,8 +3359,8 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     const map = new Map();
     for (const p of (prospects || [])) {
       const key = canonCompany(p?.company || '');
-      const bfo = String(p?.bfoCompanyName || '').trim();
-      if (key && bfo) map.set(key, bfo);
+      const names = bfoCompanyNamesOf(p);
+      if (key && names.length) map.set(key, names);
     }
     return map;
   }, [prospects]);
@@ -3382,8 +3383,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       const acctKey = canonCompany(r.Account || '');
       add(acctKey, r);
       add(canonCompany(r['BFO Company Name'] || ''), r);
-      const bfo = bfoCompanyByAccountCanon.get(acctKey);
-      if (bfo) add(canonCompany(bfo), r);
+      for (const bfo of bfoCompanyByAccountCanon.get(acctKey) || []) add(canonCompany(bfo), r);
     }
     return map;
   }, [oppsCache, bfoCompanyByAccountCanon]);
