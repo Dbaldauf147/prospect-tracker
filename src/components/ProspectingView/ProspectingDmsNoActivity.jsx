@@ -25,6 +25,14 @@ const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 const chipStyle = (active) => ({ padding: '0.2rem 0.65rem', borderRadius: 999, border: `1px solid ${active ? '#0A66C2' : '#E2E8F0'}`, background: active ? '#EFF6FF' : '#fff', color: active ? '#0A66C2' : '#475569', fontSize: '0.74rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' });
 const linkBtn = { background: 'none', border: 'none', padding: 0, font: 'inherit', color: '#2563EB', cursor: 'pointer', textAlign: 'left' };
 const nameOf = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
+// The contact's HubSpot City, State and Country. The country is left off for
+// the US, where it's nearly everyone and only lengthens the cell.
+const US = new Set(['united states', 'united states of america', 'usa', 'us']);
+const locationOf = (c) => {
+  const country = String(c?.country || '').trim();
+  return [c?.city, c?.state, US.has(country.toLowerCase()) ? '' : country]
+    .map(v => String(v || '').trim()).filter(Boolean).join(', ');
+};
 const linkedinOf = (c) => c?.hs_linkedin_url || c?.linkedin_url || c?.hs_linkedinid || '';
 // Blank, non-numeric or missing reads as no figure (null), so it sorts last.
 const sitesOf = (a) => {
@@ -132,6 +140,13 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       render: r => (r.account && onSelectProspect
         ? <button type="button" style={{ ...linkBtn, fontWeight: 600 }} title="Open the company" onClick={() => onSelectProspect(r.account)}>{r.account.company}</button>
         : (r.account?.company || r.contact.company || blank)),
+    },
+    {
+      key: 'location', label: 'Location', defaultWidth: 170,
+      headerTitle: 'Where the contact is, from their HubSpot City, State and Country (the country is left off for the US).',
+      getSortValue: r => locationOf(r.contact).toLowerCase() || null,
+      getFilterValue: r => locationOf(r.contact), exportValue: r => locationOf(r.contact),
+      render: r => locationOf(r.contact) || blank,
     },
     {
       key: 'deal', label: 'Biggest Deal', defaultWidth: 140,
