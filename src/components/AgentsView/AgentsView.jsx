@@ -1841,6 +1841,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [duplicateLeadsPrompt, setDuplicateLeadsPrompt] = useState(readDuplicateLeadsPrompt);
   const [bfoHistoryPrompt, setBfoHistoryPrompt] = useState(readBfoHistoryPrompt);
   const [bfoHistoryCopyFlash, setBfoHistoryCopyFlash] = useState('');
+  // The BFO History table leaves out companies whose history was pasted in
+  // the last BFO_HISTORY_FRESH_DAYS days (they're done); this brings them
+  // back. Per session, not saved.
+  const [showBfoHistoryPasted, setShowBfoHistoryPasted] = useState(false);
   // BFO History: the companies on Prospecting > DMs Without Activity (the
   // window chip last picked there), one row per company. Companies with no
   // BFO Company Name, or whose history was pasted in the last
@@ -5058,6 +5062,9 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
         const markNoBfo = (r, on) => updateProspect && r.prospect?.id && updateProspect(r.prospect.id, { noBfoCompanyName: on });
         const markBtn = { marginLeft: 6, padding: '0 0.4rem', borderRadius: 999, border: '1px solid #E2E8F0', background: '#fff', color: '#64748B', fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.6 };
         const freshCount = bfoHistoryRows.filter(r => r.bfoCompanyName && r.fresh).length;
+        // Pasted recently: done for now, so off the table unless asked for.
+        const tableRows = (showBfoHistoryPasted ? bfoHistoryRows : bfoHistoryRows.filter(r => !(r.bfoCompanyName && r.fresh)))
+          .map(r => ({ ...r, id: r.prospect.id }));
         const columns = [
           {
             key: 'company', label: 'Company', defaultWidth: 220,
@@ -5123,7 +5130,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               <span className={styles.sectionCount}>{bfoHistoryReady.length}</span>
             </h2>
             <p className={styles.subnote}>
-              The companies on Prospecting &rsaquo; DMs Without Activity ({dmsWindowLabel(dmsWindow)}), searched one by one in BFO by their BFO Company Name. The assistant opens each account&rsquo;s Oppty 360 tab, sets Opportunities of this Account to All of the above, transcribes every page of both the Open and the Closed subtabs, and pastes the table into the company pop-up&rsquo;s BFO History tab. Companies with no BFO Company Name (set it on the company&rsquo;s Company tab), or with a BFO History pasted in the last {BFO_HISTORY_FRESH_DAYS} days, are left out of the prompt.
+              The companies on Prospecting &rsaquo; DMs Without Activity ({dmsWindowLabel(dmsWindow)}), searched one by one in BFO by their BFO Company Name. The assistant opens each account&rsquo;s Oppty 360 tab, sets Opportunities of this Account to All of the above, transcribes every page of both the Open and the Closed subtabs, and pastes the table into the company pop-up&rsquo;s BFO History tab. Companies with no BFO Company Name (set it on the company&rsquo;s Company tab), or with a BFO History pasted in the last {BFO_HISTORY_FRESH_DAYS} days, are left out of the prompt; the recently pasted ones are hidden from the table too.
             </p>
             {revealedPrompts.bfoHistory && (
               <textarea
@@ -5146,20 +5153,26 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
             </div>
             {bfoHistoryRows.length > 0 && (
               <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
-                {bfoHistoryReady.length} in the prompt · {missingCount} missing a BFO Company Name{noBfoCount ? ` · ${noBfoCount} not in BFO` : ''} · {freshCount} pasted in the last {BFO_HISTORY_FRESH_DAYS} days.
+                {bfoHistoryReady.length} in the prompt · {missingCount} missing a BFO Company Name{noBfoCount ? ` · ${noBfoCount} not in BFO` : ''} · {freshCount} pasted in the last {BFO_HISTORY_FRESH_DAYS} days{freshCount > 0 && !showBfoHistoryPasted ? ', not shown' : ''}.
+                {freshCount > 0 && (
+                  <label style={{ marginLeft: 10, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: '#475569' }}>
+                    <input type="checkbox" checked={showBfoHistoryPasted} onChange={(e) => setShowBfoHistoryPasted(e.target.checked)} />
+                    Show pasted ({freshCount})
+                  </label>
+                )}
               </div>
             )}
             {!dmsLists ? (
               <div className={styles.subnote}>Loading the DMs Without Activity list...</div>
             ) : (
-              <div style={{ marginTop: '0.5rem', height: Math.min(480, 80 + bfoHistoryRows.length * 34), minHeight: 160, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+              <div style={{ marginTop: '0.5rem', height: Math.min(480, 120 + tableRows.length * 36), minHeight: 160, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
                 <DataTable
                   tableId="agents-bfo-history"
                   exportFileName="BFO History Companies"
                   columns={columns}
-                  rows={bfoHistoryRows.map(r => ({ ...r, id: r.prospect.id }))}
+                  rows={tableRows}
                   alwaysVisible={['company']}
-                  emptyMessage="No companies on the DMs Without Activity list."
+                  emptyMessage={bfoHistoryRows.length ? `Every company has a BFO History pasted in the last ${BFO_HISTORY_FRESH_DAYS} days. Tick "Show pasted" to see them.` : 'No companies on the DMs Without Activity list.'}
                   settings={settings}
                   updateSettings={updateSettings}
                 />
