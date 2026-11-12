@@ -57,6 +57,8 @@ function describe(summary) {
   if (summary.prospects) bits.push(`${summary.prospects} companies`);
   if (summary.opps2Records) bits.push(`${summary.opps2Records} opps`);
   if (summary.contractLanguage) bits.push(`${summary.contractLanguage} contract-language services`);
+  if (summary.hubspotMappingCompanies || summary.hubspotMappingLinks) bits.push(`Hubspot mapping (${summary.hubspotMappingLinks || 0} links)`);
+  if (summary.hubspotActivities) bits.push(`${summary.hubspotActivities} Hubspot activities`);
   if (summary.hasSettings) bits.push('settings');
   return bits.join(', ') || 'nothing';
 }
