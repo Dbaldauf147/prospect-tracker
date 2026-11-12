@@ -29,6 +29,7 @@ import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, hubsp
 import { HubspotAgents } from './HubspotAgents';
 import { HubspotActivityTab } from './HubspotActivityTab';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
+import { HubspotMappingBackup } from './HubspotMappingBackup';
 import { syncHubspotExportMail, lastMappingMailCheck, hasOutlookConnection, saveOutlookTokens, scheduledMailCheck, checkGmailNow, MAPPING_MAIL_EVENT } from '../../utils/hubspotExportMailSync';
 import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName, buildHubspotCreateRows, buildHubspotCreateWorkbook, hubspotCreateFileName } from '../../utils/hubspotImportFile';
 
@@ -204,6 +205,14 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     setData(next);
     try { await saveHubspotMapping(next); }
     catch (err) { setError(`Couldn't save: ${err.message}`); }
+  };
+
+  // The backup bar's restore: the merged stores it planned
+  // (utils/hubspotMappingBackup), saved here. A failed save throws, so the
+  // bar says the restore didn't happen rather than that it did.
+  const restoreFromBackup = async (plan) => {
+    if (plan.mapping) { await saveHubspotMapping(plan.mapping); setData(plan.mapping); }
+    if (plan.activity) { await saveHubspotActivity(plan.activity); setActivity(plan.activity); }
   };
 
   // A file and a paste land the same way: the rows replace the export,
@@ -781,6 +790,9 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       ))}
     </div>
   );
+  const backupBar = (
+    <HubspotMappingBackup mapping={data} activity={activity} loaded={loaded && activityLoaded} onRestored={restoreFromBackup} />
+  );
   const closeUnmapped = useCallback(() => setShowUnmapped(false), []);
   const closeOthers = useCallback(() => setShowOthers(false), []);
 
@@ -788,6 +800,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   if (subtab === 'activity' || subtab === 'others') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+        {backupBar}
         {subtabBar}
         {activityError && <div style={{ color: '#B91C1C', fontSize: '0.78rem' }}>{activityError}</div>}
         <HubspotActivityTab
@@ -811,6 +824,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   if (subtab === 'agents') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+        {backupBar}
         {subtabBar}
         <HubspotAgents
           agents={agents}
@@ -826,6 +840,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   }
   return (
     <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+      {backupBar}
       {subtabBar}
       {mapping.length > 0 && mappedPct != null && (
         <button
