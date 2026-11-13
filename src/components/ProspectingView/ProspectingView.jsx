@@ -25,7 +25,7 @@
 // decision maker mapped yet — so the calls to make are on the page rather
 // than a tab away.
 
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { setStepCaughtUp, todayISO } from '../../utils/prospectingStatus';
 import {
@@ -39,7 +39,8 @@ import {
   STEP_VIEW_OPTIONS,
   viewLabelFor,
 } from '../../utils/prospectingPlaybook';
-import { ROSTER_CATEGORIES } from '../../utils/contactRosters';
+import { ROSTER_CATEGORIES, rescoreTagCoverage } from '../../utils/contactRosters';
+import { TAG_OPTIONS, scoredTagOptions, tagKey } from '../../utils/contactTagReview';
 import { keyContactsNotMet } from '../../utils/metInPerson';
 import { makeOwnedContactGate } from '../../utils/ladderOwnership';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
@@ -294,10 +295,131 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAu
   );
 }
 
-function TagCoverageBar({ coverage, onNavigate, missing = [], onOpenContact, onAudit }) {
+// The tag questions the Tagged row can be narrowed to: the scored ones, the
+// same list every percentage on the contacts pages is taken over.
+const FOCUSABLE_TAGS = scoredTagOptions(TAG_OPTIONS);
+
+// The saved tag choice, cleaned: only tags still scored, in the picker's
+// order, so a tag later retired or excluded drops out rather than leaving
+// a percentage over a question nobody is asked any more.
+function readTagFocus(raw) {
+  if (!Array.isArray(raw) || !raw.length) return [];
+  const want = new Set(raw.map(tagKey));
+  return FOCUSABLE_TAGS.filter(t => want.has(tagKey(t)));
+}
+
+// The "which tags?" picker on the Tagged row. Ticking tags narrows every
+// chip's percentage to just those questions; none ticked means all of them.
+function TagFocusPicker({ selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDown(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    function onKey(e) { if (e.key === 'Escape') setOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  const chosen = new Set(selected.map(tagKey));
+  const active = selected.length > 0;
+  function toggle(tag) {
+    const k = tagKey(tag);
+    const next = chosen.has(k) ? selected.filter(t => tagKey(t) !== k) : [...selected, tag];
+    onChange(FOCUSABLE_TAGS.filter(t => next.some(n => tagKey(n) === tagKey(t))));
+  }
+  const label = !active
+    ? 'All tags'
+    : selected.length === 1 ? selected[0] : `${selected.length} tags`;
+  const linkBtn = {
+    padding: 0, border: 0, background: 'none', font: 'inherit', cursor: 'pointer',
+    color: '#2563EB', fontSize: '0.68rem', fontWeight: 600,
+  };
+  return (
+    <span ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        data-tag-focus
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        title={active
+          ? `Percentages count only these tag questions: ${selected.join(', ')}. Click to change.`
+          : 'Percentages count every tag question. Click to pick the tags to measure completion across.'}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          padding: '1px 8px', borderRadius: 999, cursor: 'pointer',
+          background: active ? '#EFF6FF' : '#fff',
+          border: `1px solid ${active ? '#93C5FD' : '#CBD5E1'}`,
+          color: active ? '#1D4ED8' : '#475569',
+          fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit',
+          maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}
+      >
+        {label} <span aria-hidden style={{ fontSize: '0.6rem' }}>▾</span>
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Choose tags"
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 30,
+            minWidth: 250, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(15,23,42,0.14)', padding: '6px 0',
+          }}
+        >
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+            padding: '2px 10px 6px', borderBottom: '1px solid #F1F5F9',
+          }}>
+            <span style={{ fontSize: '0.66rem', fontWeight: 700, color: '#64748B' }}>
+              Measure completion across
+            </span>
+            <span style={{ display: 'inline-flex', gap: 8 }}>
+              <button type="button" style={linkBtn} onClick={() => onChange([...FOCUSABLE_TAGS])}>All</button>
+              <button type="button" style={linkBtn} onClick={() => onChange([])} disabled={!active}>Reset</button>
+            </span>
+          </div>
+          <div style={{ maxHeight: 280, overflowY: 'auto', paddingTop: 4 }}>
+            {FOCUSABLE_TAGS.map(tag => (
+              <label
+                key={tag}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 7, padding: '3px 10px',
+                  fontSize: '0.72rem', color: '#1E293B', cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={chosen.has(tagKey(tag))}
+                  onChange={() => toggle(tag)}
+                  style={{ margin: 0 }}
+                />
+                {tag}
+              </label>
+            ))}
+          </div>
+          <div style={{ padding: '6px 10px 2px', borderTop: '1px solid #F1F5F9', fontSize: '0.64rem', color: '#94A3B8' }}>
+            None ticked counts every tag.
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOpenContact, onAudit, tagFocus = [], onTagFocus = null, tagReviewMap = null }) {
   // Which chip's contacts are listed underneath, if any. Local to the row:
   // it's a look, not a setting, and it should be closed again next visit.
   const [openKey, setOpenKey] = useState(null);
+  // Narrowed to the picked tags when there are any. The chips, their lists
+  // and each contact's x/y all read this one coverage, so they agree.
+  const coverage = useMemo(
+    () => rescoreTagCoverage(fullCoverage, tagFocus, tagReviewMap || {}),
+    [fullCoverage, tagFocus, tagReviewMap],
+  );
   const cells = [
     { key: 'all', label: 'All', bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
     ...ROSTER_CATEGORIES,
@@ -311,12 +433,13 @@ function TagCoverageBar({ coverage, onNavigate, missing = [], onOpenContact, onA
       <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
         Tagged:
       </span>
+      {onTagFocus && <TagFocusPicker selected={tagFocus} onChange={onTagFocus} />}
       {cells.map(({ key, label, bg, border, color }) => {
         const { pct, contacts } = coverage[key];
         const empty = pct == null;
         const title = empty
           ? `No contacts on the ${label} roster yet`
-          : `${label}: ${pct}% of the tag questions across ${contacts} contact${contacts === 1 ? '' : 's'} have an answer - the same figure the All Contacts page's Tagged row shows for this group. Click to list them.`;
+          : `${label}: ${pct}% of the ${tagFocus.length ? `${tagFocus.join(', ')} tag question${tagFocus.length === 1 ? '' : 's'}` : 'tag questions'} across ${contacts} contact${contacts === 1 ? '' : 's'} have an answer${tagFocus.length ? '' : " - the same figure the All Contacts page's Tagged row shows for this group"}. Click to list them.`;
         const body = (
           <>
             <span style={{ fontWeight: 700 }}>{label}</span>
@@ -1309,6 +1432,12 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // recomputed here.
   const stateByKey = ladder?.stateByKey || {};
   const today = ladder?.today || todayISO();
+  // The tags the Tagged row's percentages are narrowed to. Saved and synced
+  // like the rest of the page's settings, so the choice follows Dan around.
+  const tagFocus = useMemo(() => readTagFocus(settings?.prospectingTagFocus), [settings?.prospectingTagFocus]);
+  const setTagFocus = useCallback((tags) => {
+    updateSettings?.({ prospectingTagFocus: tags });
+  }, [updateSettings]);
   // The PE firms with a live relationship and no opportunity on them,
   // listed under their step. Comes from the ladder so the rows here and the
   // count beside them are one list.
@@ -1763,6 +1892,9 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                     onNavigate={onNavigate ? () => onNavigate('contacts') : null}
                     missing={tagDebt || []}
                     onOpenContact={openContact}
+                    tagFocus={tagFocus}
+                    onTagFocus={updateSettings ? setTagFocus : null}
+                    tagReviewMap={settings?.contactTagReview || null}
                   />
                 )}
                 {/* And which writing has been started and not finished. */}

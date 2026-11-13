@@ -760,3 +760,41 @@ function finalizeCoverage(buckets, left) {
   }
   return out;
 }
+
+// The same coverage, re-scored over a chosen subset of the tag questions -
+// the Prospecting page's "which tags?" picker. Works off a coverage that
+// rosterTagCoverage already built rather than the raw contacts: every row
+// there carries its contact record, and the rosters, exclusions and company
+// overrides are already settled, so only the score changes. The tag-debt
+// count and the ladder keep reading the full set; this is a lens, not a
+// new definition of "tagged".
+//
+// `tags` empty or null hands the coverage back untouched.
+export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}) {
+  if (!coverage || !Array.isArray(tags) || !tags.length) return coverage;
+  const rescored = new Map();
+  const rowFor = (p) => {
+    if (rescored.has(p)) return rescored.get(p);
+    const review = p.id == null ? null : tagReviewMap[p.id];
+    const score = tagReviewScore(p.contact || {}, review, tags);
+    const row = { ...p, answered: score.answered, total: score.total, done: score.done };
+    rescored.set(p, row);
+    return row;
+  };
+  const buckets = {};
+  const left = { cancelling: coverage.cancelling || 0, untracked: coverage.untracked || 0 };
+  for (const [key, b] of Object.entries(coverage)) {
+    if (!b || typeof b !== 'object' || !Array.isArray(b.people)) continue;
+    const nb = { contacts: 0, answered: 0, slots: 0, done: 0, people: [] };
+    for (const p of b.people) {
+      const row = rowFor(p);
+      nb.contacts += 1;
+      nb.answered += row.answered;
+      nb.slots += row.total;
+      if (row.done) nb.done += 1;
+      nb.people.push(row);
+    }
+    buckets[key] = nb;
+  }
+  return finalizeCoverage(buckets, left);
+}
