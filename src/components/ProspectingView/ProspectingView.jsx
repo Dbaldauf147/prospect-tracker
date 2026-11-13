@@ -39,6 +39,7 @@ import {
   STEP_VIEW_OPTIONS,
   viewLabelFor,
 } from '../../utils/prospectingPlaybook';
+import { DataTable } from '../common/DataTable';
 import { ROSTER_CATEGORIES, rescoreTagCoverage } from '../../utils/contactRosters';
 import { TAG_OPTIONS, scoredTagOptions, tagKey } from '../../utils/contactTagReview';
 import { keyContactsNotMet } from '../../utils/metInPerson';
@@ -410,114 +411,160 @@ function TagFocusPicker({ selected, onChange }) {
   );
 }
 
-function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOpenContact, onAudit, tagFocus = [], onTagFocus = null, tagReviewMap = null }) {
-  // Which chip's contacts are listed underneath, if any. Local to the row:
-  // it's a look, not a setting, and it should be closed again next visit.
-  const [openKey, setOpenKey] = useState(null);
-  // Narrowed to the picked tags when there are any. The chips, their lists
-  // and each contact's x/y all read this one coverage, so they agree.
-  const coverage = useMemo(
-    () => rescoreTagCoverage(fullCoverage, tagFocus, tagReviewMap || {}),
-    [fullCoverage, tagFocus, tagReviewMap],
+// The Tagged table's id under settings.tablePrefs: widths, order, hidden
+// and starred columns, and presets, synced like every other table.
+const TAG_TABLE_ID = 'prospecting-tag-coverage';
+const TAG_TOTAL_ROW = '__total__';
+// The debt pill's list: a roster over every tag, whatever the picker says.
+const TAG_DEBT_ROW = '__debt__';
+
+// One percentage cell: tinted by how far along it is, and a button that
+// opens the contacts behind it when there are any.
+function TagPctCell({ bucket, roster, onOpen, isOpen, tagLabel }) {
+  const pct = bucket?.pct;
+  if (pct == null) return <span style={{ color: '#94A3B8' }}>-</span>;
+  const tone = pct >= 100
+    ? { bg: '#DCFCE7', color: '#166534' }
+    : pct >= 50 ? { bg: '#FEF3C7', color: '#92400E' } : { bg: '#FEE2E2', color: '#991B1B' };
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-expanded={isOpen}
+      title={`${roster.label}, ${tagLabel}: ${pct}% answered across ${bucket.contacts} contact${bucket.contacts === 1 ? '' : 's'} (${bucket.done} fully answered). Click to list them.`}
+      style={{
+        minWidth: 46, padding: '1px 8px', borderRadius: 999, cursor: 'pointer',
+        background: tone.bg, color: tone.color, fontFamily: 'inherit',
+        border: `1px solid ${isOpen ? roster.border : 'transparent'}`,
+        boxShadow: isOpen ? `0 0 0 2px ${roster.border}` : 'none',
+        fontSize: '0.72rem', fontWeight: 800, fontVariantNumeric: 'tabular-nums',
+      }}
+    >{pct}%</button>
   );
-  const cells = [
+}
+
+function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOpenContact, onAudit, tagFocus = [], onTagFocus = null, tagReviewMap = null, settings = null, updateSettings = null }) {
+  // Which cell's contacts are listed underneath, if any: { roster, row }.
+  // Local to the step: it's a look, not a setting.
+  const [open, setOpen] = useState(null);
+  const rosters = useMemo(() => [
     { key: 'all', label: 'All', bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
     ...ROSTER_CATEGORIES,
-  ];
-  // Nothing on any roster — the cache is loaded but empty. A row of "—"
-  // would just be noise. Checked after the hook above, not before it, so
-  // the hook order stays stable across a coverage that arrives late.
-  if (!coverage || !coverage.all.contacts) return null;
+  ], []);
+  // One row per tag question (the picked ones, or all of them), each the
+  // coverage re-scored over that single tag, then a total row over the whole
+  // set - the figure the chips used to show.
+  const rows = useMemo(() => {
+    if (!fullCoverage || !fullCoverage.all?.contacts) return [];
+    const map = tagReviewMap || {};
+    const tags = tagFocus.length ? tagFocus : FOCUSABLE_TAGS;
+    const out = tags.map(tag => ({ id: tagKey(tag), tag, cov: rescoreTagCoverage(fullCoverage, [tag], map) }));
+    out.push({
+      id: TAG_TOTAL_ROW,
+      tag: tagFocus.length ? `Total (${tagFocus.length} tag${tagFocus.length === 1 ? '' : 's'})` : 'Total (all tags)',
+      cov: rescoreTagCoverage(fullCoverage, tagFocus, map),
+      total: true,
+    });
+    return out;
+  }, [fullCoverage, tagFocus, tagReviewMap]);
+  const columns = useMemo(() => [
+    {
+      key: 'tag', label: 'Tag', defaultWidth: 190,
+      getFilterValue: r => r.tag,
+      getSortValue: r => r.tag,
+      render: r => <span style={{ fontWeight: r.total ? 800 : 600, color: '#1E293B' }}>{r.tag}</span>,
+    },
+    ...rosters.map(roster => ({
+      key: roster.key,
+      label: roster.label,
+      defaultWidth: roster.key === 'keyProspect' ? 124 : 84,
+      getSortValue: r => r.cov[roster.key]?.pct ?? -1,
+      getFilterValue: r => (r.cov[roster.key]?.pct == null ? '' : `${r.cov[roster.key].pct}%`),
+      exportValue: r => (r.cov[roster.key]?.pct == null ? '' : `${r.cov[roster.key].pct}%`),
+      render: r => (
+        <TagPctCell
+          bucket={r.cov[roster.key]}
+          roster={roster}
+          tagLabel={r.total ? (tagFocus.length ? tagFocus.join(', ') : 'all tags') : r.tag}
+          isOpen={open?.roster === roster.key && open?.row === r.id}
+          onOpen={() => setOpen(o => (o?.roster === roster.key && o?.row === r.id ? null : { roster: roster.key, row: r.id }))}
+        />
+      ),
+    })),
+  ], [rosters, open, tagFocus]);
+  // Nothing on any roster - the cache is loaded but empty. Checked after
+  // the hooks above so their order stays stable.
+  if (!rows.length) return null;
+  const openRow = open && (open.row === TAG_DEBT_ROW
+    ? { id: TAG_DEBT_ROW, tag: 'all tags', cov: fullCoverage, debt: true }
+    : rows.find(r => r.id === open.row));
+  const openRoster = open && rosters.find(c => c.key === open.roster);
   return (
-    <div style={{ marginTop: 7, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-      <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
-        Tagged:
-      </span>
-      {onTagFocus && <TagFocusPicker selected={tagFocus} onChange={onTagFocus} />}
-      {cells.map(({ key, label, bg, border, color }) => {
-        const { pct, contacts } = coverage[key];
-        const empty = pct == null;
-        const title = empty
-          ? `No contacts on the ${label} roster yet`
-          : `${label}: ${pct}% of the ${tagFocus.length ? `${tagFocus.join(', ')} tag question${tagFocus.length === 1 ? '' : 's'}` : 'tag questions'} across ${contacts} contact${contacts === 1 ? '' : 's'} have an answer${tagFocus.length ? '' : " - the same figure the All Contacts page's Tagged row shows for this group"}. Click to list them.`;
-        const body = (
-          <>
-            <span style={{ fontWeight: 700 }}>{label}</span>
-            <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
-              {empty ? '-' : `${pct}%`}
-            </span>
-          </>
-        );
-        const style = {
-          display: 'inline-flex', alignItems: 'center', gap: 4,
-          padding: '1px 8px', borderRadius: 999,
-          background: empty ? '#F8FAFC' : bg,
-          border: `1px solid ${empty ? '#E2E8F0' : border}`,
-          color: empty ? '#94A3B8' : color,
-          fontSize: '0.68rem', fontFamily: 'inherit',
-        };
-        // An empty roster has no list to open, so it stays a plain chip.
-        if (empty) return <span key={key} style={style} title={title}>{body}</span>;
-        const isOpen = openKey === key;
-        return (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setOpenKey(isOpen ? null : key)}
-            title={title}
-            aria-expanded={isOpen}
-            style={{
-              ...style,
-              cursor: 'pointer',
-              boxShadow: isOpen ? `0 0 0 2px ${border}` : 'none',
-            }}
-          >
-            {body}
-          </button>
-        );
-      })}
-      {/* How many rosters still have tagging to finish, one apiece. Shown
-          whatever the rest of the ladder is doing: marking every step caught
-          up turns this page green without touching a single tag, so the one
-          number nothing else surfaces is exactly the one that shouldn't go
-          quiet when the page stops saying anything else. */}
-      {missing.length > 0 && (() => {
-        // The pill counts groups, so clicking it goes to a group: the roster
-        // behind it, or the first of them when several are short. A missing
-        // roster always has contacts — the debt rule only counts a roster
-        // whose percentage exists — so the list is never opened empty.
-        const target = missing[0].key;
-        const isOpen = openKey === target;
-        const which = missing.length === 1
-          ? `Click to list the ${missing[0].label} contacts, least-tagged first.`
-          : `Click to list the ${missing[0].label} contacts, least-tagged first - then the other chips for the rest.`;
-        return (
-          <button
-            data-tag-debt
-            type="button"
-            onClick={() => setOpenKey(isOpen ? null : target)}
-            aria-expanded={isOpen}
-            title={`${missing.length} contact ${missing.length === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags: ${missing.map(m => m.label).join(', ')}. Counted one per roster, however many contacts are behind it. Active is left out - it's a rolling window rather than a book to work through - and All is the union of the rest. ${which}`}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              padding: '1px 8px', borderRadius: 999,
-              background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B',
-              fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit',
-              cursor: 'pointer',
-              boxShadow: isOpen ? '0 0 0 2px #FCA5A5' : 'none',
-            }}
-          >
-            <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{missing.length}</span>
-            {missing.length === 1 ? 'group missing tags' : 'groups missing tags'}
-          </button>
-        );
-      })()}
-      {openKey && (
+    <div style={{ marginTop: 7 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
+          Tagged:
+        </span>
+        {onTagFocus && <TagFocusPicker selected={tagFocus} onChange={onTagFocus} />}
+        {/* How many rosters still have tagging to finish, one apiece. Shown
+            whatever the rest of the ladder is doing, and always over the
+            full tag set: it's the debt count, not the lens above. */}
+        {missing.length > 0 && (() => {
+          const target = missing[0].key;
+          const isOpen = open?.roster === target && open?.row === TAG_DEBT_ROW;
+          return (
+            <button
+              data-tag-debt
+              type="button"
+              onClick={() => setOpen(isOpen ? null : { roster: target, row: TAG_DEBT_ROW })}
+              aria-expanded={isOpen}
+              title={`${missing.length} contact ${missing.length === 1 ? 'roster is' : 'rosters are'} short of fully mapped tags: ${missing.map(m => m.label).join(', ')}. Counted one per roster over every tag. Active is left out - it's a rolling window rather than a book to work through - and All is the union of the rest. Click to list the ${missing[0].label} contacts, least-tagged first.`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '1px 8px', borderRadius: 999,
+                background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B',
+                fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit',
+                cursor: 'pointer',
+                boxShadow: isOpen ? '0 0 0 2px #FCA5A5' : 'none',
+              }}
+            >
+              <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{missing.length}</span>
+              {missing.length === 1 ? 'group missing tags' : 'groups missing tags'}
+            </button>
+          );
+        })()}
+      </div>
+      {/* DataTable scrolls its body inside a flex column, so the box needs
+          a height: tall enough for every tag row plus the toolbar, header
+          and filter row, capped so a long tag list scrolls instead. */}
+      <div
+        data-tag-table
+        style={{
+          maxWidth: 720, height: Math.min(520, 132 + rows.length * 33),
+          display: 'flex', flexDirection: 'column',
+          border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff',
+        }}
+      >
+        <DataTable
+          tableId={TAG_TABLE_ID}
+          exportFileName="Tag completion"
+          columns={columns}
+          rows={rows}
+          alwaysVisible={['tag']}
+          rowGroup={r => (r.total ? 1 : 0)}
+          rowStyle={r => (r.total ? { background: '#F8FAFC' } : undefined)}
+          variableRowHeight
+          emptyMessage="No tags match."
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      </div>
+      {openRow && openRoster && (
         <TagContactList
-          cell={cells.find(c => c.key === openKey)}
-          bucket={coverage[openKey]}
+          cell={{ ...openRoster, label: `${openRoster.label} - ${openRow.debt ? 'all tags' : openRow.total ? (tagFocus.length ? tagFocus.join(', ') : 'all tags') : openRow.tag}` }}
+          bucket={openRow.cov[openRoster.key]}
           onNavigate={onNavigate}
-          onClose={() => setOpenKey(null)}
+          onClose={() => setOpen(null)}
           onOpenContact={onOpenContact}
           onAudit={onAudit}
         />
@@ -1895,6 +1942,8 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                     tagFocus={tagFocus}
                     onTagFocus={updateSettings ? setTagFocus : null}
                     tagReviewMap={settings?.contactTagReview || null}
+                    settings={settings}
+                    updateSettings={updateSettings}
                   />
                 )}
                 {/* And which writing has been started and not finished. */}
