@@ -140,9 +140,11 @@ export function isCampaignFullySent(c, nowMs = Date.now()) {
  * 100% sent and the step still asking to be marked caught up. So when the
  * campaigns say the sending is finished, the step says so on its own.
  *
- * Paused campaigns are left out — a pause is the user having dealt with a
- * campaign for the next couple of days, so it isn't work owed today (and it
- * rejoins the list, and this answer, when the pause lifts). Everything else
+ * Paused and inactive campaigns are left out — a pause is the user having
+ * dealt with a campaign for the next couple of days, and an inactive one is
+ * parked (no save or refresh in 60 days, or switched off by hand), so
+ * neither is work owed today. Either rejoins the list, and this answer, as
+ * soon as it is active again. Everything else
  * short of 100% holds the step open, including a campaign with nobody in it
  * yet: it is listed under the step as work to finish, so it has to hold the
  * status open too — a step reading "all caught up" above a list of campaigns
@@ -162,7 +164,11 @@ export function campaignsAllSent(campaigns, nowMs = Date.now()) {
   for (const c of campaigns) {
     if (!c || typeof c !== 'object') continue;
     real += 1;
-    if (!isCampaignFullySent(c, nowMs) && !isCampaignPaused(c, nowMs)) return false;
+    // Only an active campaign holds the step open. Paused is the user having
+    // dealt with it for a couple of days; inactive (no save or refresh in 60
+    // days, or switched off by hand) is a campaign nobody is working, so
+    // neither is outreach owed today.
+    if (!isCampaignFullySent(c, nowMs) && isCampaignActive(c, nowMs)) return false;
   }
   return real > 0;
 }
@@ -185,7 +191,9 @@ export function campaignsAllSent(campaigns, nowMs = Date.now()) {
  * couple of days, so the step says nothing about it until the pause lifts —
  * at which point it rejoins this list on its own, with nothing to undo. It
  * is still on the Email Campaigns tab throughout, which is where a paused
- * campaign is looked at.
+ * campaign is looked at. Inactive campaigns are left out for the same
+ * reason: the step's status ignores them, so listing one under "All caught
+ * up" would contradict it.
  *
  * Ordered by what's left to do: the campaign owing the most sends leads,
  * ties broken by the lower percentage and then by name so the list is
@@ -206,7 +214,7 @@ export function unfinishedCampaigns(campaigns, nowMs = Date.now()) {
     const stats = campaignSendStats(c, nowMs);
     // The same two exclusions the step's status makes, so the list under it
     // and the pill beside it can never describe different work.
-    if (isCampaignFullySent(c, nowMs) || isCampaignPaused(c, nowMs)) return;
+    if (isCampaignFullySent(c, nowMs) || !isCampaignActive(c, nowMs)) return;
     rows.push({
       index,
       label: campaignOutreachLabel(c),
