@@ -138,7 +138,7 @@ const saved = [
   { title: 'Nobody in it', uniqueRecipients: 0, totalContacts: 0, savedAt: daysAgo(2) },
   { title: 'Parked halfway', uniqueRecipients: 1, totalContacts: 99, savedAt: daysAgo(300), refreshedAt: daysAgo(300) },
 ];
-check('every campaign under 100% sent, worst gap first, inactive last',
+check('every active campaign under 100% sent, worst gap first',
   unfinishedCampaigns(saved, NOW).map(r => [r.label, r.pct, r.remaining, r.active]),
   [
     ['Data Center Impact Outlook', 39.4, 20, true],
@@ -147,7 +147,6 @@ check('every campaign under 100% sent, worst gap first, inactive last',
     // rather than quietly dropped for having nobody on it yet. No countable
     // sends left, so it sits at the foot of the active ones.
     ['Nobody in it', 0, 0, true],
-    ['Parked halfway', 1, 98, false],
   ]);
 check('a campaign with no list yet carries the totals that say so',
   unfinishedCampaigns(saved, NOW).filter(r => r.label === 'Nobody in it')
@@ -163,29 +162,30 @@ check('a paused campaign is not listed at all',
   [
     ['Mexico Electric Power Cost Increase', 'active'],
     ['Nobody in it', 'active'],
-    ['Parked halfway', 'inactive'],
   ]);
-check('every campaign left on the list is one of the two live statuses',
-  unfinishedCampaigns(withPause, NOW).every(r => r.status === 'active' || r.status === 'inactive'), true);
+check('every campaign left on the list is active',
+  unfinishedCampaigns(withPause, NOW).every(r => r.status === 'active'), true);
 // Pausing the lot empties the list, which is what lets the step read as
 // clear with nothing printed underneath contradicting it.
 check('pause them all and there is nothing left to print',
   unfinishedCampaigns(saved.map(c => ({ ...c, pausedUntil: inDays(1) })), NOW), []);
-// An inactive campaign is NOT paused: one that went quiet at 1% is still
-// listed, which is the whole reason it is worth printing.
-check('an inactive campaign stays on the list',
-  unfinishedCampaigns(withPause, NOW).map(r => r.label).includes('Parked halfway'), true);
+// An inactive campaign is parked, like a paused one: the step ignores it,
+// so it isn't listed under it either.
+check('an inactive campaign is not listed',
+  unfinishedCampaigns(withPause, NOW).map(r => r.label).includes('Parked halfway'), false);
+check('switching it back to active lists it again',
+  unfinishedCampaigns(saved.map(c => ({ ...c, manualActive: true })), NOW).map(r => r.label).includes('Parked halfway'), true);
 check('a lapsed pause leaves no trace on the row',
   unfinishedCampaigns(saved.map((c, i) => (i === 0 ? { ...c, pausedUntil: daysAgo(1) } : c)), NOW)[0],
   { ...unfinishedCampaigns(saved, NOW)[0] });
 check('and it leads the list again',
   unfinishedCampaigns(withPause, NOW + 3 * 24 * 60 * 60 * 1000).map(r => r.status)[0], 'active');
 check('rows carry their place in the saved list',
-  unfinishedCampaigns(saved, NOW).map(r => r.index), [0, 1, 3, 4]);
+  unfinishedCampaigns(saved, NOW).map(r => r.index), [0, 1, 3]);
 // The index is the campaign's place in the SAVED list, not in this one, so
 // dropping a paused campaign must not shift the rows that follow it.
 check('and keep it when a paused campaign is dropped from in front of them',
-  unfinishedCampaigns(withPause, NOW).map(r => r.index), [1, 3, 4]);
+  unfinishedCampaigns(withPause, NOW).map(r => r.index), [1, 3]);
 check('everything sent', unfinishedCampaigns([{ uniqueRecipients: 5, totalContacts: 5 }], NOW), []);
 check('nothing saved', unfinishedCampaigns(undefined, NOW), []);
 // One junk entry must not take the real campaigns with it.
@@ -223,9 +223,16 @@ check('and it holds it open again the moment the pause lifts',
     { title: 'A', uniqueRecipients: 5, totalContacts: 5, savedAt: daysAgo(1) },
     { title: 'Parked', uniqueRecipients: 1, totalContacts: 99, pausedUntil: daysAgo(1) },
   ], NOW), false);
-// Inactive is not paused: a campaign that went quiet at 1% is still owed.
-check('an inactive campaign still counts as unsent',
+// Inactive is parked like paused: with no active campaign left to send, the
+// step is caught up.
+check('an inactive campaign does not hold the step open',
   campaignsAllSent([{ title: 'Parked halfway', uniqueRecipients: 1, totalContacts: 99, savedAt: daysAgo(300), refreshedAt: daysAgo(300) }], NOW),
+  true);
+check('nor does one switched inactive by hand',
+  campaignsAllSent([{ title: 'Open/Close', uniqueRecipients: 11, totalContacts: 12, savedAt: daysAgo(1), manualActive: false }], NOW),
+  true);
+check('but switched back to active it does',
+  campaignsAllSent([{ title: 'Open/Close', uniqueRecipients: 11, totalContacts: 12, savedAt: daysAgo(1), manualActive: true }], NOW),
   false);
 // A campaign nobody has been added to is listed under the step as work, so
 // it has to hold the step open too — otherwise the ladder says "all caught
