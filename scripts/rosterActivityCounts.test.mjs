@@ -43,7 +43,7 @@ const contacts = [
   { id: '1', email: 'a@acme.com', company: 'Acme Realty', dans_tags: 'Dan Key Target; Decision Maker' },
   // Decision Maker at Acme (Key Prospect), last contacted 45 days ago.
   { id: '2', email: 'b@acme.com', company: 'Acme Realty', dans_tags: 'Decision Maker', notes_last_contacted: ago(45) },
-  // Decision Maker at Zenith, which has an opp: not a Key Prospect. Called 100 days ago.
+  // Decision Maker at Zenith, which has an opp: still a Key Prospect (opps don't take anybody off it). Called 100 days ago.
   { id: '3', email: 'c@zenith.com', phone: '(555) 123-4567', company: 'Zenith Capital', dans_tags: 'Decision Maker' },
   // Key Target with nothing on record.
   { id: '4', email: 'd@zenith.com', company: 'Zenith Capital', dans_tags: 'Dan Key Target' },
@@ -71,7 +71,7 @@ const view = Object.fromEntries(out.map(r => [r.key, { total: r.total, active: r
 check('rosters in order', out.map(r => r.label), ['Dan Key Target', 'Dan Key Prospect', 'Decision Makers']);
 check('windows are 30, 60, 90, 120', out[0].windows.map(w => w.days), [30, 60, 90, 120]);
 check('Dan Key Target', view.keyTarget, { total: 3, active: [1, 1, 1, 1] });
-check('Dan Key Prospect', view.keyProspect, { total: 2, active: [1, 2, 2, 2] });
+check('Dan Key Prospect', view.keyProspect, { total: 3, active: [1, 2, 2, 3] });
 check('Decision Makers', view.decisionMakers, { total: 3, active: [1, 2, 2, 3] });
 check('percentages are whole', out[2].windows.map(w => w.pct), [33, 67, 67, 100]);
 

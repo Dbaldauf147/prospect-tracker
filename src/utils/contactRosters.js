@@ -376,10 +376,8 @@ export function makeRosterGates({
   clientStatusMap = {},
   clientUntrackedMap = {},
   showHidden = false,
-  // settings.contactConnected: { [contactId]: true } for the people Dan has
-  // ticked Connected? on. Someone he's already connected with isn't a
-  // prospect any more, so they never land on Key Prospect.
-  connected = null,
+  // (settings.contactConnected, passed as `connected`, used to take a
+  // contact off Key Prospect. It no longer does, so it isn't read.)
 } = {}) {
   const rows = prospects || [];
 
@@ -541,7 +539,10 @@ export function makeRosterGates({
 
   // ---- Key Prospect gate (mirror of KeyProspectsView) ---------------
   // A contact is a "Key Prospect" when it's tagged Decision Maker at a
-  // Tier 1 / Tier 2 / Tier 3 account on this CDM whose company has no opps yet.
+  // Tier 1 / Tier 2 / Tier 3 account on this CDM (or a "Dan target", which
+  // reportingTier counts as Tier 3 and onMyBook counts under any CDM). The
+  // opp lookup below is kept for the account's `untouched` flag only; opps
+  // no longer take anybody off the roster.
   const myTierAccounts = rows.filter(p => {
     if (!onMyBook(p, cdmName)) return false;
     // Clients aren't prospects — keep them out of the Key Prospect bucket.
@@ -604,12 +605,14 @@ export function makeRosterGates({
   // So anybody whose company near-matches a Client account, or whose email
   // domain is one a Client account claims, is never a Key Prospect.
   const clientAccountOf = makeClientAccountLookup(rows);
-  const isConnected = (c) => !!(connected && c?.id != null && connected[String(c.id)]);
+  // Key Prospect: a Decision Maker at a Tier 1 / 2 / 3 account on this
+  // CDM's book (an own "Dan target" counts as Tier 3, whoever its CDM is),
+  // and not at a Client. Whether the account has opps, and whether the
+  // contact is ticked Connected?, no longer take anybody off it.
   const isKeyProspect = (c) => {
     if (!passesBaseGate(c)) return false;
-    if (isConnected(c)) return false;
     if (!tagsOf(c).includes('decision maker')) return false;
-    if (!tierAccountOf(c)?.untouched) return false;
+    if (!tierAccountOf(c)) return false;
     return !clientAccountOf(c);
   };
   // Which Table View company put a Key Prospect on the roster, so a list
@@ -670,11 +673,9 @@ export function makeRosterGates({
       if (!tags.includes('decision maker')) return 'Not tagged Decision Maker.';
       if (!company) return 'No Company to match a Tier 1 / 2 / 3 account to.';
       const acct = tierAccountOf(c);
-      if (!acct) return `"${company}" does not match a Tier 1 / 2 / 3 account on your book (Clients don't count).`;
-      if (!acct.untouched) return `"${acct.account}" already has opps, so it is no longer a Key Prospect account.`;
+      if (!acct) return `"${company}" does not match a Tier 1 / 2 / 3 or Dan target account on your book (Clients don't count).`;
       const client = clientAccountOf(c);
-      if (client) return `They belong to "${client}", a Client, and Clients aren't prospects.`;
-      return isConnected(c) ? 'Connected? is ticked, so they are past being a prospect.' : '';
+      return client ? `They belong to "${client}", a Client, and Clients aren't prospects.` : '';
     };
     const rosters = [
       { label: 'Key', why: keyWhy() },
