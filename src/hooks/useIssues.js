@@ -17,6 +17,8 @@ import { BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, BFO_ACTIVITY_EVENT } from '../uti
 import { loadLocalOnlyFiles, LOCAL_ONLY_FILES_EVENT } from '../utils/localOnlyFiles';
 import { oversizedSiteLists as findOversizedSiteLists } from '../utils/siteListSize';
 import { useDmsNoActivity, readDmsWindow } from './useDmsNoActivity';
+import { useEmailCampaigns } from './useEmailCampaigns';
+import { dmsNotOnCampaign } from '../utils/dmsCampaigns';
 import { bfoHistoryTargets, bfoHistoryMissingNameIssues } from '../utils/bfoHistory';
 
 // The Pipeline dashboard is re-read on every window focus, and a fresh array
@@ -253,9 +255,15 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     return JSON.stringify(bfoHistoryMissingNameIssues(bfoHistoryTargets(dmsLists.get(readDmsWindow()), dmsAccountOf)));
   }, [dmsLists, dmsAccountOf]);
   const bfoHistoryMissing = useMemo(() => JSON.parse(bfoHistoryMissingKey), [bfoHistoryMissingKey]);
-  // The Prospecting ladder's "Decision makers with no activity" step: the
-  // tab's "No activity ever" list, counted. null while it is still loading.
-  const dmsNoActivityCount = dmsLists ? (dmsLists.get(null) || []).length : null;
+  // The Prospecting ladder's "Decision makers with no activity" step (and
+  // the Prospecting badge): the tab's "No activity ever" list, counted, less
+  // anyone already on an email campaign (utils/dmsCampaigns). null while it
+  // is still loading.
+  const emailCampaigns = useEmailCampaigns();
+  const dmsNoActivityCount = useMemo(
+    () => (dmsLists ? dmsNotOnCampaign(dmsLists.get(null) || [], emailCampaigns).length : null),
+    [dmsLists, emailCampaigns],
+  );
 
   const issues = useMemo(() => {
     const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, now: issuesNow });

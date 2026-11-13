@@ -133,12 +133,12 @@ export const DEFAULT_STEPS = [
   {
     key: 'dms-no-activity',
     title: 'Decision makers with no activity',
-    detail: 'Decision makers at your accounts that nothing has reached yet: no HubSpot email or call, and no Last Contacted date.',
+    detail: 'Decision makers at your accounts that nothing has reached yet: no HubSpot email or call, and no Last Contacted date. Anyone already on an email campaign is not counted.',
     view: 'prospecting',
     viewLabel: 'Prospecting',
     workLabel: n => `${n} DM${n === 1 ? '' : 's'}`,
-    workTitle: n => `${n} decision ${n === 1 ? 'maker at your accounts has' : 'makers at your accounts have'} had no activity ever (Prospecting > DMs Without Activity, "No activity ever")`,
-    clearTitle: 'Every decision maker at your accounts has had some activity',
+    workTitle: n => `${n} decision ${n === 1 ? 'maker at your accounts has' : 'makers at your accounts have'} had no activity ever and ${n === 1 ? 'is' : 'are'} on no email campaign (Prospecting > DMs Without Activity, "No activity ever")`,
+    clearTitle: 'Every decision maker at your accounts has had some activity or is on an email campaign',
   },
   {
     key: 'market-updates',
