@@ -31,6 +31,20 @@ export const SCHEDULED_OPP_DEFAULT_TIME = '08:00';
 
 export const SCHEDULED_OPPS_SETTINGS_KEY = 'scheduledOpps';
 
+// Most entries are a New Opp payload waiting to be created. A check-back
+// entry instead points at an EXISTING opp closed Not Sold (`oppId`): the
+// Not Sold close-out queued it to come back once the client's term with
+// another provider should be up. Until it's due the opp itself is left
+// alone; when it fires, the opp's Follow Up is set to that day (so it
+// rides back up the table by Call In) and `notes` is the why that goes on
+// its Loss Notes. No row is created and it claims no services, so the
+// company card's services board leaves it out.
+export const CHECK_BACK_KIND = 'checkBack';
+export const CHECK_BACK_UNITS = ['months', 'years'];
+export function isCheckBackEntry(entry) {
+  return entry?.kind === CHECK_BACK_KIND;
+}
+
 // A stored queue, forgiving of shape. An entry without a parseable due
 // date is dropped: it can never come due, and it would sit in the list
 // forever claiming it was about to.
@@ -57,6 +71,11 @@ export function normalizeScheduledOpps(stored) {
       frameworksEdited: !!e.frameworksEdited,
       addToTableView: !!e.addToTableView,
       hqRegion: String(e.hqRegion || ''),
+      kind: e.kind === CHECK_BACK_KIND ? CHECK_BACK_KIND : '',
+      oppId: e.oppId == null ? '' : String(e.oppId),
+      checkBackAmount: Number(e.checkBackAmount) || null,
+      checkBackUnit: CHECK_BACK_UNITS.includes(e.checkBackUnit) ? e.checkBackUnit : '',
+      closedOn: /^\d{4}-\d{2}-\d{2}$/.test(String(e.closedOn || '')) ? String(e.closedOn) : '',
       dueDate: String(e.dueDate),
       dueTime: /^\d{1,2}:\d{2}$/.test(String(e.dueTime || '')) ? String(e.dueTime) : SCHEDULED_OPP_DEFAULT_TIME,
       createdAt: Number(e.createdAt) || null,
@@ -125,7 +144,7 @@ export function pendingScheduledOppsForCompany(company, entries) {
   const name = String(company || '').trim();
   if (!name) return [];
   return (entries || [])
-    .filter(e => scheduledOppPending(e) && companiesMatch(e.company, name))
+    .filter(e => scheduledOppPending(e) && !isCheckBackEntry(e) && companiesMatch(e.company, name))
     .sort((a, b) => (scheduledOppDueMs(a) || 0) - (scheduledOppDueMs(b) || 0));
 }
 

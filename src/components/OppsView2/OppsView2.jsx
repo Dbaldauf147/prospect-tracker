@@ -134,6 +134,9 @@ import {
   pruneScheduledOpps,
   scheduledOppDueMs,
   scheduledOppPending,
+  CHECK_BACK_KIND,
+  CHECK_BACK_UNITS,
+  isCheckBackEntry,
 } from '../../utils/scheduledOpps';
 import { computeListFlags } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
@@ -6515,14 +6518,18 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
 
   // The extra context a queued opp carries beyond its company name —
   // shown as one muted line so the row stays scannable.
-  const detailLine = (e) => [
+  const detailLine = (e) => (isCheckBackEntry(e) ? [
+    'Check back on a Not Sold opp',
+    e.checkBackAmount && `${e.checkBackAmount} ${e.checkBackUnit === 'years' ? 'year' : 'month'}${e.checkBackAmount === 1 ? '' : 's'} out`,
+    e.closedOn && `closed ${formatDateDisplay(e.closedOn)}`,
+  ] : [
     e.scope && `Services: ${parseMulti(e.scope).join(', ')}`,
     e.pullThrough && 'Pull-through',
     e.source && `Source: ${e.source}`,
     e.peOwner && `PE Owner: ${e.peOwner}`,
     e.type && `Type: ${e.type}`,
     e.addToTableView && `Adds to Table View${e.hqRegion ? ` · ${e.hqRegion}` : ''}`,
-  ].filter(Boolean).join(' · ');
+  ]).filter(Boolean).join(' · ');
 
   return createPortal(
     <div
@@ -6546,7 +6553,7 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
             Scheduled Opps
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-            Opps queued to be created later. Each one is added the first time this tab is open at or after its date and time (Eastern) - nothing exists on the Opps table until then.
+            Opps queued to be created later, and Not Sold opps queued to come back to check in. Each one happens the first time this tab is open at or after its date and time (Eastern): a new opp is added to the Opps table, a check-back puts its opp back in the Call In.
           </div>
         </div>
 
@@ -6608,13 +6615,13 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
                   type="button"
                   onClick={() => onCreateNow(e.id)}
                   style={actionBtn('#2563EB')}
-                  title="Create this opp right now instead of waiting for its scheduled time"
-                >Create now</button>
+                  title={isCheckBackEntry(e) ? 'Put this opp back in the Call In today instead of waiting for its date' : 'Create this opp right now instead of waiting for its scheduled time'}
+                >{isCheckBackEntry(e) ? 'Bring back now' : 'Create now'}</button>
                 <button
                   type="button"
                   onClick={() => onCancelEntry(e.id)}
                   style={actionBtn('#dc2626')}
-                  title="Drop this scheduled opp: no row is ever created"
+                  title={isCheckBackEntry(e) ? 'Drop this check-back: the opp stays closed and never comes back on its own' : 'Drop this scheduled opp: no row is ever created'}
                 >Cancel</button>
               </div>
             </div>
@@ -6638,7 +6645,7 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
                     <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>{e.company || '(no company)'}</span>
                     <span>
                       {e.firedAt
-                        ? `created ${new Date(e.firedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                        ? `${isCheckBackEntry(e) ? 'brought back' : 'created'} ${new Date(e.firedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
                         : `cancelled ${new Date(e.canceledAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
                     </span>
                   </div>
@@ -6746,15 +6753,15 @@ const requiredFieldLook = { border: '1px solid #FCA5A5', background: '#FEF2F2' }
 
 // Not Sold "check back": a lost deal parked to come back on the Opps table
 // after the term the client signed with someone else should be up, to ask
-// whether they're happy with that provider. The close-out popup sets the
-// opp's Follow Up that far out, so the row rides back up the table by Call
-// In like any other callback, and keeps the why on the row under
-// `_resurface` ({ dueOn, amount, unit, note, setOn, closedOn }). The Loss
-// Notes cell shows it as a pill that opens the note. Cleared by writing
-// null rather than deleting, so a stale copy on the other device can't
-// merge it back.
+// whether they're happy with that provider. The close-out popup queues it
+// on Scheduled Opps (a check-back entry, see utils/scheduledOpps) and leaves
+// the opp alone until then. When the entry comes due, the opp's Follow Up
+// is set to that day, so the row rides back up the table by Call In like
+// any other callback, and the why lands on the row under `_resurface`
+// ({ dueOn, amount, unit, note, setOn, closedOn }). The Loss Notes cell
+// shows it as a pill that opens the note. Cleared by writing null rather
+// than deleting, so a stale copy on the other device can't merge it back.
 const RESURFACE_FIELD = '_resurface';
-const CHECK_BACK_UNITS = ['months', 'years'];
 
 function readResurface(row) {
   const r = row?.[RESURFACE_FIELD];
@@ -6887,21 +6894,21 @@ function ResurfaceNote({ resurface, account, onRemove }) {
 // values via updateOppField (skipping fields the user left
 // untouched). Skip leaves the row as-is — Stage is still set to Not
 // Sold and the stamped Close Date stays.
-function NotSoldFollowUpModal({ opp, revertStage = '', onCancelNotSold = null, optionLink = null, reasonOptions, competitionOptions, solutionOptions, onSave, onClose }) {
+function NotSoldFollowUpModal({ opp, pendingCheckBack = null, revertStage = '', onCancelNotSold = null, optionLink = null, reasonOptions, competitionOptions, solutionOptions, onSave, onClose }) {
   const marginSuggestion = useMemo(() => suggestedFinalMargin(opp, optionLink), [opp, optionLink]);
   const [closeDate, setCloseDate] = useState(toISODate(opp?.['Close Date']) || '');
   const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
   const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
   const [lossNotes, setLossNotes] = useState(String(opp?.[LOSS_NOTES_COLUMN] ?? ''));
-  // Check back later: put the opp back in the Call In a term from now.
-  // Seeded from a check-back already on the opp, so reopening the popup
-  // shows (and keeps) what was set.
-  const existingCheckBack = readResurface(opp);
+  // Check back later: queue the opp on Scheduled Opps to come back into the
+  // Call In a term from now. Seeded from a check-back already queued for
+  // this opp, so reopening the popup shows (and keeps) what was set.
+  const existingCheckBack = pendingCheckBack;
   const [checkBack, setCheckBack] = useState(!!existingCheckBack);
-  const [checkBackAmount, setCheckBackAmount] = useState(String(existingCheckBack?.amount || 1));
-  const [checkBackUnit, setCheckBackUnit] = useState(CHECK_BACK_UNITS.includes(existingCheckBack?.unit) ? existingCheckBack.unit : 'years');
-  const [checkBackNote, setCheckBackNote] = useState(existingCheckBack ? String(existingCheckBack.note || '') : DEFAULT_CHECK_BACK_NOTE);
+  const [checkBackAmount, setCheckBackAmount] = useState(String(existingCheckBack?.checkBackAmount || 1));
+  const [checkBackUnit, setCheckBackUnit] = useState(CHECK_BACK_UNITS.includes(existingCheckBack?.checkBackUnit) ? existingCheckBack.checkBackUnit : 'years');
+  const [checkBackNote, setCheckBackNote] = useState(existingCheckBack ? String(existingCheckBack.notes || '') : DEFAULT_CHECK_BACK_NOTE);
   const checkBackDueOn = checkBack ? addTermISO(todayISO(), checkBackAmount, checkBackUnit) : '';
 
   // Everything in the opp's Scope is what this close-out gives up, listed
@@ -7186,6 +7193,9 @@ function NotSoldFollowUpModal({ opp, revertStage = '', onCancelNotSold = null, o
                   {checkBackDueOn
                     ? <span style={{ color: '#92400E', fontWeight: 600 }}>Comes back on {formatDateDisplay(checkBackDueOn)}</span>
                     : <span style={requiredHintStyle}>Enter a whole number, 1 or more.</span>}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                  Waits on Scheduled Opps until then. This opp&rsquo;s Follow Up and Call In stay as they are until the date comes, then it goes back in the Call In.
                 </div>
                 <div>
                   <label style={labelStyle}>Why it is coming back (shown on its Loss Notes)</label>
@@ -15752,6 +15762,78 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     updateScheduledOpp(id, { canceledAt: Date.now() });
   }, [updateScheduledOpp]);
 
+  // The check-back still waiting for an opp, if any (one per opp).
+  const pendingCheckBackFor = useCallback((oppId) => pendingScheduledOpps
+    .find(e => isCheckBackEntry(e) && e.oppId === String(oppId)) || null, [pendingScheduledOpps]);
+
+  // The Not Sold close-out's "check back later": replace whatever check-back
+  // this opp had queued with the new one (or just drop it when unticked),
+  // in one settings write. An unchanged check-back is left as it was, so
+  // re-saving the popup doesn't restart its clock.
+  const setCheckBack = useCallback((opp, checkBack, closeDate) => {
+    const oppId = String(opp?._id ?? '');
+    if (!oppId) return;
+    const current = scheduledOpps.filter(e => scheduledOppPending(e) && isCheckBackEntry(e) && e.oppId === oppId);
+    const same = checkBack && current.length === 1 && current[0].dueDate === checkBack.dueOn
+      && current[0].notes === checkBack.note && current[0].checkBackAmount === checkBack.amount
+      && current[0].checkBackUnit === checkBack.unit;
+    if (same || (!checkBack && current.length === 0)) return;
+    const now = Date.now();
+    const drop = new Set(current.map(e => e.id));
+    const next = scheduledOpps.map(e => (drop.has(e.id) ? { ...e, canceledAt: now } : e));
+    if (checkBack) {
+      next.push({
+        id: newScheduledOppId(),
+        kind: CHECK_BACK_KIND,
+        oppId,
+        company: String(opp['Account'] || ''),
+        notes: checkBack.note,
+        checkBackAmount: checkBack.amount,
+        checkBackUnit: checkBack.unit,
+        closedOn: closeDate || todayISO(),
+        dueDate: checkBack.dueOn,
+        dueTime: SCHEDULED_OPP_DEFAULT_TIME,
+        createdAt: now,
+        firedAt: null,
+        canceledAt: null,
+      });
+    }
+    saveScheduledOpps(next);
+  }, [scheduledOpps, saveScheduledOpps]);
+
+  // A check-back coming due: the opp goes back in the Call In on its due
+  // day (today, when pulled forward with "Bring back now"), without the
+  // Follow Up Notes prompt, and the why goes on the row for Loss Notes.
+  // Returns whether the entry is done with: true once applied, or when the
+  // opps have loaded and the opp is gone (deleted since it was queued);
+  // false while there's nothing loaded to apply it to, so it waits for the
+  // next tick instead of being stamped fired with nothing done.
+  // updateOppField reads the row from dataRef, which the first tick after
+  // hydration runs ahead of, so an opp that's in state but not yet in the
+  // ref waits too: `data` is a dependency, so the tick runs again on the
+  // next render, by when the ref has caught up. updateOppField goes through
+  // a ref because it's declared further down.
+  const updateOppFieldRef = useRef(null);
+  const applyCheckBack = useCallback((entry) => {
+    const records = data?.records || [];
+    const inState = records.some(r => String(r._id) === entry.oppId);
+    const opp = (dataRef.current?.records || []).find(r => String(r._id) === entry.oppId);
+    if (!inState) return records.length > 0;
+    if (!opp || !updateOppFieldRef.current) return false;
+    const today = todayISO();
+    const on = entry.dueDate < today ? entry.dueDate : today;
+    updateOppFieldRef.current(opp._id, 'Follow Up', on, { skipFollowUpPrompt: true });
+    updateOppFieldRef.current(opp._id, RESURFACE_FIELD, {
+      dueOn: on,
+      amount: entry.checkBackAmount,
+      unit: entry.checkBackUnit,
+      note: entry.notes,
+      setOn: entry.createdAt ? toISODate(new Date(entry.createdAt).toISOString()) : '',
+      closedOn: entry.closedOn,
+    });
+    return true;
+  }, [data?.records]);
+
   // Shared by the minute tick and the manager's "Create now" button:
   // materialize the entries and stamp them fired in a single settings
   // write, so a batch that comes due together doesn't cost one write each.
@@ -15762,16 +15844,20 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       && !firedScheduledOppsRef.current.has(e.id));
     if (!due.length) return;
     const now = Date.now();
+    const fired = new Set();
     for (const e of due) {
+      // A check-back with no opps loaded to apply to waits for a later tick.
+      if (isCheckBackEntry(e) && !applyCheckBack(e)) continue;
+      if (!isCheckBackEntry(e)) applyNewOpp(e);
       // The firedAt stamp is a settings round trip; remember in-session
       // which entries are already handled so the next minute tick can't
       // create the same opp twice while that write is in flight.
       firedScheduledOppsRef.current.add(e.id);
-      applyNewOpp(e);
+      fired.add(e.id);
     }
-    const fired = new Set(due.map(e => e.id));
+    if (!fired.size) return;
     saveScheduledOpps(scheduledOpps.map(e => (fired.has(e.id) ? { ...e, firedAt: now } : e)));
-  }, [scheduledOpps, applyNewOpp, saveScheduledOpps]);
+  }, [scheduledOpps, applyNewOpp, applyCheckBack, saveScheduledOpps]);
 
   // Create any scheduled opp whose Eastern due time has passed. Checked on
   // mount (after hydration) and every minute the tab is open, so both a
@@ -16329,6 +16415,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       requestCallInSort();
     }
   }, [pushUndoEntry, openStagePrompt, requestCallInSort]);
+  updateOppFieldRef.current = updateOppField;
 
   // Restore the Follow Up date (and its sibling Call In) to the snapshot
   // taken before the edit that opened the Follow Up Notes popup. Writes the
@@ -17653,16 +17740,22 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // soonest thing to happen for that account, and a queue you have to scroll
   // to find is the toolbar modal again. Left out of the Closed view, where a
   // not-yet-created opp is the one thing that can't belong.
+  // Check-backs aren't new opps: the opp they bring back is already on the
+  // table, and stays as it is until the date comes, so they get no line.
+  const pendingNewOpps = useMemo(
+    () => pendingScheduledOpps.filter(e => !isCheckBackEntry(e)),
+    [pendingScheduledOpps],
+  );
   const rowsForTable = useMemo(() => {
-    if (effectiveActivityFilter === 'closed' || pendingScheduledOpps.length === 0) return filtered;
+    if (effectiveActivityFilter === 'closed' || pendingNewOpps.length === 0) return filtered;
     // Under the opps that have a Call In, above everything else — see
     // placeScheduledRows for why, and for how the cut is found.
     return placeScheduledRows(
       filtered,
-      pendingScheduledOpps.map(scheduledOppRow),
+      pendingNewOpps.map(scheduledOppRow),
       (r) => resolveCallIn(r) != null,
     );
-  }, [filtered, pendingScheduledOpps, effectiveActivityFilter]);
+  }, [filtered, pendingNewOpps, effectiveActivityFilter]);
 
   // "Waiting on Keith" subtab: opps where Keith appears in the Waiting On
   // column. The displayed Waiting On value is the stacked per-step
@@ -18867,6 +18960,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         return (
           <NotSoldFollowUpModal
             opp={opp}
+            pendingCheckBack={pendingCheckBackFor(opp._id)}
             revertStage={notSoldRevertRef.current.get(opp._id)?.prevStage || ''}
             onCancelNotSold={notSoldRevertRef.current.has(opp._id) ? () => {
               revertNotSold(opp._id);
@@ -18894,25 +18988,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               if (lossNotes !== String(opp[LOSS_NOTES_COLUMN] ?? '').trim()) {
                 updateOppField(opp._id, LOSS_NOTES_COLUMN, lossNotes);
               }
-              // Check back later: Follow Up set a term out puts it back in
-              // the Call In (no Follow Up Notes prompt, this popup is that
-              // conversation), and the note rides along for Loss Notes.
-              const prevCheckBack = readResurface(opp);
-              if (checkBack) {
-                if ((toISODate(opp['Follow Up']) || '') !== checkBack.dueOn) {
-                  updateOppField(opp._id, 'Follow Up', checkBack.dueOn, { skipFollowUpPrompt: true });
-                }
-                if (!prevCheckBack || prevCheckBack.dueOn !== checkBack.dueOn || prevCheckBack.note !== checkBack.note
-                  || prevCheckBack.amount !== checkBack.amount || prevCheckBack.unit !== checkBack.unit) {
-                  updateOppField(opp._id, RESURFACE_FIELD, {
-                    ...checkBack,
-                    setOn: prevCheckBack?.dueOn === checkBack.dueOn ? (prevCheckBack.setOn || todayISO()) : todayISO(),
-                    closedOn: closeDate || todayISO(),
-                  });
-                }
-              } else if (prevCheckBack) {
-                updateOppField(opp._id, RESURFACE_FIELD, null);
-              }
+              // Check back later: queued on Scheduled Opps, the opp itself
+              // untouched until it comes due (see fireScheduledOpps).
+              setCheckBack(opp, checkBack, closeDate);
               // Notes travel as the same pair the Follow Up Notes popup writes:
               // the newline-joined 'Next Steps' text plus the index-aligned
               // Waiting On array beside it.
