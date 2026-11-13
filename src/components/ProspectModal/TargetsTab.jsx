@@ -1,16 +1,18 @@
 // Company popup > Targets: the company's sustainability targets, logged by
-// hand. One row per target: what kind it is, its base year, up to two target
-// years, and which of Scopes 1, 2 and 3 it covers. Every cell edits in place
-// and autosaves with the rest of the card. See utils/companyTargets for the
-// stored shape.
+// hand. One row per target: what kind it is (off the user's own list of
+// types, see TargetTypeSelect), the year it was set, its base year, up to two
+// target years, which of Scopes 1, 2 and 3 it covers, and when its five-yearly
+// refresh falls due. Every cell edits in place and autosaves with the rest of
+// the card. See utils/companyTargets for the stored shape.
 import { useMemo } from 'react';
 import { DataTable } from '../common/DataTable';
 import {
-  TARGET_TYPE_OPTIONS, TARGET_SCOPES, blankTarget, normalizeTargets,
-  updateTarget, removeTarget,
+  TARGET_SCOPES, REFRESH_CYCLE_YEARS, blankTarget, normalizeTargets,
+  updateTarget, removeTarget, refreshDue,
 } from '../../utils/companyTargets';
+import { TargetTypeSelect } from './TargetTypeSelect';
+import { useTargetTypeOptions } from './useTargetTypeOptions';
 
-const TYPE_LIST_ID = 'company-target-type-options';
 const inputStyle = {
   width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.4rem', fontSize: '0.8rem',
   border: '1px solid #E2E8F0', borderRadius: 4, fontFamily: 'inherit', background: '#fff',
@@ -25,7 +27,14 @@ const rowBtn = {
   lineHeight: 1.2, fontSize: '0.85rem', cursor: 'pointer', fontFamily: 'inherit', color: '#94A3B8',
 };
 
+const REFRESH_COLORS = {
+  overdue: { background: '#FEE2E2', color: '#991B1B' },
+  due: { background: '#FEF3C7', color: '#92400E' },
+  upcoming: { background: '#F1F5F9', color: '#334155' },
+};
+
 const YEAR_COLUMNS = [
+  { key: 'yearSet', label: 'Year Set' },
   { key: 'baseYear', label: 'Base Year' },
   { key: 'targetYear1', label: 'Target Year 1' },
   { key: 'targetYear2', label: 'Target Year 2' },
@@ -34,6 +43,7 @@ const SCOPE_LABELS = { scope1: 'Scope 1', scope2: 'Scope 2', scope3: 'Scope 3' }
 
 export function TargetsTab({ company = '', targets, onChange, settings, updateSettings }) {
   const rows = useMemo(() => normalizeTargets(targets), [targets]);
+  const typeOptions = useTargetTypeOptions();
   const edit = (id, key, value) => onChange(updateTarget(rows, id, key, value));
   const add = () => onChange([...rows, blankTarget()]);
   const remove = (row) => {
@@ -50,14 +60,10 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
       getFilterValue: r => r.type,
       exportValue: r => r.type,
       render: r => (
-        <input
-          type="text"
-          list={TYPE_LIST_ID}
+        <TargetTypeSelect
           value={r.type}
-          placeholder="e.g. Net zero"
-          aria-label="Target type"
-          onChange={e => edit(r.id, 'type', e.target.value)}
-          style={inputStyle}
+          options={typeOptions}
+          onChange={v => edit(r.id, 'type', v)}
         />
       ),
     },
@@ -101,6 +107,31 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
       ),
     })),
     {
+      key: 'refreshDue',
+      label: 'Refresh Due',
+      defaultWidth: 160,
+      getSortValue: r => refreshDue(r)?.year ?? null,
+      getFilterValue: r => refreshDue(r)?.label || '',
+      exportValue: r => refreshDue(r)?.year ?? '',
+      render: r => {
+        const due = refreshDue(r);
+        if (!due) {
+          return <span style={{ color: '#94A3B8', fontSize: '0.75rem' }} title="Log the year set to schedule its refresh">-</span>;
+        }
+        return (
+          <span
+            title={`Refreshed every ${REFRESH_CYCLE_YEARS} years: set in ${r.yearSet}, so due in ${due.year}`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontVariantNumeric: 'tabular-nums' }}
+          >
+            <strong style={{ color: '#1E293B' }}>{due.year}</strong>
+            <span style={{ ...REFRESH_COLORS[due.status], padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700 }}>
+              {due.label}
+            </span>
+          </span>
+        );
+      },
+    },
+    {
       key: '__delete__',
       label: '',
       defaultWidth: 50,
@@ -116,15 +147,13 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.5rem' }}>
       <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
         The sustainability targets {company ? <strong>{company}</strong> : 'this company'} has set:
-        the kind of target, its base year, up to two target years, and which scopes it covers.
-        Changes save as you type.
+        the kind of target, the year it was set, its base year, up to two target years, and which
+        scopes it covers. Each target is due a refresh {REFRESH_CYCLE_YEARS} years after the year
+        it was set. Changes save as you type.
       </div>
       <div>
         <button type="button" onClick={add} style={addBtn}>+ Add target</button>
       </div>
-      <datalist id={TYPE_LIST_ID}>
-        {TARGET_TYPE_OPTIONS.map(o => <option key={o} value={o} />)}
-      </datalist>
       {/* DataTable fills a flex column, so it needs a box with a height.
           Sized to the rows so a company with one or two targets doesn't
           sit above a screen of empty table, capped so a long list scrolls. */}
@@ -138,7 +167,10 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
         columns={columns}
         rows={rows}
         alwaysVisible={['type']}
-        emptyMessage="No targets logged yet. Use + Add target to log one."
+        emptyMessage={rows.length ? 'No targets match the filters.' : 'No targets logged yet. Use + Add target to log one.'}
+        // The filter row only once there is something to filter: on an empty
+        // table its boxes look like the place to type a new target in.
+        enableColumnFilters={rows.length > 0}
         exportFileName={`${company || 'Company'} targets`}
         settings={settings}
         updateSettings={updateSettings}

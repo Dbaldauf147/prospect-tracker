@@ -686,6 +686,7 @@ async function loadMirroredStores() {
     import('./dealTimelineHiddenStore.js'),
     import('./stageTableColumns.js'),
     import('./timelineTypeOptions.js'),
+    import('./targetTypeOptions.js'),
     import('./coaItemOptions.js'),
     import('./prospectingStatus.js'),
     import('./prospectingHistory.js'),
