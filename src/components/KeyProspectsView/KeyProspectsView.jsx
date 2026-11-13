@@ -1,6 +1,6 @@
-// Key Prospects page — HubSpot contacts at Tier 1 / Tier 2 / Tier 3 accounts
-// (CDM = me) that are tagged Decision Maker AND whose company has no
-// opps on the Opps tab yet. Same layout / interactions as the other
+// Key Prospects page — HubSpot contacts tagged Decision Maker at Tier 1 /
+// Tier 2 / Tier 3 accounts (CDM = me, or a "Dan target" under any CDM),
+// whatever opps the account has. Same layout / interactions as the other
 // roster tabs since this is a thin wrapper around KeyContactsView
 // with a custom selector.
 //
@@ -112,13 +112,11 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
   const clientAccountOf = useMemo(() => makeClientAccountLookup(prospects), [prospects]);
 
   // Contact selector: Decision Maker at a Tier 1 / Tier 2 / Tier 3 account on
-  // my CDM whose company has no opps yet. Hide / Left / Schneider are
-  // excluded as they are everywhere else in the roster pages.
-  // Anybody ticked Connected? is past being a prospect, so they're left off
-  // here too (same rule as the Key Prospect roster gate).
-  const connectedMap = settings?.contactConnected || null;
+  // my book (same rule as the Key Prospect roster gate in contactRosters).
+  // Hide / Left / Schneider are excluded as they are everywhere else in the
+  // roster pages. Opps on the account and Connected? no longer take anybody
+  // off it.
   const selector = useCallback((c) => {
-    if (connectedMap && c?.id != null && connectedMap[String(c.id)]) return false;
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
     if (tags.includes('hide')) return false;
     if (tags.includes('left')) return false;
@@ -129,7 +127,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
     if (clientAccountOf(c)) return false;
     const lc = company.toLowerCase();
     const direct = tierAccountStatus.get(lc);
-    if (direct) return !direct.hasOpp;
+    if (direct) return true;
     // Fuzzy: a contact whose Company is "Brookfield Properties" vs a
     // prospect "Brookfield Asset Management" — fall through to the
     // companiesMatch loop. First fuzzy hit wins.
@@ -137,11 +135,11 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
       if (companiesMatch(p.company, company)) {
         const pLc = String(p.company || '').toLowerCase().trim();
         const status = tierAccountStatus.get(pLc);
-        if (status) return !status.hasOpp;
+        if (status) return true;
       }
     }
     return false;
-  }, [tierAccountStatus, myTierAccounts, clientAccountOf, connectedMap]);
+  }, [tierAccountStatus, myTierAccounts, clientAccountOf]);
 
   // Set of lowercase company strings (taken from passing-the-selector
   // HubSpot contacts) representing Tier 1 / Tier 2 / Tier 3 accounts that DO
@@ -289,7 +287,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
           )}
         </div>
       )}
-      HubSpot contacts tagged <strong>Decision Maker</strong> at <strong>Tier 1</strong> / <strong>Tier 2</strong> / <strong>Tier 3</strong> accounts on your Table View (CDM = <strong>{cdmName || '(set your CDM in Settings)'}</strong>) whose company has <strong>no opps yet</strong> on the Opps tab: your warm-but-untouched list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>By Company</strong> to see decision makers grouped by account.
+      HubSpot contacts tagged <strong>Decision Maker</strong> at <strong>Tier 1</strong> / <strong>Tier 2</strong> / <strong>Tier 3</strong> accounts on your Table View (CDM = <strong>{cdmName || '(set your CDM in Settings)'}</strong>), plus accounts marked <strong>Not on tier list, but Dan target</strong>, leaving out anybody at a Client. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>By Company</strong> to see decision makers grouped by account.
     </>
   );
 
