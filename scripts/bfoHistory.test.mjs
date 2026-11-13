@@ -1,7 +1,7 @@
 // Assertion tests for the BFO History paste parser and the Agents task's
 // company list. Plain Node, no framework. Run:
 //   node scripts/bfoHistory.test.mjs
-import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, bfoHistoryMissingNameIssues, BFO_HISTORY_HEADER, bfoHistoryRowKey, setBfoHistoryIgnored, setBfoHistoryOk, bfoHistoryMarks, bfoHistoryIsNone, markBfoHistoryNone } from '../src/utils/bfoHistory.js';
+import { parseBfoHistory, bfoHistoryIsFresh, bfoHistoryTargets, bfoHistoryMissingNameIssues, BFO_HISTORY_HEADER, bfoHistoryRowKey, setBfoHistoryIgnored, setBfoHistoryOk, bfoHistoryMarks, bfoHistoryIsNone, markBfoHistoryNone, bfoHistoryReviewState } from '../src/utils/bfoHistory.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -104,6 +104,19 @@ check('ignore: on no history', setBfoHistoryIgnored(null, ['a|'], true), { ignor
   const p = { id: 'n', company: 'NoOpps', bfoCompanyName: 'NoOpps Inc', bfoHistory: none };
   const [t] = bfoHistoryTargets([{ contact: {} }], () => p, now);
   check('none: target fresh and flagged', [t.fresh, t.noHistory], [true, true]);
+}
+
+{
+  const rows = [{ name: 'Renewal', closeDate: 'Jan 1, 2026' }, { name: 'New', closeDate: 'Feb 1, 2026' }];
+  const at = '2026-11-10T00:00:00Z';
+  const [k1, k2] = rows.map(bfoHistoryRowKey);
+  check('review: never pasted / null is none', [bfoHistoryReviewState(null), bfoHistoryReviewState({ rows })], ['none', 'none']);
+  check('review: marked no history is none', bfoHistoryReviewState(markBfoHistoryNone(null, at)), 'none');
+  check('review: empty paste is none', bfoHistoryReviewState({ rows: [], pastedAt: at }), 'none');
+  check('review: unmarked rows are open', bfoHistoryReviewState({ rows, pastedAt: at }), 'open');
+  check('review: one marked is open', bfoHistoryReviewState({ rows, pastedAt: at, ok: [k1] }), 'open');
+  check('review: ignored + OK covers all', bfoHistoryReviewState({ rows, pastedAt: at, ok: [k1], ignored: [k2] }), 'reviewed');
+  check('review: all OK', bfoHistoryReviewState({ rows, pastedAt: at, ok: [k1, k2] }), 'reviewed');
 }
 
 if (failures) {

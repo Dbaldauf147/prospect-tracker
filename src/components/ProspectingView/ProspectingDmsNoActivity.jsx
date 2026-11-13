@@ -6,16 +6,23 @@
 // and "activity" is the same per-contact outreach that chart counts: a
 // HubSpot email or call from the Activity tab's index, or HubSpot's Last
 // Contacted date (utils/tieredAccountActivity, decisionMakersWithoutActivity).
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { BulkContactEditModal } from '../common/BulkContactEditModal';
-import { ContactsCampaignBulkAdd } from '../ProspectModal/ContactCampaignAdd';
+import { ContactsCampaignBulkAdd, EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
+import { campaignsByRecency } from '../../utils/campaignPicker';
+import { campaignAddresses } from '../../utils/campaignAddContact';
+import { normEmail } from '../../utils/campaignRoster';
+import { primarySubject } from '../../utils/campaignSubjects';
 import { useDmsNoActivity, DMS_WINDOWS as WINDOWS, readDmsWindow as readWindow, writeDmsWindow, dmsWindowLabel as windowLabel } from '../../hooks/useDmsNoActivity';
 import { daysSince, accountStatusOf } from '../../utils/tieredAccountActivity';
 import { reportingTier } from '../../utils/tierSource.js';
 import { formatDateDisplay } from '../../utils/isoDate';
 import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
-import { bfoHistoryIsNone } from '../../utils/bfoHistory';
+import { bfoHistoryIsNone, bfoHistoryReviewState } from '../../utils/bfoHistory';
 import { useBiggestDeals } from '../../hooks/useBiggestDeals';
 import { dealMid } from '../../utils/prospectingDeals.js';
 import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
@@ -41,6 +48,14 @@ const sitesOf = (a) => {
   const n = Number(String(v).replace(/,/g, ''));
   return Number.isFinite(n) ? n : null;
 };
+const campaignLabel = (c) => c?.title || primarySubject(c) || '(untitled campaign)';
+// The BFO History Updated cell's fill: green once every pasted row is
+// marked Ignored or OK, grey when there is no history to review.
+const BFO_FILL = {
+  reviewed: { background: '#DCFCE7', color: '#166534' },
+  none: { background: '#E2E8F0', color: '#475569' },
+};
+const fillPill = (fill) => (fill ? { ...fill, display: 'inline-block', padding: '0 6px', borderRadius: 4, fontWeight: 600 } : undefined);
 const toIso = (ms) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -48,6 +63,38 @@ const toIso = (ms) => {
 
 export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, cdmName = '', onSelectProspect, onOpenContact = null }) {
   const { lists, accountOf, noIndex } = useDmsNoActivity({ prospects, settings, cdmName });
+
+  // The saved email campaigns, read the way the campaign pop-ups read them
+  // and again whenever one of them adds someone, so the Email Campaign
+  // column follows an Add to Campaign made from this page.
+  const auth = useAuth();
+  const uid = auth?.user?.uid || null;
+  const [campaigns, setCampaigns] = useState([]);
+  useEffect(() => {
+    let live = true;
+    const load = async () => {
+      if (!uid) { if (live) setCampaigns([]); return; }
+      try {
+        const snap = await getDoc(doc(db, 'emailCampaigns', uid));
+        if (live) setCampaigns(snap.exists() ? (snap.data().campaigns || []) : []);
+      } catch { /* keep what we had */ }
+    };
+    load();
+    window.addEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load);
+    return () => { live = false; window.removeEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load); };
+  }, [uid]);
+  // email -> the campaigns it is on, most recently active first.
+  const campaignsByEmail = useMemo(() => {
+    const out = new Map();
+    for (const { campaign } of campaignsByRecency(campaigns)) {
+      const label = campaignLabel(campaign);
+      for (const addr of campaignAddresses(campaign)) {
+        if (!out.has(addr)) out.set(addr, []);
+        if (!out.get(addr).includes(label)) out.get(addr).push(label);
+      }
+    }
+    return out;
+  }, [campaigns]);
 
   const [windowDays, setWindowState] = useState(readWindow);
   const setWindow = (w) => {
@@ -77,8 +124,9 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       name: nameOf(contact),
       tier: account ? reportingTier(account) : '',
       status: accountStatusOf(account),
+      campaigns: campaignsByEmail.get(normEmail(contact.email)) || [],
     };
-  }), [lists, windowDays, accountOf, deals]);
+  }), [lists, windowDays, accountOf, deals, campaignsByEmail]);
 
   // Bulk actions: tick rows (or the header box for every row on screen),
   // then Add to Campaign or Bulk Edit. Only rows still on screen count, so
@@ -244,16 +292,34 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       },
       render: r => {
         const h = r.account?.bfoHistory;
-        if (!h?.pastedAt) return <span style={{ color: '#94A3B8' }}>Never</span>;
+        const state = bfoHistoryReviewState(h);
+        if (!h?.pastedAt) return <span style={fillPill(BFO_FILL.none)} title="No BFO History pasted yet">Never</span>;
         const none = bfoHistoryIsNone(h);
         const n = (h.rows || []).length;
+        const title = state === 'none'
+          ? (none ? 'Marked as having no BFO history' : 'No opportunities pasted')
+          : state === 'reviewed'
+            ? `All ${n} opportunit${n === 1 ? 'y' : 'ies'} marked Ignored or OK`
+            : `${n} opportunit${n === 1 ? 'y' : 'ies'} pasted, some not yet marked Ignored or OK`;
         return (
-          <span title={none ? 'Marked as having no BFO history' : `${n} opportunit${n === 1 ? 'y' : 'ies'} pasted`}>
+          <span title={title} style={fillPill(BFO_FILL[state])}>
             {formatDateDisplay(toIso(Date.parse(h.pastedAt)))}
-            {none && <span style={{ color: '#94A3B8', fontSize: '0.7rem' }}> no history</span>}
+            {none && <span style={{ fontSize: '0.7rem', fontWeight: 400 }}> no history</span>}
           </span>
         );
       },
+    },
+    {
+      // The saved email campaigns this person is on (Draft Emails > Email
+      // Campaigns), most recently active first.
+      key: 'emailCampaigns', label: 'Email Campaign', defaultWidth: 200,
+      headerTitle: 'The saved email campaigns (Draft Emails > Email Campaigns) this contact has been added to, most recently active first.',
+      getSortValue: r => r.campaigns.join('; ').toLowerCase() || null,
+      getFilterValue: r => r.campaigns.join('; '),
+      exportValue: r => r.campaigns.join('; '),
+      render: r => (r.campaigns.length
+        ? <span title={r.campaigns.join('\n')}>{r.campaigns.join('; ')}</span>
+        : blank),
     },
     {
       key: 'daysSince', label: 'Days Since', defaultWidth: 110,
