@@ -2,6 +2,7 @@
 // company's Corporate Compliance answers flag for its pop-up. Run:
 //   node scripts/complianceFrameworkFlags.test.mjs
 import { complianceFlaggedFrameworks } from '../src/utils/complianceFrameworkFlags.js';
+import { computeListFlags } from '../src/utils/listFlags.js';
 import { companyScreeningKey } from '../src/data/corporateComplianceScreening.js';
 
 let failures = 0;
@@ -24,6 +25,15 @@ check('Derived Yes shown on the card flags CA SB', [...complianceFlaggedFramewor
 check('Derived No does not', [...complianceFlaggedFrameworks(['US LBM'], {}, { [key]: { 'california__sb-253': 'No' } })], []);
 check('Hand-picked No beats a derived Yes', [...complianceFlaggedFrameworks(['US LBM'], { [key]: { 'california__sb-253': 'No', 'california__sb-261': 'No' } }, { [key]: { 'california__sb-253': 'Yes', 'california__sb-261': 'Yes' } })], []);
 check('Card name "US LBM Holdings, LLC" matches popup "US LBM"', [...complianceFlaggedFrameworks(['US LBM'], undefined, { [companyScreeningKey('US LBM Holdings, LLC')]: { 'california__sb-253': 'Yes' } })], ['CA SB']);
+
+// computeListFlags: the shared Frameworks-column source.
+const shownYes = { [key]: { 'california__sb-253': 'Yes' } };
+const f1 = await computeListFlags(['US LBM'], { prospects: [{ company: 'US LBM' }], compliance: { shown: shownYes } });
+check('Frameworks column gets CA SB, marked DAN', [[...(f1.get('us lbm') || [])], [...(f1.compliance.get('us lbm') || [])]], [['CA SB'], ['CA SB']]);
+const f2 = await computeListFlags(['US LBM'], { prospects: [{ company: 'US LBM' }] });
+check('Without compliance opted in, nothing extra', [...(f2.get('us lbm') || [])], []);
+const f3 = await computeListFlags(['Big Co'], { prospects: [{ company: 'Big Co', goesBy: 'US LBM', frameworks: ['CA SB'] }], compliance: { shown: shownYes } });
+check('Already flagged by hand: shown, not marked DAN', [[...(f3.get('big co') || [])], f3.compliance.has('big co')], [['CA SB'], false]);
 
 if (failures) { console.error(`\n${failures} failing`); process.exit(1); }
 console.log('\nall passed');

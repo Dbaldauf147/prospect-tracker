@@ -35,7 +35,8 @@ import {
   normalizeAccount, peFirmAccountNames, peFirmOppRows, peFirmPortfolio,
 } from '../../utils/peFirmOpps';
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
-import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { computeListFlags, useComplianceFlagSource } from '../../utils/listFlags';
+import { FrameworkFlagPill } from '../common/FrameworkFlagPill';
 import { useSavedAnalyses } from '../../hooks/useSavedAnalyses';
 import SavedAnalysisLink from '../SavedAnalysisLink';
 import { getServiceCategories, serviceBucketOf, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
@@ -801,13 +802,14 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     };
   }, []);
   const [firmFlags, setFirmFlags] = useState(() => new Map());
+  const complianceFlagSource = useComplianceFlagSource(settings);
   useEffect(() => {
     let cancelled = false;
-    computeListFlags(peFirms.map(p => p.company).filter(Boolean), { prospects: peFirms })
+    computeListFlags(peFirms.map(p => p.company).filter(Boolean), { prospects: peFirms, compliance: complianceFlagSource })
       .then(flags => { if (!cancelled) setFirmFlags(flags); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [peFirms, firmFlagVersion]);
+  }, [peFirms, firmFlagVersion, complianceFlagSource]);
   const frameworksOf = useCallback(
     (pe) => [...(firmFlags.get(String(pe?.company || '').toLowerCase().trim()) || [])],
     [firmFlags],
@@ -2353,12 +2355,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                               <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>
                             ) : (
                               <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
-                                {flags.map(label => {
-                                  const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
-                                  return (
-                                    <span key={label} style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}>{label}</span>
-                                  );
-                                })}
+                                {flags.map(label => (
+                                  <FrameworkFlagPill key={label} label={label} dan={!!firmFlags.compliance?.get(String(pe?.company || '').toLowerCase().trim())?.has(label)} />
+                                ))}
                               </span>
                             )}
                           </div>
@@ -2821,6 +2820,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
   // is saved elsewhere (custom coverage-changed event) or another tab
   // writes to storage, so the column stays in step with those surfaces.
   const [listFlagsByCompany, setListFlagsByCompany] = useState(() => new Map());
+  const complianceFlagSource = useComplianceFlagSource(settings);
   const [flagVersion, setFlagVersion] = useState(0);
   useEffect(() => {
     const bump = () => setFlagVersion(v => v + 1);
@@ -2853,11 +2853,11 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
         if (!cancelled) setListFlagsByCompany(new Map());
         return;
       }
-      const flags = await computeListFlags(pcNames, { prospects });
+      const flags = await computeListFlags(pcNames, { prospects, compliance: complianceFlagSource });
       if (!cancelled) setListFlagsByCompany(flags);
     })();
     return () => { cancelled = true; };
-  }, [pcNames, prospects, flagVersion]);
+  }, [pcNames, prospects, flagVersion, complianceFlagSource]);
 
   // Dropdown vocabulary: every PE firm that contributed rows + every
   // distinct PE Owner set on a Table View prospect, deduped
@@ -2927,6 +2927,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
           clientManager: pc.clientManager || '',
           targetAccount: pc.targetAccount || '',
           frameworks: [...(listFlagsByCompany.get((pc.companyName || '').trim().toLowerCase()) || [])],
+          frameworksDan: listFlagsByCompany.compliance?.get((pc.companyName || '').trim().toLowerCase()) || null,
           pcDescription: pc.pcDescription || '',
           notes: pc.notes || '',
         });
@@ -2975,16 +2976,9 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
           ? <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>
           : (
             <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-              {r.frameworks.map(label => {
-                const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
-                return (
-                  <span
-                    key={label}
-                    title={`Flagged on the ${label} list`}
-                    style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}
-                  >{label}</span>
-                );
-              })}
+              {r.frameworks.map(label => (
+                <FrameworkFlagPill key={label} label={label} dan={!!r.frameworksDan?.has(label)} title={`Flagged on the ${label} list`} />
+              ))}
             </span>
           )
       ),

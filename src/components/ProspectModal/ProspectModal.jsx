@@ -64,7 +64,8 @@ import { withDefaultCdm } from '../../utils/defaultCdm';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { nameFromEmail } from '../../utils/nameFromEmail';
 import { splitFullName } from '../../utils/splitFullName';
-import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { computeListFlags, useComplianceFlagSource, COMPLIANCE_FLAG_MARK } from '../../utils/listFlags';
+import { FrameworkFlagPill } from '../common/FrameworkFlagPill';
 import { complianceFlaggedFrameworks } from '../../utils/complianceFrameworkFlags.js';
 import { companiesMatch, companyRosterContacts } from '../../utils/companyRoster';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
@@ -8716,6 +8717,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Companies sheet. Refreshes when the portfolio roster changes or
   // a list-tab mapping is saved (custom coverage-changed event).
   const [portfolioListFlags, setPortfolioListFlags] = useState(() => new Map());
+  const complianceFlagSource = useComplianceFlagSource(settings);
   const [portfolioFlagVersion, setPortfolioFlagVersion] = useState(0);
   useEffect(() => {
     const bump = () => setPortfolioFlagVersion(v => v + 1);
@@ -8736,11 +8738,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (!cancelled) setPortfolioListFlags(new Map());
         return;
       }
-      const flags = await computeListFlags(names, { prospects });
+      const flags = await computeListFlags(names, { prospects, compliance: complianceFlagSource });
       if (!cancelled) setPortfolioListFlags(flags);
     })();
     return () => { cancelled = true; };
-  }, [fields.portfolioCompanies, portfolioFlagVersion, prospects]);
+  }, [fields.portfolioCompanies, portfolioFlagVersion, prospects, complianceFlagSource]);
 
   // Frameworks that come from a *confirmed Lists-page mapping* for this
   // company (My Accounts or Portfolio scope). This is the ONLY source we
@@ -9765,6 +9767,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 updateSettings={updateSettings}
                 updateSettingsPath={updateSettingsPath}
               />
+            ))}
+            {/* The same green tick for a framework flagged on Sites >
+                Corporate Compliance, marked DAN. Skipped when the Lists page
+                already maps it, which draws its own tick above. No x: it is
+                changed on the compliance card. */}
+            {!isNew && [...complianceFrameworkFlags].filter(l => !companyFrameworkFlags.has(l)).map(l => (
+              <span
+                key={`cc-${l}`}
+                data-compliance-badge={l}
+                title={`${l}: ${COMPLIANCE_FLAG_MARK.title}`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                  padding: '0.05rem 0.4rem',
+                  background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 999,
+                  fontSize: '0.64rem', fontWeight: 700, color: '#166534', whiteSpace: 'nowrap',
+                }}
+              >
+                <span aria-hidden="true">✓</span>{l}
+                <span style={{ padding: '0 4px', borderRadius: 999, fontSize: '0.52rem', letterSpacing: '0.03em', background: COMPLIANCE_FLAG_MARK.bg, color: COMPLIANCE_FLAG_MARK.text }}>{COMPLIANCE_FLAG_MARK.label}</span>
+              </span>
             ))}
             {!isNew && fields.company && (
               <button
@@ -14587,22 +14609,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 {(() => {
                                   const flagSet = portfolioListFlags.get((r.companyName || '').toLowerCase().trim());
                                   const flags = flagSet ? [...flagSet] : [];
+                                  const danSet = portfolioListFlags.compliance?.get((r.companyName || '').toLowerCase().trim());
                                   return (
                                     <td style={{ padding: '0.15rem 0.3rem' }}>
                                       {flags.length === 0
                                         ? <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>
                                         : (
                                           <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-                                            {flags.map(label => {
-                                              const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
-                                              return (
-                                                <span
-                                                  key={label}
-                                                  title={`Flagged on the ${label} list`}
-                                                  style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}
-                                                >{label}</span>
-                                              );
-                                            })}
+                                            {flags.map(label => (
+                                              <FrameworkFlagPill key={label} label={label} dan={!!danSet?.has(label)} title={`Flagged on the ${label} list`} />
+                                            ))}
                                           </span>
                                         )
                                       }
