@@ -13,6 +13,7 @@ import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tag
 import { contactEditPropsEqual, contactTagString } from '../../utils/contactEditProps';
 import { createTagWriter } from '../../utils/tagWriteQueue';
 import { applyTagPreset, presetTagsFrom, savePreset, deletePreset, presetSummary, applyTagPresetToContact } from '../../utils/tagPresets';
+import { TagPresetEditor } from './TagPresetEditor';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
 // for the choices under them. Hoisted out of the render so the two header
@@ -1936,6 +1937,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     onSaveTagPresets(savePreset(tagPresets, name, tags));
   }
 
+  // The preset open in the editor (TagPresetEditor), by id.
+  const [editingPresetId, setEditingPresetId] = useState(null);
+  const editingPreset = editingPresetId ? (tagPresets || []).find(p => p.id === editingPresetId) || null : null;
+
   function removePreset(preset) {
     if (!onSaveTagPresets) return;
     if (!window.confirm(`Delete the tag preset "${preset.name}"? Contacts already tagged with it keep their tags.`)) return;
@@ -2655,6 +2660,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                           >{p.name}</button>
                           <button
                             type="button"
+                            data-tag-preset-edit={p.name}
+                            onClick={() => setEditingPresetId(p.id)}
+                            title={`Edit the "${p.name}" preset: rename it, or change the answer it sets for each tag`}
+                            aria-label={`Edit the ${p.name} preset`}
+                            style={{ padding: '0.12rem 0.35rem', border: 'none', borderLeft: '1px solid #EDE9FE', background: 'transparent', color: '#8B5CF6', fontSize: '0.66rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                          >&#9998;</button>
+                          <button
+                            type="button"
                             onClick={() => removePreset(p)}
                             title={`Delete the "${p.name}" preset`}
                             style={{ padding: '0.12rem 0.4rem', border: 'none', borderLeft: '1px solid #EDE9FE', background: 'transparent', color: '#A78BFA', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit' }}
@@ -2670,6 +2683,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                         title="Save this contact's answers as a preset you can apply to other contacts in one click. Saving under an existing name updates that preset."
                         style={{ marginLeft: 'auto', padding: '0.12rem 0.55rem', border: '1px dashed #A78BFA', borderRadius: 999, background: '#fff', color: '#6D28D9', fontSize: '0.66rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
                       >+ Save as preset</button>
+                      {editingPreset && (
+                        <TagPresetEditor
+                          preset={editingPreset}
+                          presets={tagPresets || []}
+                          tags={visibleTagOptions}
+                          onSave={onSaveTagPresets}
+                          onClose={() => setEditingPresetId(null)}
+                        />
+                      )}
                     </div>
                   )}
                   {/* Tall enough for the whole vocabulary at once — the point

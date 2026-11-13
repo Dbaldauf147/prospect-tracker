@@ -3,7 +3,7 @@
 //
 // A preset is a named set of answers for the contact popup's tag table,
 // saved off one contact and applied to another in one click.
-import { presetTagsFrom, applyTagPreset, savePreset, deletePreset, presetSummary, applyTagPresetToContact } from '../src/utils/tagPresets.js';
+import { presetTagsFrom, applyTagPreset, savePreset, deletePreset, presetSummary, applyTagPresetToContact, updatePreset } from '../src/utils/tagPresets.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -110,6 +110,22 @@ eq(presetSummary({ tags: { ESG: { answer: 'yes', status: '' }, Procurement: { an
     preset: { tags: { 'Efficiency / Renewables': { answer: 'no', status: '' } } }, tags: TAGS,
   });
   eq(Object.keys(twin.records), ['Efficiency / Renewables'], 'bulk: a twin record under the other spelling is folded into one');
+}
+
+// updatePreset: the preset editor's save.
+{
+  const list = [
+    { id: 'a', name: 'ESG Director', tags: { ESG: { answer: 'yes', status: '' } } },
+    { id: 'b', name: 'Procurement', tags: { Procurement: { answer: 'yes', status: '' } } },
+  ];
+  const ok = updatePreset(list, 'a', { name: ' ESG Lead ', tags: { ESG: { answer: 'yes', status: 'sold' }, Utilities: { answer: 'no', status: '' }, 'Climate Risk': { answer: '', status: '' } } });
+  eq(ok.error, '', 'edit: saves');
+  eq(ok.list[0], { id: 'a', name: 'ESG Lead', tags: { ESG: { answer: 'yes', status: 'sold' }, Utilities: { answer: 'no', status: '' } } }, 'edit: renamed, answers changed, blank row dropped');
+  eq(ok.list[1], list[1], 'edit: other presets untouched');
+  eq(updatePreset(list, 'a', { name: 'procurement', tags: {} }).error, 'Another preset is already called "procurement".', 'edit: a name clash is refused');
+  eq(updatePreset(list, 'a', { name: 'esg director', tags: {} }).error, '', 'edit: re-casing its own name is fine');
+  eq(updatePreset(list, 'a', { name: '  ', tags: {} }).error, 'Give the preset a name.', 'edit: blank name refused');
+  eq(updatePreset(list, 'zz', { name: 'x', tags: {} }).list, list, 'edit: missing preset leaves the list alone');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

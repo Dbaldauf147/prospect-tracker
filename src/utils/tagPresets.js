@@ -66,6 +66,30 @@ export function savePreset(list, name, tags) {
   return [...cur, { id, name: clean, tags }];
 }
 
+// The preset list with preset `id` renamed and given `tags` (the preset
+// editor). Returns { list, error }: a blank name, or a name another preset
+// already has (any case), is refused with the reason and the list unchanged.
+// Tags with neither an answer nor a status are dropped, so clearing a row in
+// the editor takes that tag out of the preset rather than saving a blank.
+export function updatePreset(list, id, { name, tags }) {
+  const cur = Array.isArray(list) ? list : [];
+  const idx = cur.findIndex(p => p?.id === id);
+  if (idx === -1) return { list: cur, error: 'That preset no longer exists.' };
+  const clean = String(name || '').trim();
+  if (!clean) return { list: cur, error: 'Give the preset a name.' };
+  const clash = cur.some((p, i) => i !== idx && String(p?.name || '').trim().toLowerCase() === clean.toLowerCase());
+  if (clash) return { list: cur, error: `Another preset is already called "${clean}".` };
+  const kept = {};
+  for (const [tag, rec] of Object.entries(tags || {})) {
+    const answer = rec?.answer || '';
+    const status = rec?.status || '';
+    if (answer || status) kept[tag] = { answer, status };
+  }
+  const next = [...cur];
+  next[idx] = { ...cur[idx], name: clean, tags: kept };
+  return { list: next, error: '' };
+}
+
 export function deletePreset(list, id) {
   return (Array.isArray(list) ? list : []).filter(p => p?.id !== id);
 }
