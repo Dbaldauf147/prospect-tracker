@@ -51,7 +51,7 @@ import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQue
 import { ProspectingHistory } from './ProspectingHistory';
 import { ProspectingCompanies } from './ProspectingCompanies';
 import { ProspectingTiered } from './ProspectingTiered';
-import { ProspectingDmsNoActivity } from './ProspectingDmsNoActivity';
+import { ProspectingDmsNoActivityTabs } from './ProspectingDmsNoActivity';
 import { ProspectingLogic } from './ProspectingLogic';
 import { ProspectingNews } from './ProspectingNews';
 
@@ -117,13 +117,15 @@ const SUBTABS = [
   { key: 'pcs', label: 'PCs' },
   { key: 'tiered', label: 'Tiered Activity' },
   { key: 'dmsNoActivity', label: 'DMs Without Activity' },
-  { key: 'dmsNoPlanned', label: 'No Activity and no Planned Activity' },
   { key: 'news', label: 'News' },
   { key: 'logic', label: 'Prospecting Logic' },
 ];
 function readSavedSubtab() {
   try {
     const v = localStorage.getItem(SUBTAB_KEY);
+    // 'dmsNoPlanned' was briefly its own subtab; it now lives inside DMs
+    // Without Activity (see ProspectingDmsNoActivityTabs).
+    if (v === 'dmsNoPlanned') return 'dmsNoActivity';
     return SUBTABS.some(t => t.key === v) ? v : 'ladder';
   } catch { return 'ladder'; }
 }
@@ -1584,13 +1586,8 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
         <ProspectingLogic steps={steps} settings={settings} updateSettings={updateSettings} canEdit={canEdit} maxWidth={PAGE_MAX} />
       ) : subtab === 'news' ? (
         <ProspectingNews />
-      ) : subtab === 'dmsNoActivity' || subtab === 'dmsNoPlanned' ? (
-        // Two subtabs, one page: the second leaves out anyone already on an
-        // email campaign. Keyed so switching between them starts the
-        // selection and filters fresh.
-        <ProspectingDmsNoActivity
-          key={subtab}
-          noPlanned={subtab === 'dmsNoPlanned'}
+      ) : subtab === 'dmsNoActivity' ? (
+        <ProspectingDmsNoActivityTabs
           prospects={prospects}
           settings={settings}
           updateSettings={updateSettings}

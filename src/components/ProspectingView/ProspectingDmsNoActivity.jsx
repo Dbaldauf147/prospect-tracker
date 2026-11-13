@@ -90,6 +90,54 @@ const toIso = (ms) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+// DMs Without Activity's own subtabs: everyone, and "No Activity and no
+// Planned Activity" (the same people less anyone on an email campaign).
+// The one last open is remembered per browser. Someone who had the short-
+// lived top-level 'dmsNoPlanned' subtab open lands on its inner one.
+const DMS_TABS = [
+  { key: 'all', label: 'DMs Without Activity' },
+  { key: 'noPlanned', label: 'No Activity and no Planned Activity' },
+];
+const DMS_TAB_KEY = 'prospecting-dms-no-activity:subtab';
+const readDmsTab = () => {
+  try {
+    const v = localStorage.getItem(DMS_TAB_KEY);
+    if (DMS_TABS.some(t => t.key === v)) return v;
+    return localStorage.getItem('prospecting-view:active-subtab') === 'dmsNoPlanned' ? 'noPlanned' : 'all';
+  } catch { return 'all'; }
+};
+
+export function ProspectingDmsNoActivityTabs(props) {
+  const [tab, setTabState] = useState(readDmsTab);
+  const setTab = (k) => {
+    setTabState(k);
+    try { localStorage.setItem(DMS_TAB_KEY, k); } catch { /* per-viewer convenience only */ }
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div role="tablist" style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid #E2E8F0', margin: '0 1.25rem 0.6rem' }}>
+        {DMS_TABS.map(t => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+            style={{
+              padding: '0.35rem 0.8rem', border: 'none', background: 'none', fontFamily: 'inherit',
+              fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', marginBottom: -1,
+              color: tab === t.key ? '#0A66C2' : '#64748B',
+              borderBottom: `2px solid ${tab === t.key ? '#0A66C2' : 'transparent'}`,
+            }}
+          >{t.label}</button>
+        ))}
+      </div>
+      {/* Keyed so switching subtabs starts the selection and filters fresh. */}
+      <ProspectingDmsNoActivity key={tab} {...props} noPlanned={tab === 'noPlanned'} />
+    </div>
+  );
+}
+
 // `noPlanned`: the "No Activity and no Planned Activity" subtab. The same
 // people, less anyone already on an email campaign, since a campaign is
 // outreach already lined up for them. Adding someone to a campaign from
