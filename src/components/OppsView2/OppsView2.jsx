@@ -6744,6 +6744,136 @@ function TrackedMarginHint({ suggestion, current, onUse }) {
 const requiredHintStyle = { fontSize: '0.68rem', color: '#DC2626', marginTop: 3 };
 const requiredFieldLook = { border: '1px solid #FCA5A5', background: '#FEF2F2' };
 
+// Not Sold "check back": a lost deal parked to come back on the Opps table
+// after the term the client signed with someone else should be up, to ask
+// whether they're happy with that provider. The close-out popup sets the
+// opp's Follow Up that far out, so the row rides back up the table by Call
+// In like any other callback, and keeps the why on the row under
+// `_resurface` ({ dueOn, amount, unit, note, setOn, closedOn }). The Loss
+// Notes cell shows it as a pill that opens the note. Cleared by writing
+// null rather than deleting, so a stale copy on the other device can't
+// merge it back.
+const RESURFACE_FIELD = '_resurface';
+const CHECK_BACK_UNITS = ['months', 'years'];
+
+function readResurface(row) {
+  const r = row?.[RESURFACE_FIELD];
+  if (!r || typeof r !== 'object' || !/^\d{4}-\d{2}-\d{2}$/.test(String(r.dueOn || ''))) return null;
+  return r;
+}
+
+// fromISO plus `amount` months or years, as YYYY-MM-DD. A day the target
+// month doesn't have (Jan 31 + 1 month) lands on that month's last day.
+function addTermISO(fromISO, amount, unit) {
+  const [y, m, d] = String(fromISO || '').split('-').map(n => parseInt(n, 10));
+  const n = Math.floor(Number(amount));
+  if (![y, m, d].every(Number.isFinite) || !Number.isFinite(n) || n < 1) return '';
+  const months = unit === 'years' ? n * 12 : n;
+  const target = new Date(y, m - 1 + months, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(d, lastDay));
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
+}
+
+const termLabel = (amount, unit) => {
+  const n = Number(amount) || 0;
+  const word = unit === 'years' ? 'year' : 'month';
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+};
+
+// Competition is the kind of deal (Only SE, RFP), not who won it, so the
+// default note doesn't try to name the provider.
+const DEFAULT_CHECK_BACK_NOTE = 'Lost this one. Checking back once their current term is up to see if they\'re happy with their provider.';
+
+// The Loss Notes cell's pill for a check-back opp: amber with the date
+// while it's waiting, purple once the date has come and the opp is back.
+// Clicking it opens the note saying why the opp is here.
+function ResurfaceNote({ resurface, account, onRemove }) {
+  const [open, setOpen] = useState(false);
+  const days = daysFromToday(resurface.dueOn);
+  const due = days != null && days <= 0;
+  const look = due
+    ? { background: '#EDE9FE', color: '#5B21B6', border: '1px solid #C4B5FD' }
+    : { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' };
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        title={due ? 'Back on the table to check in. Click to see why.' : `Comes back on ${formatDateDisplay(resurface.dueOn)}. Click to see why.`}
+        style={{
+          ...look, flexShrink: 0, padding: '1px 7px', borderRadius: 999,
+          fontSize: '0.66rem', fontWeight: 700, fontFamily: 'inherit',
+          cursor: 'pointer', whiteSpace: 'nowrap',
+        }}
+      >{due ? 'Resurfaced' : `Check back ${formatDateDisplay(resurface.dueOn)}`}</button>
+      {open && createPortal(
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.35)',
+            zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(440px, 92vw)', background: '#fff', borderRadius: 8,
+              boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)', overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '0.8rem 1rem', borderBottom: '1px solid var(--color-border-light)', background: look.background }}>
+              <div style={{ fontSize: '0.92rem', fontWeight: 700, color: look.color }}>
+                {due ? 'Why this opp is back' : 'Coming back to check in'}
+              </div>
+              <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                <strong>{account || 'This opp'}</strong>
+                {resurface.closedOn ? <> &middot; closed Not Sold {formatDateDisplay(resurface.closedOn)}</> : null}
+              </div>
+            </div>
+            <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem', fontSize: '0.82rem', color: 'var(--color-text)' }}>
+              <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                {String(resurface.note || '').trim() || 'No note was left.'}
+              </div>
+              <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>
+                {resurface.setOn ? `Set on ${formatDateDisplay(resurface.setOn)} to come back ` : 'Set to come back '}
+                {resurface.amount ? `in ${termLabel(resurface.amount, resurface.unit)}, ` : ''}
+                on {formatDateDisplay(resurface.dueOn)}.
+              </div>
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', padding: '0.55rem 1rem',
+              borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+            }}>
+              <button
+                type="button"
+                onClick={() => { if (window.confirm('Remove the check-back note from this opp? Its Follow Up date stays as it is.')) { onRemove(); setOpen(false); } }}
+                style={{
+                  padding: '0.3rem 0.65rem', background: 'transparent', border: '1px solid var(--color-border)',
+                  borderRadius: 4, fontSize: '0.76rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: 'var(--color-text-muted)', cursor: 'pointer',
+                }}
+              >Remove note</button>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setOpen(false)}
+                style={{
+                  padding: '0.3rem 0.8rem', background: 'var(--color-accent)', border: '1px solid var(--color-accent)',
+                  borderRadius: 4, fontSize: '0.76rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: '#fff', cursor: 'pointer',
+                }}
+              >Close</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 // Popup that fires after Stage flips to "Not Sold". Prompts the user to
 // fill in the close-out columns (Close Date, Reason Not Sold, Final
 // Margin, Competition) so the downstream reporting tabs (AgentsView's
@@ -6764,6 +6894,15 @@ function NotSoldFollowUpModal({ opp, revertStage = '', onCancelNotSold = null, o
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
   const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
   const [lossNotes, setLossNotes] = useState(String(opp?.[LOSS_NOTES_COLUMN] ?? ''));
+  // Check back later: put the opp back in the Call In a term from now.
+  // Seeded from a check-back already on the opp, so reopening the popup
+  // shows (and keeps) what was set.
+  const existingCheckBack = readResurface(opp);
+  const [checkBack, setCheckBack] = useState(!!existingCheckBack);
+  const [checkBackAmount, setCheckBackAmount] = useState(String(existingCheckBack?.amount || 1));
+  const [checkBackUnit, setCheckBackUnit] = useState(CHECK_BACK_UNITS.includes(existingCheckBack?.unit) ? existingCheckBack.unit : 'years');
+  const [checkBackNote, setCheckBackNote] = useState(existingCheckBack ? String(existingCheckBack.note || '') : DEFAULT_CHECK_BACK_NOTE);
+  const checkBackDueOn = checkBack ? addTermISO(todayISO(), checkBackAmount, checkBackUnit) : '';
 
   // Everything in the opp's Scope is what this close-out gives up, listed
   // compactly so a multi-service deal reads at a glance instead of as one
@@ -6829,9 +6968,10 @@ function NotSoldFollowUpModal({ opp, revertStage = '', onCancelNotSold = null, o
   // win/loss reporting is built on, and the close-out is the last moment
   // anyone still knows it. Save stays disabled until it's chosen.
   const competitionMissing = !hasCompetitionValue(competition);
+  const checkBackInvalid = checkBack && !checkBackDueOn;
 
   function handleSave() {
-    if (competitionMissing) return;
+    if (competitionMissing || checkBackInvalid) return;
     // Same flattening the Follow Up Notes popup does: drop wholly-empty rows,
     // join the notes with newlines and keep the parallel Waiting On array
     // index-aligned with them.
@@ -6842,6 +6982,9 @@ function NotSoldFollowUpModal({ opp, revertStage = '', onCancelNotSold = null, o
       finalMargin: finalMargin.trim(),
       competition: competition.trim(),
       lossNotes: lossNotes.trim(),
+      checkBack: checkBack && checkBackDueOn
+        ? { dueOn: checkBackDueOn, amount: Math.floor(Number(checkBackAmount)), unit: checkBackUnit, note: checkBackNote.trim() }
+        : null,
       nextSteps: kept.map(r => encodeNoteLine(r.note)).join('\n'),
       nextStepsWaiting: kept.map(r => (r.waitingOn || '').trim()),
       nextStepsDone: kept.map(r => (r.doneOn || '').trim()),
@@ -7006,6 +7149,56 @@ function NotSoldFollowUpModal({ opp, revertStage = '', onCancelNotSold = null, o
               style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.45 }}
             />
           </div>
+          {/* Check back later: the opp comes back up the Opps table by
+              Call In once the term is up, with this note on its Loss Notes
+              saying why. */}
+          <div style={{
+            border: `1px solid ${checkBack ? '#FDE68A' : 'var(--color-border-light)'}`,
+            background: checkBack ? '#FFFBEB' : 'transparent',
+            borderRadius: 6, padding: '0.55rem 0.7rem',
+          }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={checkBack} onChange={(e) => setCheckBack(e.target.checked)} />
+              Add back in the Call In to check in later
+            </label>
+            {checkBack && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: '0.8rem', color: 'var(--color-text)' }}>
+                  <span>Bring it back in</span>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={checkBackAmount}
+                    onChange={(e) => setCheckBackAmount(e.target.value)}
+                    aria-label="How many months or years until it comes back"
+                    style={{ ...inputStyle, width: 70, ...(checkBackInvalid ? requiredFieldLook : null) }}
+                  />
+                  <select
+                    value={checkBackUnit}
+                    onChange={(e) => setCheckBackUnit(e.target.value)}
+                    aria-label="Months or years"
+                    style={{ ...inputStyle, width: 'auto' }}
+                  >
+                    <option value="months">months</option>
+                    <option value="years">years</option>
+                  </select>
+                  {checkBackDueOn
+                    ? <span style={{ color: '#92400E', fontWeight: 600 }}>Comes back on {formatDateDisplay(checkBackDueOn)}</span>
+                    : <span style={requiredHintStyle}>Enter a whole number, 1 or more.</span>}
+                </div>
+                <div>
+                  <label style={labelStyle}>Why it is coming back (shown on its Loss Notes)</label>
+                  <textarea
+                    value={checkBackNote}
+                    onChange={(e) => setCheckBackNote(e.target.value)}
+                    rows={2}
+                    style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.45 }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
           <div>
             <label style={labelStyle}>Notes</label>
             <LastCallLine opp={opp} />
@@ -7056,15 +7249,15 @@ function NotSoldFollowUpModal({ opp, revertStage = '', onCancelNotSold = null, o
           <button
             type="button"
             onClick={handleSave}
-            disabled={competitionMissing}
-            title={competitionMissing ? 'Choose a Competition to close this out.' : undefined}
+            disabled={competitionMissing || checkBackInvalid}
+            title={competitionMissing ? 'Choose a Competition to close this out.' : checkBackInvalid ? 'Enter how many months or years until it comes back.' : undefined}
             style={{
               padding: '0.35rem 0.85rem',
-              background: competitionMissing ? '#CBD5E1' : 'var(--color-accent)',
-              border: `1px solid ${competitionMissing ? '#CBD5E1' : 'var(--color-accent)'}`,
+              background: competitionMissing || checkBackInvalid ? '#CBD5E1' : 'var(--color-accent)',
+              border: `1px solid ${competitionMissing || checkBackInvalid ? '#CBD5E1' : 'var(--color-accent)'}`,
               borderRadius: 4,
               fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-              color: '#fff', cursor: competitionMissing ? 'not-allowed' : 'pointer',
+              color: '#fff', cursor: competitionMissing || checkBackInvalid ? 'not-allowed' : 'pointer',
             }}
           >Save</button>
         </div>
@@ -16914,6 +17107,23 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               );
             }
           }
+          if (h === LOSS_NOTES_COLUMN && readResurface(row)) {
+            return (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                <ResurfaceNote
+                  resurface={readResurface(row)}
+                  account={row['Account']}
+                  onRemove={() => updateOppField(row._id, RESURFACE_FIELD, null)}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <EditableCell
+                    value={row[h]}
+                    onChange={(v) => updateOppField(row._id, h, v)}
+                  />
+                </div>
+              </div>
+            );
+          }
           if (h === 'Next Steps') {
             return (
               <NextStepsCell
@@ -18666,7 +18876,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
             competitionOptions={listRegistry.get('competition')?.options || []}
             solutionOptions={listRegistry.get('solutions')?.options || []}
-            onSave={({ closeDate, reason, finalMargin, competition, lossNotes, nextSteps, nextStepsWaiting, nextStepsDone, nextStepsHold, nextStepsWait }) => {
+            onSave={({ closeDate, reason, finalMargin, competition, lossNotes, checkBack, nextSteps, nextStepsWaiting, nextStepsDone, nextStepsHold, nextStepsWait }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
               if (closeDate !== (toISODate(opp['Close Date']) || '')) {
@@ -18683,6 +18893,25 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               }
               if (lossNotes !== String(opp[LOSS_NOTES_COLUMN] ?? '').trim()) {
                 updateOppField(opp._id, LOSS_NOTES_COLUMN, lossNotes);
+              }
+              // Check back later: Follow Up set a term out puts it back in
+              // the Call In (no Follow Up Notes prompt, this popup is that
+              // conversation), and the note rides along for Loss Notes.
+              const prevCheckBack = readResurface(opp);
+              if (checkBack) {
+                if ((toISODate(opp['Follow Up']) || '') !== checkBack.dueOn) {
+                  updateOppField(opp._id, 'Follow Up', checkBack.dueOn, { skipFollowUpPrompt: true });
+                }
+                if (!prevCheckBack || prevCheckBack.dueOn !== checkBack.dueOn || prevCheckBack.note !== checkBack.note
+                  || prevCheckBack.amount !== checkBack.amount || prevCheckBack.unit !== checkBack.unit) {
+                  updateOppField(opp._id, RESURFACE_FIELD, {
+                    ...checkBack,
+                    setOn: prevCheckBack?.dueOn === checkBack.dueOn ? (prevCheckBack.setOn || todayISO()) : todayISO(),
+                    closedOn: closeDate || todayISO(),
+                  });
+                }
+              } else if (prevCheckBack) {
+                updateOppField(opp._id, RESURFACE_FIELD, null);
               }
               // Notes travel as the same pair the Follow Up Notes popup writes:
               // the newline-joined 'Next Steps' text plus the index-aligned
