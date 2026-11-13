@@ -71,6 +71,7 @@ const GROUPS = [
     event: UTILITY_LOOKUP_EVENT,
     keys: [
       'utility-lookup:supplier-overrides',
+      'utility-lookup:site-value-edits',
       'utility-lookup:vendor-decisions',
       'utility-lookup:property-type-map',
     ],
