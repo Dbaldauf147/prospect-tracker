@@ -6,7 +6,7 @@
 // and "activity" is the same per-contact outreach that chart counts: a
 // HubSpot email or call from the Activity tab's index, or HubSpot's Last
 // Contacted date (utils/tieredAccountActivity, decisionMakersWithoutActivity).
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { BulkContactEditModal } from '../common/BulkContactEditModal';
 import { ContactsCampaignBulkAdd } from '../ProspectModal/ContactCampaignAdd';
@@ -17,7 +17,9 @@ import { normEmail } from '../../utils/campaignRoster';
 import { primarySubject } from '../../utils/campaignSubjects';
 import { useDmsNoActivity, DMS_WINDOWS as WINDOWS, readDmsWindow as readWindow, writeDmsWindow, dmsWindowLabel as windowLabel } from '../../hooks/useDmsNoActivity';
 import { daysSince, accountStatusOf } from '../../utils/tieredAccountActivity';
-import { reportingTier } from '../../utils/tierSource.js';
+import { ownTargetTierLabel } from '../../utils/tierSource.js';
+import { NOT_ON_TIER_LIST } from '../../data/enums.js';
+import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { formatDateDisplay } from '../../utils/isoDate';
 import { bfoCompanyNamesOf, markedNoBfoName } from '../../utils/bfoCompanyNames';
 import { bfoHistoryIsNone, bfoHistoryReviewState } from '../../utils/bfoHistory';
@@ -26,6 +28,14 @@ import { dealMid } from '../../utils/prospectingDeals.js';
 import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
 import { DM_TOPICS, matchesDmTopic } from '../../utils/procurementDmFilter';
 
+// The Tier cell: the card's tier, except a "Not on tier list, but Dan
+// target" company (or a blank-tier one ticked as a Dan target) reads
+// Strategic Target, as on My Accounts. Not on tier list shows in red.
+const tierCellOf = (a) => {
+  if (!a) return '';
+  return ownTargetTierLabel(a, String(a.tier || '').trim()) || '';
+};
+const companyKey = (name) => String(name || '').toLowerCase().trim();
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 const chipStyle = (active) => ({ padding: '0.2rem 0.65rem', borderRadius: 999, border: `1px solid ${active ? '#0A66C2' : '#E2E8F0'}`, background: active ? '#EFF6FF' : '#fff', color: active ? '#0A66C2' : '#475569', fontSize: '0.74rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' });
@@ -116,6 +126,29 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     }
     return [...byId.values()];
   }, [lists, windowDays, accountOf]);
+
+  // The Frameworks column: each account's Lists-page flags, worked out the
+  // way My Accounts does (computeListFlags), and redone when a mapping
+  // changes on the Lists page.
+  const [listFlagsByCompany, setListFlagsByCompany] = useState(() => new Map());
+  const [flagVersion, setFlagVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setFlagVersion(v => v + 1);
+    window.addEventListener('my-accounts-coverage-changed', bump);
+    window.addEventListener('storage', bump);
+    return () => {
+      window.removeEventListener('my-accounts-coverage-changed', bump);
+      window.removeEventListener('storage', bump);
+    };
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    const names = dealAccounts.map(a => a.company).filter(Boolean);
+    computeListFlags(names, { prospects: dealAccounts })
+      .then(flags => { if (!cancelled) setListFlagsByCompany(flags); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [dealAccounts, flagVersion]);
   const deals = useBiggestDeals(dealAccounts, settings);
 
   const [dmTopics, setDmTopicsState] = useState(readTopics);
@@ -148,11 +181,12 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       id: String(contact.id || contact.vid || contact.email),
       contact, lastMs, account,
       name: nameOf(contact),
-      tier: account ? reportingTier(account) : '',
+      tier: tierCellOf(account),
+      frameworks: [...(listFlagsByCompany.get(companyKey(account?.company)) || [])],
       status: accountStatusOf(account),
       campaigns: campaignsByEmail.get(normEmail(contact.email)) || [],
     };
-  }), [windowEntries, dmTopics, topicMatches, accountOf, deals, campaignsByEmail]);
+  }), [windowEntries, dmTopics, topicMatches, accountOf, deals, campaignsByEmail, listFlagsByCompany]);
 
   // Bulk actions: tick rows (or the header box for every row on screen),
   // then Add to Campaign or Bulk Edit. Only rows still on screen count, so
@@ -260,7 +294,23 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     {
       key: 'tier', label: 'Tier', defaultWidth: 100,
       getSortValue: r => r.tier || null, getFilterValue: r => r.tier, exportValue: r => r.tier,
-      render: r => r.tier || blank,
+      render: r => (!r.tier ? blank
+        : r.tier.toLowerCase() === NOT_ON_TIER_LIST.toLowerCase() ? <span style={{ color: '#DC2626', fontWeight: 600 }}>{r.tier}</span>
+          : r.tier),
+    },
+    {
+      key: 'frameworks', label: 'Frameworks', defaultWidth: 180,
+      headerTitle: 'The Lists-page frameworks (CDP, GRESB, SBT, CSRD, ...) the company is mapped onto, the same pills as the Frameworks column on My Accounts.',
+      getSortValue: r => r.frameworks.join(', ') || null,
+      getFilterValue: r => r.frameworks.join(', '), exportValue: r => r.frameworks.join(', '),
+      render: r => (!r.frameworks.length ? blank : (
+        <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+          {r.frameworks.map(label => {
+            const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
+            return <span key={label} title={label} style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}>{label}</span>;
+          })}
+        </span>
+      )),
     },
     {
       key: 'vertical', label: 'Vertical', defaultWidth: 150,
