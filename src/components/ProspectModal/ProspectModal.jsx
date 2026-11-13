@@ -401,7 +401,7 @@ function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep, company = '', zoomCompanyName = '', serviceNames = [], serviceOverrides = {}, serviceStatusOf = null, onSetServiceBucket = null }) {
+function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep, company = '', zoomCompanyName = '', serviceNames = [], serviceOverrides = {}, serviceStatusOf = null, onSetServiceBucket = null, onSetServiceStatus = null }) {
   // The Zoom title searches logged for this company on Bulk Add > Zoom
   // Search Log, for the bottom row: per category, which titles have
   // already been pulled and when. Re-read when the log changes elsewhere.
@@ -591,7 +591,25 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                             title={`${name}: ${status || 'no status'} at this company`}
                           >
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: dead ? 'line-through' : 'none' }}>{name}</span>
-                            <span style={{ fontSize: '0.6rem', fontWeight: 700, color: dead ? '#64748B' : '#475569', whiteSpace: 'nowrap' }}>{status || '-'}</span>
+                            {/* This company's status on the service, set right
+                                here - the same field as the Services tab's grid,
+                                so marking one N/A or Not Sold is how a category
+                                gets closed out from this view. */}
+                            {onSetServiceStatus ? (
+                              <select
+                                data-bucket-service-status={name}
+                                value={status || '-'}
+                                onChange={e => onSetServiceStatus(name, e.target.value)}
+                                title={`${name} at this company: ${status || 'no status'}. Pick N/A or Not Sold to rule it out here (only this company).`}
+                                aria-label={`${name} status at this company`}
+                                style={{ fontSize: '0.6rem', fontWeight: 700, fontFamily: 'inherit', padding: '0 1px', border: 'none', borderRadius: 3, background: 'transparent', color: dead ? '#64748B' : '#475569', cursor: 'pointer', maxWidth: 90 }}
+                              >
+                                {!SERVICE_STATUSES.includes(status) && status && <option value={status} disabled>{status}</option>}
+                                {SERVICE_STATUSES.map(st => <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>)}
+                              </select>
+                            ) : (
+                              <span style={{ fontSize: '0.6rem', fontWeight: 700, color: dead ? '#64748B' : '#475569', whiteSpace: 'nowrap' }}>{status || '-'}</span>
+                            )}
                             {onSetServiceBucket && (
                               <button
                                 type="button"
@@ -15007,6 +15025,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   serviceNames={allServiceItems}
                   serviceOverrides={settings.serviceOverrides || {}}
                   serviceStatusOf={effectiveServiceStatus}
+                  onSetServiceStatus={(name, status) => set('servicesExplored',
+                    withServiceStatus(fields.servicesExplored, [name], status))}
                   onSetServiceBucket={(name, bucket, on) => updateSettings(s => ({
                     serviceOverrides: setServiceBucket(s?.serviceOverrides, name, bucket, on),
                   }))}
