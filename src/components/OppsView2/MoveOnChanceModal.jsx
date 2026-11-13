@@ -139,7 +139,7 @@ export function MoveOnChanceModal({ scored, prog, model, settings, updateSetting
               <strong>Model:</strong>{' '}
               {o.moveOn == null
                 ? <span style={muted}>needs {MIN_TRAINING}+ past stage moves with both outcomes to learn from ({prog?.stints?.length || 0} so far).</span>
-                : <><strong>{fmtPct(o.moveOn * 100)}</strong>, from a model of {model?.trainedOn} past stage moves that weighs the stage, days in stage, days since heard from and the opp&apos;s age by how much each mattered before.</>}
+                : <><strong>{fmtPct(o.moveOn * 100)}</strong>, from a model of {model?.trainedOn} past stage moves that weighs the stage, days in stage (read separately for each stage, since a long wait is normal in some and a bad sign in others), days since heard from and the opp&apos;s age by how much each mattered before.</>}
             </li>
           </ul>
 
@@ -173,6 +173,16 @@ export function MoveOnChanceModal({ scored, prog, model, settings, updateSetting
                 <span style={stepNum}>=</span>
                 <span>{o.steps.map(st => fmtPct(st.chance * 100)).join(' x ')} = <strong>{fmtPct(o.likelihood * 100)}</strong> to close</span>
               </div>
+              {o.n > 0 && Math.abs(o.rate - o.moveOn * 100) >= 15 && (
+                <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 6, background: '#FEF3C7', color: '#78350F', lineHeight: 1.5 }}>
+                  <strong>Why this is not {fmtPct(o.rate)}:</strong> the {fmtPct(o.rate)} at the top is a straight count of the{' '}
+                  {plural(o.n, 'past deal')} that sat in {o.stage} at least {plural(behind.min, 'day')}. This figure starts from the model
+                  instead ({fmtPct(o.moveOn * 100)}), which learns from all {model?.trainedOn} past stage moves and also weighs days since
+                  heard from and the opp&apos;s age. A count of {o.n < 20 ? 'so few deals' : 'one stage'} can swing a lot on a single deal;
+                  the model is steadier but can miss what is particular to this one stage. When the two are far apart, treat the true
+                  chance as somewhere between them.
+                </div>
+              )}
             </>
           )}
 
