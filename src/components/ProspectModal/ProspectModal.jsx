@@ -65,6 +65,7 @@ import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadP
 import { nameFromEmail } from '../../utils/nameFromEmail';
 import { splitFullName } from '../../utils/splitFullName';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { complianceFlaggedFrameworks } from '../../utils/complianceFrameworkFlags.js';
 import { companiesMatch, companyRosterContacts } from '../../utils/companyRoster';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
@@ -3798,6 +3799,7 @@ const FRAMEWORK_SOURCE_BADGES = {
   auto:   { label: 'Auto',   bg: '#E0E7FF', text: '#3730A3', title: 'Mapped automatically from a confirmed Lists-page mapping' },
   manual: { label: 'Manual', bg: '#F1F5F9', text: '#475569', title: 'Manually added in this company popup' },
   claude: { label: 'Claude', bg: '#DCFCE7', text: '#15803D', title: 'Added from Claude sustainability research' },
+  dan:    { label: 'Dan',    bg: '#FEF3C7', text: '#92400E', title: 'Flagged by Dan on Sites > Corporate Compliance (SB 253 or SB 261 answered Applies? = Yes), not from the Lists page' },
 };
 
 // `sourceOf(value)` is optional — when supplied (the Frameworks field), each
@@ -3859,7 +3861,7 @@ function MultiSelectDropdown({ options, selected, onToggle, sourceOf = null }) {
                 style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: badge.bg, color: badge.text }}
               >{badge.label}</span>
             )}
-            {src !== 'auto' && (
+            {src !== 'auto' && src !== 'dan' && (
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onToggle(v); }}
@@ -8761,11 +8763,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     })();
     return () => { cancelled = true; };
   }, [fields.company, portfolioFlagVersion]);
+  // Frameworks Dan flagged on Sites > Corporate Compliance (CA SB when the
+  // company's card answers SB 253 or SB 261 Applies? = Yes). Shown here
+  // with a Dan badge; managed on that card, not in this popup.
+  const complianceFrameworkFlags = useMemo(() => {
+    const aliases = Array.isArray(fields.aliases) ? fields.aliases : String(fields.aliases || '').split(/[,;\n]/);
+    return complianceFlaggedFrameworks([fields.company, fields.goesBy, ...aliases], settings?.corporateComplianceScreening);
+  }, [fields.company, fields.goesBy, fields.aliases, settings?.corporateComplianceScreening]);
   const effectiveFrameworks = useMemo(() => {
     const out = new Set(fields.frameworks || []);
     for (const f of companyFrameworkFlags) out.add(f);
+    for (const f of complianceFrameworkFlags) out.add(f);
     return [...out];
-  }, [fields.frameworks, companyFrameworkFlags]);
+  }, [fields.frameworks, companyFrameworkFlags, complianceFrameworkFlags]);
 
   // How each framework landed on this company. A confirmed Lists-page
   // mapping (companyFrameworkFlags) is authoritative → 'auto'; otherwise
@@ -8774,8 +8784,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // pick in this popup.
   const frameworkSourceOf = useCallback((label) => {
     if (companyFrameworkFlags.has(label)) return 'auto';
+    if (complianceFrameworkFlags.has(label)) return 'dan';
     return (fields.frameworkSources || {})[label] === 'claude' ? 'claude' : 'manual';
-  }, [companyFrameworkFlags, fields.frameworkSources]);
+  }, [companyFrameworkFlags, complianceFrameworkFlags, fields.frameworkSources]);
 
   // Toggle a framework from the dropdown, recording provenance alongside
   // the array so the badge can distinguish manual picks from Claude/auto.
@@ -11167,7 +11178,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   {Object.entries(FRAMEWORK_SOURCE_BADGES).map(([k, b]) => (
                     <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title={b.title}>
                       <span style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: b.bg, color: b.text }}>{b.label}</span>
-                      <span>{k === 'auto' ? 'from Lists mapping' : k === 'claude' ? 'from Claude research' : 'added here'}</span>
+                      <span>{k === 'auto' ? 'from Lists mapping' : k === 'claude' ? 'from Claude research' : k === 'dan' ? 'flagged on Corporate Compliance' : 'added here'}</span>
                     </span>
                   ))}
                 </div>
