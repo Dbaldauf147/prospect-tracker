@@ -86,6 +86,7 @@ import { RelationshipPanel } from '../Relationship/RelationshipPanel';
 import { estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
 import { EmailDomainsField } from './EmailDomainsField';
 import { BfoNamesField } from './BfoNamesField';
+import { PopupListField } from './PopupListField';
 import { ContactEventsField } from './ContactEventsField';
 import { bfoCompanyNamesOf, markedNoBfoName } from '../../utils/bfoCompanyNames';
 import { emailSuggestions } from '../../utils/emailSuggestions';
@@ -10134,11 +10135,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <CommitOnBlurInput className={styles.input} value={fields.website} onCommit={v => set('website', v)} placeholder="www.example.com" />
             </div>
 
-            <div className={styles.tallField}>
+            <div>
               <label className={styles.label} title="Former names and rebrands">Also Known As</label>
               {(() => {
                 const aliases = (fields.aliases || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
                 return (
+                  <PopupListField title="Also Known As" items={aliases} placeholder="+ Former name (e.g. Andmore)">
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.1rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', minHeight: '28px', alignItems: 'center' }}>
                     {aliases.map((a, i) => (
                       <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: '999px', fontSize: '0.72rem', color: '#5B21B6' }}>
@@ -10180,6 +10182,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
                     />
                   </div>
+                  </PopupListField>
                 );
               })()}
             </div>
@@ -10188,7 +10191,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 the Company name (e.g. "PNC Financial Services" for PNC Bank,
                 or two HubSpot records for one account). Hubspot Mapping
                 matches the export against these too. */}
-            <div className={styles.tallField}>
+            <div>
               <label className={styles.label} title="The company's name(s) in HubSpot, if different">HubSpot Names</label>
               {(() => {
                 const names = splitNameList(fields.hubspotCompanyNames);
@@ -10209,6 +10212,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   }
                 };
                 return (
+                  <PopupListField title="HubSpot Names" items={[...mapped.map(c => c.name), ...names]} placeholder="Name as it appears in HubSpot">
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.1rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', minHeight: '28px', alignItems: 'center' }}>
                     {mapped.map(c => (
                       <span
@@ -10246,6 +10250,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
                     />
                   </div>
+                  </PopupListField>
                 );
               })()}
             </div>
@@ -10279,12 +10284,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </div>
             </div>
 
-            <div className={styles.tallField}>
+            <div>
               <label className={styles.label} title="More Accounts this company has in BFO">Other BFO Names</label>
               <BfoNamesField value={fields.bfoCompanyAltNames} primary={fields.bfoCompanyName} onChange={v => set('bfoCompanyAltNames', v)} />
             </div>
 
-            <div className={styles.tallField}>
+            <div>
               <label className={styles.label}>Email Domains</label>
               <EmailDomainsField value={fields.emailDomain} onChange={v => set('emailDomain', v)} options={emailDomainOptions} />
             </div>

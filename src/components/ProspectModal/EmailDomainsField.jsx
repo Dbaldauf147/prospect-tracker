@@ -14,6 +14,7 @@
 // Moved out of ProspectModal so it can be rendered on its own; the card
 // passes the field's value, its setter, and the estimate.
 import { useState } from 'react';
+import { PopupListField } from './PopupListField';
 
 export function EmailDomainsField({ value, onChange, options }) {
   // The picker. `domainPicks` is the field as it would be saved: an ordered
@@ -107,7 +108,25 @@ export function EmailDomainsField({ value, onChange, options }) {
   ));
   const movePick = (entry, by) => setDomainPicks(prev => move(prev, prev.findIndex(e => lower(e) === lower(entry)), by));
 
+  // The card shows one compact line; the chips, the estimate buttons and
+  // the tier picker all live in the popup it opens.
+  const summaryItems = domains.length > 0 ? domains : estimated.map(o => o.entry);
+  const summaryTone = domains.length > 0 ? 'default' : estimated.length > 0 ? 'estimated' : 'missing';
+  const summaryBadge = summaryTone === 'default' ? null : (
+    <span style={{ flexShrink: 0, padding: '0 0.45rem', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, ...(summaryTone === 'missing'
+      ? { background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#B91C1C' }
+      : { background: '#FFFBEB', border: '1px solid #FCD34D', color: '#B45309' }) }}
+    >{summaryTone === 'missing' ? 'Missing' : 'Estimated'}</span>
+  );
+
   return (
+    <PopupListField
+      title="Email Domains"
+      items={summaryItems}
+      placeholder="No email format on record"
+      badge={summaryBadge}
+      tone={summaryTone}
+    >
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', position: 'relative' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.1rem 0.35rem', border: `1px solid ${domains.length > 0 ? 'var(--color-border)' : estimated.length > 0 ? '#FCD34D' : '#FCA5A5'}`, borderRadius: 'var(--radius-md)', minHeight: '28px', alignItems: 'center' }}>
         {/* Nothing on record is worth saying out loud: this
@@ -234,7 +253,7 @@ export function EmailDomainsField({ value, onChange, options }) {
       </div>
 
       {domainPickerOpen && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, maxHeight: 340, overflowY: 'auto' }}>
+        <div style={{ marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, maxHeight: 340, overflowY: 'auto' }}>
           <div style={{ padding: '0.5rem 0.6rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
             <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#334155' }}>
               {opts.candidates.length > 0
@@ -345,5 +364,6 @@ export function EmailDomainsField({ value, onChange, options }) {
         </div>
       )}
     </div>
+    </PopupListField>
   );
 }
