@@ -33,6 +33,7 @@ import { lazyView } from '../../utils/lazyView';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { ContractsTab } from './ContractsTab';
+import { TargetsTab } from './TargetsTab';
 import { useCompanyContracts } from '../../hooks/useCompanyContracts';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import {
@@ -866,6 +867,11 @@ const PROSPECT_TABS = [
     key: 'potential',
     label: 'Potential',
     title: 'What this account is still worth: every service nobody has ruled on, priced off its own figures and ranked by the first twelve months',
+  },
+  {
+    key: 'targets',
+    label: 'Targets',
+    title: 'The sustainability targets this company has set: type, base year, target years and the scopes each covers',
   },
   {
     key: 'portfolio',
@@ -7526,10 +7532,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // are on the page too, greyed, and are deliberately not counted here:
       // this pill is a count of work, not of rows.
       potential: n(accountPotentialReading?.open?.length || 0),
+      targets: n(Array.isArray(fields.climateTargets) ? fields.climateTargets.length : 0),
       portfolio: n((fields.portfolioCompanies || []).length),
     };
   }, [companyContacts.length, servicesExploredCount, companyOppsSummary.total,
-    accountPotentialReading, fields.portfolioCompanies, activeContractCount, fields.bfoHistory]);
+    accountPotentialReading, fields.portfolioCompanies, activeContractCount, fields.bfoHistory, fields.climateTargets]);
 
   // What the Potential tab prices: the catalogue minus the services retired
   // on the Services tab.
@@ -12803,6 +12810,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               clientManager={clientManager}
               coaRequirements={fields.coaRequirements}
               onChangeCoaRequirements={next => setFields(f => ({ ...f, coaRequirements: next }))}
+            />
+          )}
+          {!isNew && activeTab === 'targets' && (
+            <TargetsTab
+              company={fields.company}
+              targets={fields.climateTargets}
+              onChange={(next) => set('climateTargets', next)}
+              settings={settings}
+              updateSettings={updateSettings}
             />
           )}
           {!isNew && activeTab === 'bfoHistory' && (
