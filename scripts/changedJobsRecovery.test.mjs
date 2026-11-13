@@ -8,7 +8,7 @@
 // Run: node scripts/changedJobsRecovery.test.mjs
 import { register } from 'node:module';
 register('./stubs/loader.mjs', import.meta.url);
-const { recoverChangedJobsFlags } = await import('../src/utils/changedJobsRecovery.js');
+const { recoverChangedJobsFlags, COMPANY_PIN_FLAG } = await import('../src/utils/changedJobsRecovery.js');
 
 let passed = 0, failed = 0;
 function ok(cond, name) {
@@ -48,6 +48,26 @@ ok(found.find(x => x.id === 's').from === 'browser', 'and which backup it came f
 const none = recoverChangedJobsFlags({ contactLocalFields: { a: { _changedJobsHidden: true } } }, [newer].map(s => ({ ...s, data: { contactLocalFields: { a: s.data.contactLocalFields.a } } })), NOW);
 ok(none.patch === null && none.found.length === 0, 'nothing missing: nothing to save');
 ok(recoverChangedJobsFlags({}, [{ data: {} }], NOW).patch === null, 'backups without the map are skipped');
+
+// ── Company pins (Recover company mappings on the contacts pages) ─────
+{
+  const cur = { contactLocalFields: { m: { _companyOverride: 'Current Co' }, u: { _reachedOut: true } } };
+  const backup = { label: 'b', data: { contactLocalFields: {
+    u: { _companyOverride: 'Mid-America Apartment Communities' },
+    m: { _companyOverride: 'Older Co' },
+    x: { _companyOverride: 'Not An Account' },
+    y: { _companyOverride: 'Mapletree Investments', _changedJobsHidden: true },
+  } } };
+  const accounts = new Set(['mid-america apartment communities', 'mapletree investments']);
+  const allowId = (id, e) => id !== 'y' && accounts.has(String(e._companyOverride).toLowerCase());
+  const { patch, found } = recoverChangedJobsFlags(cur, [backup], NOW, { flags: [COMPANY_PIN_FLAG], allowId });
+  ok(patch.u._companyOverride === 'Mid-America Apartment Communities' && patch.u._reachedOut, 'a lost company pin comes back beside the contact\'s other fields');
+  ok(patch.m._companyOverride === 'Current Co', 'a contact with a pin now keeps it');
+  ok(!patch.x, 'a pin to a company that is none of your accounts is not offered');
+  ok(!patch.y, 'a contact the page does not allow (mapped now) is skipped');
+  ok(found.length === 1 && found[0].value === 'Mid-America Apartment Communities', 'and only the one pin is reported');
+  ok(!('_changedJobsHidden' in (patch.y || {})), 'only the Company flag is touched');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

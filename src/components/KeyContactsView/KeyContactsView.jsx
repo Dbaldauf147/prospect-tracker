@@ -37,6 +37,7 @@ import { buildUnansweredIndex, unansweredFor, campaignSendsByAddress, UNANSWERED
 import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
 import { recipientMapSaver, recoverRecipientMaps, rekeyOrphanRecipients, describeRecipientSearch } from '../../utils/recipientMaps';
 import { findLostRecipients } from '../../utils/recipientRecovery';
+import { findLostCompanyPins, recoverChangedJobsFlags, COMPANY_PIN_FLAG } from '../../utils/changedJobsRecovery';
 import { useRelationshipData } from '../../hooks/useRelationshipStrength';
 import { RelationshipBadge } from '../Relationship/RelationshipBadge';
 
@@ -1554,6 +1555,58 @@ function KeyContactsViewInner({
       setRecipientRecovery({ busy: false, note: `Recovered To / CC for ${total} contact${total === 1 ? '' : 's'}.` });
     } catch (err) {
       setRecipientRecovery({ busy: false, note: `Recovery failed: ${err?.message || err}` });
+    }
+  }
+
+  // "Recover company mappings": put back Company pins (_companyOverride) a
+  // stale save wiped from contactLocalFields, for the contacts whose company
+  // maps to none of your accounts now (the amber cells), and only where the
+  // backup's company does match one. See utils/changedJobsRecovery.
+  const [pinRecovery, setPinRecovery] = useState({ busy: false, note: '' });
+  async function recoverCompanyPins() {
+    if (pinRecovery.busy) return;
+    setPinRecovery({ busy: true, note: 'Searching backups...' });
+    try {
+      const unmapped = new Map();
+      for (const c of flatContacts) {
+        const id = String(c?.id || c?.vid || '');
+        if (id && !c.prospect) unmapped.set(id, c);
+      }
+      const accountNames = new Set(prospects.map(p => String(p.company || '').toLowerCase().trim()).filter(Boolean));
+      const allowId = (id, entry) => unmapped.has(id)
+        && accountNames.has(String(entry?._companyOverride || '').toLowerCase().trim());
+      const { found, sources, read } = await findLostCompanyPins(settings, allowId, {
+        onProgress: (note) => setPinRecovery({ busy: true, note }),
+      });
+      const searched = `Searched ${read.browser} browser backup${read.browser === 1 ? '' : 's'} and ${read.cloud} cloud backup${read.cloud === 1 ? '' : 's'}${read.oldest ? `, back to ${read.oldest}` : ''}.`
+        + (read.cloudFailed || read.cloudError ? `\nCloud backups that could not be read: ${read.cloudFailed}${read.cloudError ? ` (${read.cloudError})` : ''}.` : '');
+      if (!found.length) {
+        window.alert(`Nothing to recover: no backup holds a company mapping for the ${unmapped.size} unmapped contact${unmapped.size === 1 ? '' : 's'} on this page that matches one of your accounts.\n\n${searched}`);
+        setPinRecovery({ busy: false, note: 'Nothing to recover.' });
+        return;
+      }
+      const lines = found.slice(0, 20).map(x => {
+        const c = unmapped.get(x.id);
+        const name = [c?.firstname, c?.lastname].filter(Boolean).join(' ') || c?.email || `contact ${x.id}`;
+        return `${name}: ${c?.companyName || '(no company)'} -> ${x.value}`;
+      });
+      if (found.length > 20) lines.push(`and ${found.length - 20} more`);
+      const ok = window.confirm(
+        `Found company mappings for ${found.length} unmapped contact${found.length === 1 ? '' : 's'} in your backups.\n\n${lines.join('\n')}\n\nPut them back? Contacts that are mapped now are not changed.\n\n${searched}`,
+      );
+      if (!ok) { setPinRecovery({ busy: false, note: '' }); return; }
+      const saved = await updateSettings((s) => {
+        const { patch } = recoverChangedJobsFlags(s, sources, Date.now(), { flags: [COMPANY_PIN_FLAG], allowId });
+        return patch ? { contactLocalFields: patch } : null;
+      });
+      if (saved === false) {
+        setPinRecovery({ busy: false, note: 'Found them, but the save did not go through. Reload the page and try again.' });
+        window.alert('Found the company mappings, but saving them did not go through. Reload the page and click Recover company mappings again.');
+        return;
+      }
+      setPinRecovery({ busy: false, note: `Recovered company mappings for ${found.length} contact${found.length === 1 ? '' : 's'}.` });
+    } catch (err) {
+      setPinRecovery({ busy: false, note: `Recovery failed: ${err?.message || err}` });
     }
   }
 
@@ -3843,6 +3896,28 @@ function KeyContactsViewInner({
                 fontFamily: 'inherit',
               }}
             >{recipientRecovery.busy ? (recipientRecovery.note || 'Searching...') : 'Recover To / CC'}</button>
+          )}
+          {hasFullTable(storagePrefix) && (
+            <button
+              type="button"
+              onClick={recoverCompanyPins}
+              disabled={pinRecovery.busy}
+              title={pinRecovery.note || 'Search your backups for company mappings that unmapped (amber) contacts have lost, and put them back. Only mappings to one of your accounts are offered; mapped contacts are not changed.'}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                border: '1px solid #CBD5E1',
+                borderRadius: 6,
+                background: '#fff',
+                color: '#334155',
+                cursor: pinRecovery.busy ? 'wait' : 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >{pinRecovery.busy ? (pinRecovery.note || 'Searching...') : 'Recover company mappings'}</button>
+          )}
+          {!pinRecovery.busy && pinRecovery.note && (
+            <span style={{ fontSize: '0.7rem', color: '#475569', maxWidth: 220 }}>{pinRecovery.note}</span>
           )}
           {!recipientRecovery.busy && recipientRecovery.note && (
             <span style={{ fontSize: '0.7rem', color: '#475569', maxWidth: 220 }}>{recipientRecovery.note}</span>
