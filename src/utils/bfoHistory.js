@@ -196,3 +196,15 @@ export function bfoHistoryMarks(history) {
   if (history?.ok?.length) out.ok = history.ok;
   return out;
 }
+
+// Where an account's BFO History stands for review:
+//   'none'     nothing to review: never pasted, marked No BFO history, or a
+//              paste with no rows
+//   'reviewed' every pasted row is marked Ignored or OK
+//   'open'     at least one row still unmarked
+export function bfoHistoryReviewState(history) {
+  const rows = history?.rows || [];
+  if (!history?.pastedAt || bfoHistoryIsNone(history) || rows.length === 0) return 'none';
+  const marked = new Set([...(history.ignored || []), ...(history.ok || [])]);
+  return rows.every(r => marked.has(bfoHistoryRowKey(r))) ? 'reviewed' : 'open';
+}
