@@ -389,6 +389,16 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
+    // Prospecting > News: the ESG News Roundups the scheduled task posts
+    // (through api/esg-news, with the admin SDK) and the filter list it
+    // reads back. Dan's own feed, so admin-only.
+    match /esgNews/{docId} {
+      allow read, write: if isAdmin();
+    }
+    match /esgNews/{docId}/roundups/{roundupId} {
+      allow read, write: if isAdmin();
+    }
+
     // Default deny all other access
     match /{document=**} {
       allow read, write: if false;

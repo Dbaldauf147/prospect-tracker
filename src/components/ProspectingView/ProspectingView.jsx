@@ -53,6 +53,7 @@ import { ProspectingCompanies } from './ProspectingCompanies';
 import { ProspectingTiered } from './ProspectingTiered';
 import { ProspectingDmsNoActivity } from './ProspectingDmsNoActivity';
 import { ProspectingLogic } from './ProspectingLogic';
+import { ProspectingNews } from './ProspectingNews';
 
 // The contact popup, loaded when one is actually opened. It lives in
 // ProspectModal, which is the largest module in the app — a static import
@@ -116,6 +117,7 @@ const SUBTABS = [
   { key: 'pcs', label: 'PCs' },
   { key: 'tiered', label: 'Tiered Activity' },
   { key: 'dmsNoActivity', label: 'DMs Without Activity' },
+  { key: 'news', label: 'News' },
   { key: 'logic', label: 'Prospecting Logic' },
 ];
 function readSavedSubtab() {
@@ -1579,6 +1581,8 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
         <ProspectingHistory today={today} maxWidth={PAGE_MAX} prospects={prospects} settings={settings} cdmName={cdmName} />
       ) : subtab === 'logic' ? (
         <ProspectingLogic steps={steps} settings={settings} updateSettings={updateSettings} canEdit={canEdit} maxWidth={PAGE_MAX} />
+      ) : subtab === 'news' ? (
+        <ProspectingNews />
       ) : subtab === 'dmsNoActivity' ? (
         <ProspectingDmsNoActivity
           prospects={prospects}
