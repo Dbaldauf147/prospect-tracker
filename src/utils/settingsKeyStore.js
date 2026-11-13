@@ -10,39 +10,51 @@ import { onSnapshot } from './safeOnSnapshot';
 import { db } from '../firebase';
 import { restDeleteDoc, restGetDoc, restSetDoc } from './firestoreRest.js';
 import { viaSdkOrRest } from './firestoreClientHealth.js';
-import { SETTINGS_KEYS_COLLECTION, isEncodedSettingsKey, keyDocData, keyDocValue } from './settingsCodec.js';
+import { SETTINGS_KEYS_COLLECTION, isEncodedSettingsKey, keyDocAt, keyDocData, keyDocValue } from './settingsCodec.js';
 
 const COL = 'userSettings';
 const keysCol = (userId) => collection(db, COL, userId, SETTINGS_KEYS_COLLECTION);
 const keyDoc = (userId, key) => doc(db, COL, userId, SETTINGS_KEYS_COLLECTION, key);
 const keyDocPath = (userId, key) => `${COL}/${userId}/${SETTINGS_KEYS_COLLECTION}/${key}`;
 
-/** Live view of every map's document, as key -> value. */
+/**
+ * Live view of every map's document, as key -> value, and key -> the `at`
+ * it was written with (what a save compares to tell its copy is old).
+ */
 export function subscribeToSettingsKeys(userId, onChange, onError) {
   return onSnapshot(keysCol(userId), (snap) => {
     const out = {};
+    const ats = {};
     snap.forEach((d) => {
       if (!isEncodedSettingsKey(d.id)) return;
-      const value = keyDocValue(d.data(), d.id);
-      if (value !== undefined) out[d.id] = value;
+      const data = d.data();
+      const value = keyDocValue(data, d.id);
+      if (value !== undefined) { out[d.id] = value; ats[d.id] = keyDocAt(data); }
     });
-    onChange(out);
+    onChange(out, ats);
   }, (err) => {
     console.error('settingsKeys subscription error:', err);
     onError?.(err);
   });
 }
 
-/** The stored values of some maps, key -> value (absent when there is no document). */
-export async function readSettingsKeys(userId, keys) {
+/**
+ * The stored values of some maps, key -> value (absent when there is no
+ * document). `atsOut`, when given, is filled with key -> each one's `at`.
+ */
+export async function readSettingsKeys(userId, keys, atsOut = null) {
   const out = {};
+  const take = (key, data) => {
+    const value = data ? keyDocValue(data, key) : undefined;
+    if (value === undefined) return;
+    out[key] = value;
+    if (atsOut) atsOut[key] = keyDocAt(data);
+  };
   await Promise.all([...new Set(keys)].filter(isEncodedSettingsKey).map(key => viaSdkOrRest(async () => {
     const snap = await getDoc(keyDoc(userId, key));
-    const value = snap.exists() ? keyDocValue(snap.data(), key) : undefined;
-    if (value !== undefined) out[key] = value;
+    take(key, snap.exists() ? snap.data() : null);
   }, async () => {
-    const value = keyDocValue(await restGetDoc(keyDocPath(userId, key)), key);
-    if (value !== undefined) out[key] = value;
+    take(key, await restGetDoc(keyDocPath(userId, key)));
   })));
   return out;
 }
