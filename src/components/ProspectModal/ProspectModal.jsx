@@ -445,7 +445,11 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
       // The services tagged to this category (their Contact Tags) and this
       // company's status on each; every one Not Sold or N/A closes it out.
       const svc = bucketServiceState({ bucket: b, serviceNames, overrides: serviceOverrides, statusOf: serviceStatusOf });
-      return { bucket: b, dms: [...yes, ...unsure], services: svc.services, servicesClosed: svc.closed };
+      // Marked N/A by hand from the column heading: the category doesn't
+      // apply to this company, which closes it out the same way its services
+      // all being Not Sold or N/A does (companyClosedBuckets reads it too).
+      const naAt = searchSteps?.[b.key]?.na || '';
+      return { bucket: b, dms: [...yes, ...unsure], services: svc.services, servicesClosed: svc.closed || !!naAt, naAt };
     });
   // Steps left per category and in all (src/utils/dmSteps.js, the same rule
   // My Accounts > Company Data counts with).
@@ -467,6 +471,13 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
         closed: true,
         text: `Closed: decision maker${yes.length > 1 ? 's' : ''} found`,
         full: `${col.bucket.label} is done: ${yes.join(', ')} answered Yes as the decision maker.`,
+      };
+    }
+    if (col.naAt) {
+      return {
+        closed: true,
+        text: 'Closed: N/A for this company',
+        full: `${col.bucket.label} was marked N/A for this company. Click N/A in the heading again to reopen it.`,
       };
     }
     if (col.servicesClosed) {
@@ -512,7 +523,27 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                 const reason = closedReason(col, stepsLeft[i].left);
                 return (
                   <th key={col.bucket.key} style={{ ...headCell, ...colLine(i) }} title={`${col.bucket.label}\n${reason.full}`}>
-                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{col.bucket.label}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{col.bucket.label}</span>
+                      {onToggleSearchStep && (
+                        <button
+                          type="button"
+                          data-dm-category-na={col.bucket.key}
+                          aria-pressed={!!col.naAt}
+                          onClick={() => onToggleSearchStep(col.bucket.key, 'na', !col.naAt)}
+                          title={col.naAt
+                            ? `${col.bucket.label} is marked N/A for this company. Click to reopen it.`
+                            : `Mark ${col.bucket.label} N/A for this company: it closes out here, with no steps left, and stops counting as missing on Prospecting.`}
+                          style={{
+                            flexShrink: 0, padding: '0 6px', borderRadius: 4, fontSize: '0.6rem', fontWeight: 700,
+                            fontFamily: 'inherit', letterSpacing: 0, textTransform: 'none', cursor: 'pointer', lineHeight: 1.5,
+                            border: `1px solid ${col.naAt ? '#64748B' : '#CBD5E1'}`,
+                            background: col.naAt ? '#64748B' : '#fff',
+                            color: col.naAt ? '#fff' : '#64748B',
+                          }}
+                        >{col.naAt ? '\u2713 N/A' : 'N/A'}</button>
+                      )}
+                    </div>
                     <div
                       data-dm-closed-reason={reason.closed ? 'closed' : 'open'}
                       style={{ marginTop: 2, fontSize: '0.62rem', fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: reason.closed ? '#166534' : '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis' }}
@@ -569,15 +600,15 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                 company. A category whose services are all Not Sold or N/A
                 is closed out: nobody left to find. */}
             <tr data-dm-services style={{ borderTop: '1px solid #E2E8F0' }}>
-              {dmColumns.map(({ bucket, services, servicesClosed }, i) => {
+              {dmColumns.map(({ bucket, services, servicesClosed, naAt }, i) => {
                 const tagged = new Set(services.map(sv => sv.name));
                 const offer = serviceNames.filter(n => !tagged.has(n));
                 return (
                   <td key={bucket.key} data-dm-services-closed={servicesClosed ? 'true' : undefined} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem', ...colLine(i), ...(servicesClosed ? { background: '#F1F5F9' } : {}) }}>
                     <div style={{ fontSize: '0.6rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.2rem' }}>Services</div>
                     {servicesClosed && (
-                      <div style={{ fontWeight: 700, color: '#475569', marginBottom: '0.25rem' }} title={`Every service tagged ${bucket.label} is Not Sold or N/A here, so ${bucket.label} is closed out`}>
-                        Closed out: all Not Sold or N/A
+                      <div style={{ fontWeight: 700, color: '#475569', marginBottom: '0.25rem' }} title={naAt ? `${bucket.label} is marked N/A for this company in its heading` : `Every service tagged ${bucket.label} is Not Sold or N/A here, so ${bucket.label} is closed out`}>
+                        {naAt ? 'Closed out: marked N/A' : 'Closed out: all Not Sold or N/A'}
                       </div>
                     )}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.2rem' }}>
