@@ -769,14 +769,23 @@ function finalizeCoverage(buckets, left) {
 // count and the ladder keep reading the full set; this is a lens, not a
 // new definition of "tagged".
 //
-// `tags` empty or null hands the coverage back untouched.
-export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}) {
-  if (!coverage || !Array.isArray(tags) || !tags.length) return coverage;
+// `tags` empty or null hands the coverage back untouched, unless an option
+// below asks for a different reading, in which case every tag is scored.
+//
+// `decisionMakersOnly` keeps only the contacts tagged Decision Maker, and
+// `yesOnly` counts a tag only when it is a Yes (tagReviewScore). Together
+// they are the Prospecting Tagged table: of the decision makers on each
+// roster, how many are tagged with each area.
+export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decisionMakersOnly = false, yesOnly = false } = {}) {
+  const narrowed = decisionMakersOnly || yesOnly;
+  if (!coverage) return coverage;
+  if ((!Array.isArray(tags) || !tags.length) && !narrowed) return coverage;
+  const scoreTags = Array.isArray(tags) && tags.length ? tags : undefined;
   const rescored = new Map();
   const rowFor = (p) => {
     if (rescored.has(p)) return rescored.get(p);
     const review = p.id == null ? null : tagReviewMap[p.id];
-    const score = tagReviewScore(p.contact || {}, review, tags);
+    const score = tagReviewScore(p.contact || {}, review, scoreTags, { yesOnly });
     const row = { ...p, answered: score.answered, total: score.total, done: score.done };
     rescored.set(p, row);
     return row;
@@ -787,6 +796,7 @@ export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}) {
     if (!b || typeof b !== 'object' || !Array.isArray(b.people)) continue;
     const nb = { contacts: 0, answered: 0, slots: 0, done: 0, people: [] };
     for (const p of b.people) {
+      if (decisionMakersOnly && !tagsOf(p.contact).split(';').map(t => t.trim()).includes('decision maker')) continue;
       const row = rowFor(p);
       nb.contacts += 1;
       nb.answered += row.answered;

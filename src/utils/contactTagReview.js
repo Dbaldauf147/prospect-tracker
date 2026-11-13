@@ -497,7 +497,11 @@ export function scoredTagOptions(tagOptions = TAG_OPTIONS) {
  * Records are matched to tags case-insensitively, so one saved under a
  * different casing than the vocabulary spells it still finds its tag.
  */
-export function tagReviewScore(contact, review, tagOptions = TAG_OPTIONS) {
+//
+// `yesOnly` narrows "answered" to a Yes: No and Not sure count as not
+// there yet. The Prospecting Tagged table reads it that way - how many of
+// the decision makers on a roster are tagged with the area.
+export function tagReviewScore(contact, review, tagOptions = TAG_OPTIONS, { yesOnly = false } = {}) {
   const scored = scoredTagOptions(tagOptions);
   const tagged = new Set(contactTagList(contact).map(tagKey));
   const marks = (review && typeof review === 'object') ? review : {};
@@ -510,7 +514,7 @@ export function tagReviewScore(contact, review, tagOptions = TAG_OPTIONS) {
   for (const tag of scored) {
     const k = tagKey(tag);
     const { answer, status } = tagStateFrom(tagged.has(k), recordByTag.get(k));
-    if (answer || status) answered += 1;
+    if (yesOnly ? answer === 'yes' : (answer || status)) answered += 1;
   }
   const total = scored.length;
   return {

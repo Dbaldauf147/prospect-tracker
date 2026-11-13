@@ -38,5 +38,22 @@ const three = rescoreTagCoverage(coverage, ['ESG', 'Utilities', 'Procurement'], 
 eq([three.all.answered, three.all.slots, three.all.pct], [2, 6, 33], 'three tags');
 eq(three.all.people.find(p => p.id === '1') === three.key.people[0], true, 'one row object shared across rosters');
 
+// The Tagged table's lens: decision makers only, and only a Yes counts.
+// D is a DM tagged ESG; E is a DM marked Not sure on ESG and No on Utilities;
+// F is tagged ESG but isn't a decision maker, so is left out.
+const d = { id: '4', name: 'D', company: '', email: '', answered: 0, total: 0, done: false, contact: { id: 4, dans_tags: 'Decision Maker; ESG' } };
+const e = { id: '5', name: 'E', company: '', email: '', answered: 0, total: 0, done: false, contact: { id: 5, dans_tags: 'Decision Maker' } };
+const f = { id: '6', name: 'F', company: '', email: '', answered: 0, total: 0, done: false, contact: { id: 6, dans_tags: 'ESG' } };
+const dmReview = { 5: { ESG: { answer: 'unsure' }, Utilities: { answer: 'no' } } };
+const dmCov = { all: { contacts: 3, answered: 0, slots: 0, done: 0, people: [d, e, f], pct: 0 } };
+const lens = { decisionMakersOnly: true, yesOnly: true };
+const dmEsg = rescoreTagCoverage(dmCov, ['ESG'], dmReview, lens);
+eq([dmEsg.all.contacts, dmEsg.all.answered, dmEsg.all.pct], [2, 1, 50], 'lens: non-DM dropped, Not sure is not a Yes');
+const dmUtil = rescoreTagCoverage(dmCov, ['Utilities'], dmReview, lens);
+eq([dmUtil.all.answered, dmUtil.all.pct], [0, 0], 'lens: No is not a Yes');
+const dmAll = rescoreTagCoverage(dmCov, [], dmReview, lens);
+eq(dmAll.all.contacts, 2, 'lens with no tags picked still narrows to DMs');
+eq(rescoreTagCoverage(dmCov, ['ESG'], dmReview).all.pct, 100, 'without the lens Not sure still counts as answered');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

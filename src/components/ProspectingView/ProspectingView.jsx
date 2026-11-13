@@ -160,7 +160,7 @@ const TAG_LIST_LIMIT = 200;
 // The contacts behind one Tagged chip: who is on that roster, and how far
 // through the tag questions each of them is. Least-tagged first, so the
 // names the percentage is waiting on lead.
-function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAudit }) {
+function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAudit, yesOnly = false }) {
   const people = Array.isArray(bucket?.people) ? bucket.people : [];
   const shown = people.slice(0, TAG_LIST_LIMIT);
   // The contacts this list is flagging — the ones still short of a full set
@@ -274,7 +274,7 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAu
               </span>
               {/* What this contact contributes to the percentage above. */}
               <span
-                title={`${person.answered} of ${person.total} tag questions answered`}
+                title={yesOnly ? `Tagged Yes on ${person.answered} of ${person.total}` : `${person.answered} of ${person.total} tag questions answered`}
                 style={{
                   flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontWeight: 700,
                   color: person.done ? '#166534' : '#B45309',
@@ -431,7 +431,7 @@ function TagPctCell({ bucket, roster, onOpen, isOpen, tagLabel }) {
       type="button"
       onClick={onOpen}
       aria-expanded={isOpen}
-      title={`${roster.label}, ${tagLabel}: ${pct}% answered across ${bucket.contacts} contact${bucket.contacts === 1 ? '' : 's'} (${bucket.done} fully answered). Click to list them.`}
+      title={`${roster.label}, ${tagLabel}: ${pct}% tagged Yes across ${bucket.contacts} decision maker${bucket.contacts === 1 ? '' : 's'} (${bucket.done} tagged Yes on every one). No and Not sure don't count. Click to list them.`}
       style={{
         minWidth: 46, padding: '1px 8px', borderRadius: 999, cursor: 'pointer',
         background: tone.bg, color: tone.color, fontFamily: 'inherit',
@@ -458,11 +458,16 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
     if (!fullCoverage || !fullCoverage.all?.contacts) return [];
     const map = tagReviewMap || {};
     const tags = tagFocus.length ? tagFocus : FOCUSABLE_TAGS;
-    const out = tags.map(tag => ({ id: tagKey(tag), tag, cov: rescoreTagCoverage(fullCoverage, [tag], map) }));
+    // Decision makers only, and a tag counts only when it's a Yes: each cell
+    // is the share of a roster's DMs tagged with that area. Not sure and No
+    // are not tagged. (The step's auto-clear and the debt pill still read
+    // the answered rule over everyone - see tagsAllMapped.)
+    const lens = { decisionMakersOnly: true, yesOnly: true };
+    const out = tags.map(tag => ({ id: tagKey(tag), tag, cov: rescoreTagCoverage(fullCoverage, [tag], map, lens) }));
     out.push({
       id: TAG_TOTAL_ROW,
       tag: tagFocus.length ? `Total (${tagFocus.length} tag${tagFocus.length === 1 ? '' : 's'})` : 'Total (all tags)',
-      cov: rescoreTagCoverage(fullCoverage, tagFocus, map),
+      cov: rescoreTagCoverage(fullCoverage, tagFocus, map, lens),
       total: true,
     });
     return out;
@@ -563,6 +568,7 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
         <TagContactList
           cell={{ ...openRoster, label: `${openRoster.label} - ${openRow.debt ? 'all tags' : openRow.total ? (tagFocus.length ? tagFocus.join(', ') : 'all tags') : openRow.tag}` }}
           bucket={openRow.cov[openRoster.key]}
+          yesOnly={!openRow.debt}
           onNavigate={onNavigate}
           onClose={() => setOpen(null)}
           onOpenContact={onOpenContact}
