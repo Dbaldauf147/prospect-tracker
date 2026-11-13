@@ -24,6 +24,7 @@ import { bfoHistoryIsNone, bfoHistoryReviewState } from '../../utils/bfoHistory'
 import { useBiggestDeals } from '../../hooks/useBiggestDeals';
 import { dealMid } from '../../utils/prospectingDeals.js';
 import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
+import { DM_TOPICS, matchesDmTopic } from '../../utils/procurementDmFilter';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -54,6 +55,25 @@ const BFO_FILL = {
   none: { background: '#E2E8F0', color: '#475569' },
 };
 const fillPill = (fill) => (fill ? { ...fill, display: 'inline-block', padding: '0 6px', borderRadius: 4, fontWeight: 600 } : undefined);
+// The contacts tables' "<Topic> DMs" buttons, here too: which ones are lit
+// is remembered per browser. Several lit show anyone matching any of them.
+const TOPICS_KEY = 'prospecting-dms-no-activity:dm-topics';
+const readTopics = () => {
+  try {
+    return String(localStorage.getItem(TOPICS_KEY) || '').split(',').filter(k => DM_TOPICS.some(t => t.key === k));
+  } catch { return []; }
+};
+const topicChipStyle = (on) => ({
+  display: 'inline-flex', alignItems: 'center', gap: 5, padding: '0.2rem 0.6rem', fontSize: '0.7rem', fontWeight: 600,
+  borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
+  border: '1px solid ' + (on ? '#2563EB' : '#CBD5E1'),
+  background: on ? '#2563EB' : '#fff',
+  color: on ? '#fff' : '#475569',
+});
+const topicCountStyle = (on) => ({
+  display: 'inline-block', padding: '0 6px', fontSize: '0.62rem', fontWeight: 700, borderRadius: 999, minWidth: 18, textAlign: 'center',
+  background: on ? 'rgba(255,255,255,0.25)' : '#F1F5F9', color: on ? '#fff' : '#475569',
+});
 const toIso = (ms) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -98,7 +118,30 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
   }, [lists, windowDays, accountOf]);
   const deals = useBiggestDeals(dealAccounts, settings);
 
-  const rows = useMemo(() => (lists?.get(windowDays) || []).map(({ contact, lastMs }) => {
+  const [dmTopics, setDmTopicsState] = useState(readTopics);
+  const toggleDmTopic = (key) => setDmTopicsState(cur => {
+    const next = cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key];
+    try { localStorage.setItem(TOPICS_KEY, next.join(',')); } catch { /* per-viewer convenience only */ }
+    return next;
+  });
+  const tagReviewMap = useMemo(() => settings?.contactTagReview || {}, [settings?.contactTagReview]);
+  // Each topic's matches in the picked window, keyed by row id.
+  const windowEntries = useMemo(() => lists?.get(windowDays) || [], [lists, windowDays]);
+  const topicMatches = useMemo(() => {
+    const out = new Map(DM_TOPICS.map(t => [t.key, new Set()]));
+    for (const { contact } of windowEntries) {
+      const id = String(contact.id || contact.vid || contact.email);
+      const account = accountOf(contact);
+      for (const t of DM_TOPICS) if (matchesDmTopic(contact, account, tagReviewMap, t)) out.get(t.key).add(id);
+    }
+    return out;
+  }, [windowEntries, accountOf, tagReviewMap]);
+
+  const rows = useMemo(() => windowEntries.filter(({ contact }) => {
+    if (!dmTopics.length) return true;
+    const id = String(contact.id || contact.vid || contact.email);
+    return dmTopics.some(k => topicMatches.get(k)?.has(id));
+  }).map(({ contact, lastMs }) => {
     const account = accountOf(contact);
     return {
       deal: (account?.id && deals.get(account.id)) || null,
@@ -109,7 +152,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       status: accountStatusOf(account),
       campaigns: campaignsByEmail.get(normEmail(contact.email)) || [],
     };
-  }), [lists, windowDays, accountOf, deals, campaignsByEmail]);
+  }), [windowEntries, dmTopics, topicMatches, accountOf, deals, campaignsByEmail]);
 
   // Bulk actions: tick rows (or the header box for every row on screen),
   // then Add to Campaign or Bulk Edit. Only rows still on screen count, so
@@ -358,6 +401,27 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
             {windowLabel(w)}{lists ? ` (${fmt(lists.get(w).length)})` : ''}
           </button>
         ))}
+        {lists && (
+          <>
+            <span style={{ width: 1, alignSelf: 'stretch', background: '#E2E8F0', margin: '0 0.2rem' }} />
+            {DM_TOPICS.map(t => {
+              const on = dmTopics.includes(t.key);
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleDmTopic(t.key)}
+                  title={`Show only decision makers also tagged ${t.tag} whose own ${t.tag} tag status is not Sold or Not sold${t.peOnly ? ', at companies whose Type or Vertical is Private Equity, leaving out anyone whose Private Equity tag is No' : ''}. Light several to see anyone matching any of them.`}
+                  style={topicChipStyle(on)}
+                >
+                  {t.label} DMs
+                  <span style={topicCountStyle(on)}>{fmt(topicMatches.get(t.key)?.size || 0)}</span>
+                </button>
+              );
+            })}
+          </>
+        )}
       </div>
       {flash && <div style={{ fontSize: '0.78rem', color: '#15803D', fontWeight: 600 }}>{flash}</div>}
       {campaignOpen && (
@@ -399,7 +463,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
             // Biggest deals first; rows with no priced deal sort to the end.
             defaultSort={{ key: 'deal', direction: 'desc' }}
             defaultHidden={['company', 'status']}
-            emptyMessage={windowDays == null ? 'Every decision maker at your accounts has had some activity.' : `Every decision maker at your accounts has had activity in the last ${windowDays} days.`}
+            emptyMessage={dmTopics.length && windowEntries.length ? 'No decision makers here match the lit DM buttons.' : windowDays == null ? 'Every decision maker at your accounts has had some activity.' : `Every decision maker at your accounts has had activity in the last ${windowDays} days.`}
             settings={settings}
             updateSettings={updateSettings}
           />
