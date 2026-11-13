@@ -110,6 +110,27 @@ export async function collectUserBackup(db, uid, email) {
     if (snap.size) summary.captured.push('companySiteLists');
   } catch (e) { summary.errors.push(`companySiteLists: ${msg(e)}`); }
 
+  // Dan's Tags (api/_lib/contactTagStore.js): the app's own copy of every
+  // contact's tags, since tags stopped being written to HubSpot, and the
+  // newest rows of its change log. Counted twice - contacts with a tag, and
+  // tags in all - so losing even a few tags trips the morning alert.
+  try {
+    const ref = db.collection('contactTags').doc(uid);
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : null;
+    const tags = (data && data.tags && typeof data.tags === 'object') ? data.tags : {};
+    let logRows = [];
+    if (snap.exists) try {
+      const logSnap = await ref.collection('log').orderBy('at', 'desc').limit(5000).get();
+      logRows = logSnap.docs.map(d => d.data());
+    } catch (e) { summary.errors.push(`contactTags/log: ${msg(e)}`); }
+    backup.collections.contactTags = data ? { ...data, log: logRows } : null;
+    if (snap.exists) summary.captured.push('contactTags');
+    const values = Object.values(tags).map(v => String(v || '').split(';').map(t => t.trim()).filter(Boolean));
+    summary.counts.taggedContacts = values.filter(v => v.length).length;
+    summary.counts.contactTagsTotal = values.reduce((n, v) => n + v.length, 0);
+  } catch (e) { summary.errors.push(`contactTags: ${msg(e)}`); }
+
   // The browser stores mirrored to Firestore (utils/localMirrorSync):
   // `userSettings/{uid}/localMirrors/{id}`, one document per localStorage
   // key or IndexedDB record, joined from its chunks when it has them. These
@@ -300,6 +321,8 @@ export function todoItemCount(value) {
 // layouts only ever grow, so any drop does.
 const DROP_THRESHOLDS = {
   serviceBuckets: 0, servicesInBuckets: 0, oppsTodoItems: 0.5,
+  // Any drop in tags is worth a look: they're the app's own data now.
+  taggedContacts: 0.01, contactTagsTotal: 0.01,
   commissionBfoOkMarks: 0.5, commissionBfoOkOpps: 0.5, commissionBfoWatched: 0.5, commissionMonthUploads: 0, commissionTableLayouts: 0,
 };
 

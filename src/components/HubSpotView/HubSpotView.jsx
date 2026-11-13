@@ -2769,7 +2769,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     const n = restorePlan.willWrite;
     const ok = window.confirm(
       `Put tags back on ${n} contact${n === 1 ? '' : 's'} in HubSpot?\n\n`
-      + 'Each one is re-read first and only the missing tags are added, so nothing tagged since the audit is lost. This writes to HubSpot.',
+      + 'Each one is re-read first and only the missing tags are added, so nothing tagged since the audit is lost. This writes the app’s own tag store, not HubSpot.',
     );
     if (!ok) return;
     setRestoreError('');

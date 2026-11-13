@@ -2172,7 +2172,7 @@ export function EventsView({
     // is the point — silence would read as "done".
     const notes = [
       failed ? `${failed} failed` : '',
-      skipped ? `${skipped} skipped (couldn't read their tags in HubSpot)` : '',
+      skipped ? `${skipped} skipped (couldn't read their tags)` : '',
     ].filter(Boolean).join(' · ');
     setTagStatus(
       changed

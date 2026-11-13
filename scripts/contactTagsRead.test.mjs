@@ -11,7 +11,11 @@
 //   * an id HubSpot has no contact for comes back in `missing` rather than
 //     as an empty tag string — the caller skips those, because "no tags"
 //     would turn a bulk add into a bulk wipe.
-import { handlerForTests as handler } from '../api/hubspot.js';
+import { handlerForTests as realHandler, setTagDbForTests } from '../api/hubspot.js';
+import { fakeDb } from './_fakeTagDb.mjs';
+// Tags are read from the app's store first (api/_lib/contactTagStore.js);
+// each call gets an empty one, so these tests see HubSpot's values as before.
+const handler = (req, res) => { setTagDbForTests(fakeDb()); return realHandler(req, res); };
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {

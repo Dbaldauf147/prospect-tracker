@@ -1,4 +1,9 @@
 import { withAuth } from './_lib/http.js';
+import { adminDb } from './_lib/firebaseAdmin.js';
+import {
+  contactsWithStoredTags, loadContactTags, saveContactTags,
+  tagsOfProps, hasTagField, withoutTagFields,
+} from './_lib/contactTagStore.js';
 import { describeHubSpotError, describeHubSpotResponse, rejectedOptionValues } from './_lib/hubspotError.js';
 import { hubspotScope, ownerFilters } from './_lib/hubspotScope.js';
 
@@ -674,8 +679,18 @@ async function getEmailCampaigns(token) {
   }
 }
 
-async function handler(req, res) {
+// The tests' stand-in for Firestore (scripts/_fakeTagDb.mjs); null in use.
+let testTagDb = null;
+export function setTagDbForTests(db) { testTagDb = db || null; }
+
+async function handler(req, res, auth) {
   const token = process.env.HUBSPOT_ACCESS_TOKEN;
+  // Dan's Tags live in the app's Firestore, not in HubSpot
+  // (api/_lib/contactTagStore.js): every read below lays the stored tags
+  // over HubSpot's, and no write sends them to HubSpot.
+  const uid = auth?.uid || (testTagDb ? 'test-user' : '');
+  let tagDb = testTagDb;
+  const db = () => { if (!tagDb) tagDb = adminDb(); return tagDb; };
   if (!token) {
     return res.status(500).json({ error: 'HubSpot access token not configured' });
   }
@@ -726,13 +741,14 @@ async function handler(req, res) {
 
     if (action === 'contacts') {
       const contacts = await getAllContacts(token, scope);
+      const flat = contacts.map(c => ({
+        id: c.id,
+        ...c.properties,
+        // Map HubSpot 'role' property to 'decision_maker' for frontend compatibility
+        decision_maker: c.properties.role || c.properties.decision_maker || '',
+      }));
       return res.json({
-        contacts: contacts.map(c => ({
-          id: c.id,
-          ...c.properties,
-          // Map HubSpot 'role' property to 'decision_maker' for frontend compatibility
-          decision_maker: c.properties.role || c.properties.decision_maker || '',
-        })),
+        contacts: await contactsWithStoredTags(db(), uid, flat),
         total: contacts.length,
       });
     }
@@ -786,6 +802,9 @@ async function handler(req, res) {
           : (json?.message || `HubSpot ${readRes.status}`);
         return res.status(readRes.status).json({ error, rateLimited: readRes.status === 429 });
       }
+      // "Now" is the app's own copy of the tags; HubSpot's history is the
+      // record of what they used to be before the app stopped writing there.
+      const storedTags = await loadContactTags(db(), uid);
       const rows = (json.results || []).map((r) => {
         const p = r.properties || {};
         // Newest first is what the audit walks; HubSpot returns it that way,
@@ -802,7 +821,7 @@ async function handler(req, res) {
           id: r.id,
           name: [p.firstname, p.lastname].filter(Boolean).join(' '),
           email: p.email || '',
-          current: p.dans_tags || '',
+          current: Object.prototype.hasOwnProperty.call(storedTags, String(r.id)) ? storedTags[String(r.id)] : (p.dans_tags || ''),
           history,
         };
       });
@@ -845,22 +864,28 @@ async function handler(req, res) {
       // In a shared portal a contact someone else owns is never written.
       const notMine = new Set(await notOwnedContacts(ids));
 
-      // What HubSpot holds right now, for exactly these contacts.
+      // The tags as they stand now: the app's store, with HubSpot read only
+      // for a contact the store hasn't seen yet.
+      const storedTags = await loadContactTags(db(), uid);
       const current = new Map();
-      const readRes = await fetchRetryingRateLimit(`${BASE}/crm/v3/objects/contacts/batch/read`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ properties: ['dans_tags'], inputs: ids.map(id => ({ id })) }),
-      });
-      const readJson = await readRes.json().catch(() => ({}));
-      if (!readRes.ok) {
-        return res.status(readRes.status).json({
-          error: readRes.status === 429
-            ? 'HubSpot is rate-limiting this portal right now. Nothing was written; try again in a minute.'
-            : (readJson?.message || `HubSpot ${readRes.status}`),
+      const unseenIds = ids.filter(id => !Object.prototype.hasOwnProperty.call(storedTags, id));
+      for (const id of ids) if (!unseenIds.includes(id)) current.set(id, storedTags[id]);
+      if (unseenIds.length) {
+        const readRes = await fetchRetryingRateLimit(`${BASE}/crm/v3/objects/contacts/batch/read`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ properties: ['dans_tags'], inputs: unseenIds.map(id => ({ id })) }),
         });
+        const readJson = await readRes.json().catch(() => ({}));
+        if (!readRes.ok) {
+          return res.status(readRes.status).json({
+            error: readRes.status === 429
+              ? 'HubSpot is rate-limiting this portal right now. Nothing was written; try again in a minute.'
+              : (readJson?.message || `HubSpot ${readRes.status}`),
+          });
+        }
+        for (const r of (readJson.results || [])) current.set(String(r.id), r.properties?.dans_tags || '');
       }
-      for (const r of (readJson.results || [])) current.set(String(r.id), r.properties?.dans_tags || '');
 
       const plans = [];
       for (const id of ids) {
@@ -882,26 +907,14 @@ async function handler(req, res) {
         return res.json({ dryRun: true, plans, willWrite: toWrite.length });
       }
 
-      // One batch update rather than a call per contact: 85 writes at once is
-      // the difference between a restore that finishes and one the rate
-      // limiter interrupts halfway through.
+      // Written to the app's tag store (api/_lib/contactTagStore.js), with a
+      // log row per contact. HubSpot is not written.
       let written = 0;
       const errors = [];
-      for (let i = 0; i < toWrite.length; i += 100) {
-        const chunk = toWrite.slice(i, i + 100);
-        const writeRes = await fetchRetryingRateLimit(`${BASE}/crm/v3/objects/contacts/batch/update`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            inputs: chunk.map(p => ({ id: p.id, properties: normalizeContactPropertiesForHubSpot({ dans_tags: p.to }) })),
-          }),
-        });
-        const writeJson = await writeRes.json().catch(() => ({}));
-        if (!writeRes.ok) {
-          errors.push(writeJson?.message || `HubSpot ${writeRes.status}`);
-          continue;
-        }
-        written += (writeJson.results || []).length;
+      try {
+        written = await saveContactTags(db(), uid, toWrite.map(p => ({ id: p.id, tags: p.to })), { source: 'restore', prev: storedTags });
+      } catch (e) {
+        errors.push(String(e?.message || e));
       }
       return res.json({ dryRun: false, plans, written, skipped: plans.filter(p => p.action === 'skip').length, errors });
     }
@@ -1084,10 +1097,10 @@ async function handler(req, res) {
         getEmailCampaigns(token),
       ]);
 
-      const contactList = contacts.map(c => ({
+      const contactList = await contactsWithStoredTags(db(), uid, contacts.map(c => ({
         id: c.id,
         ...c.properties,
-      }));
+      })));
 
       return res.json({
         contacts: contactList,
@@ -1102,7 +1115,14 @@ async function handler(req, res) {
       if (!properties || !properties.email) {
         return res.status(400).json({ error: 'Email is required to create a contact' });
       }
-      const cleanProps = normalizeContactPropertiesForHubSpot(properties);
+      // Tags are kept in the app's store once the contact has an id.
+      const createTags = hasTagField(properties) ? (tagsOfProps(properties) ?? '') : undefined;
+      const storeCreatedTags = async (id) => {
+        if (createTags === undefined || !id) return {};
+        await saveContactTags(db(), uid, [{ id, tags: createTags }], { source: 'create' });
+        return { dans_tags: createTags.split(';').map(t => t.trim()).filter(Boolean).join(';') };
+      };
+      const cleanProps = normalizeContactPropertiesForHubSpot(withoutTagFields(properties));
       // A contact created in a shared portal is created as the owner's, or
       // the app would lose sight of it on the next sync.
       if (ownerId && !cleanProps.hubspot_owner_id) cleanProps.hubspot_owner_id = ownerId;
@@ -1137,7 +1157,8 @@ async function handler(req, res) {
             companyAssignment = { ok: false, status: 0, errorText: String(err?.message || err).slice(0, 300), requestedName: (cleanProps.company || '').trim() };
           }
         }
-        return res.json({ success: true, contact: { id: created.id, ...created.properties }, companyAssignment });
+        const createdTags = await storeCreatedTags(created.id);
+        return res.json({ success: true, contact: { id: created.id, ...created.properties, ...createdTags }, companyAssignment });
       }
       // HubSpot returns 409 CONFLICT when a contact with that email already
       // exists. Recover by fetching the existing contact and returning it so
@@ -1155,10 +1176,23 @@ async function handler(req, res) {
           });
           if (getRes.ok) {
             const got = await getRes.json();
+            // An existing contact keeps the tags the app already has for it;
+            // the create's tags are added to them.
+            let existingTags = {};
+            if (createTags !== undefined) {
+              const stored = await loadContactTags(db(), uid);
+              const have = Object.prototype.hasOwnProperty.call(stored, String(got.id)) ? stored[String(got.id)] : (got.properties?.dans_tags || '');
+              const union = [...new Set([...String(have).split(';'), ...createTags.split(';')].map(t => t.trim()).filter(Boolean))].join(';');
+              await saveContactTags(db(), uid, [{ id: got.id, tags: union }], { source: 'create', prev: stored });
+              existingTags = { dans_tags: union };
+            } else {
+              const [withTags] = await contactsWithStoredTags(db(), uid, [{ id: got.id, ...got.properties }]);
+              existingTags = { dans_tags: withTags.dans_tags || '' };
+            }
             return res.json({
               success: true,
               alreadyExisted: true,
-              contact: { id: got.id, ...got.properties },
+              contact: { id: got.id, ...got.properties, ...existingTags },
             });
           }
         }
@@ -1176,7 +1210,19 @@ async function handler(req, res) {
       if ((await notOwnedContacts([contactId])).length) {
         return res.status(403).json({ error: 'This contact belongs to another HubSpot user in this portal, so the app leaves it alone. Edit it in HubSpot, or have it reassigned to you first.' });
       }
-      const cleanProps = normalizeContactPropertiesForHubSpot(properties);
+      // Tags go to the app's store, never to HubSpot.
+      const tagWrite = hasTagField(properties) ? (tagsOfProps(properties) ?? '') : undefined;
+      if (tagWrite !== undefined) {
+        await saveContactTags(db(), uid, [{ id: contactId, tags: tagWrite }], { source: 'edit' });
+      }
+      const cleanProps = normalizeContactPropertiesForHubSpot(withoutTagFields(properties));
+      const storedTagReply = tagWrite !== undefined
+        ? { dans_tags: tagWrite.split(';').map(t => t.trim()).filter(Boolean).join(';') }
+        : {};
+      // Nothing left for HubSpot (a tag-only edit): answer without calling it.
+      if (Object.keys(cleanProps).length === 0) {
+        return res.json({ success: true, contact: { id: String(contactId), ...storedTagReply }, companyAssignment: null, tagsStoredLocally: true });
+      }
       // If `company` is being set, rename the Company record the contact is
       // linked to (see renameContactCompany). That pushes the new name onto
       // the canonical Company object so it cascades to every linked contact
@@ -1248,7 +1294,7 @@ async function handler(req, res) {
         }
       }
       const updated = await updateRes.json();
-      return res.json({ success: true, contact: { id: updated.id, ...updated.properties }, companyAssignment });
+      return res.json({ success: true, contact: { id: updated.id, ...updated.properties, ...storedTagReply }, companyAssignment });
     }
 
     if (action === 'create-note' && req.method === 'POST') {
@@ -1301,7 +1347,8 @@ async function handler(req, res) {
         if (contact.city) props.city = contact.city;
         if (contact.state) props.state = contact.state;
         if (contact.country) props.country = contact.country;
-        if (contact.dans_tags) props.dans_tags = contact.dans_tags;
+        // Tags are kept in the app's store (added to what it has), not sent.
+        const pushTags = contact.dans_tags ? String(contact.dans_tags) : '';
         if (ownerId) props.hubspot_owner_id = ownerId;
         const normProps = normalizeContactPropertiesForHubSpot(props);
         const noteBody = (contact.notes || '').toString().trim();
@@ -1346,6 +1393,16 @@ async function handler(req, res) {
             }
           }
 
+          if (contactId && pushTags) {
+            try {
+              const stored = await loadContactTags(db(), uid);
+              const have = Object.prototype.hasOwnProperty.call(stored, String(contactId)) ? stored[String(contactId)] : '';
+              const union = [...new Set([...String(have).split(';'), ...pushTags.split(';')].map(t => t.trim()).filter(Boolean))].join(';');
+              await saveContactTags(db(), uid, [{ id: contactId, tags: union }], { source: 'push', prev: stored });
+            } catch (tagErr) {
+              errors.push(`Tags not saved for ${props.email}: ${tagErr.message}`);
+            }
+          }
           if (contactId) {
             results.push({ email: props.email, id: contactId });
             // Attach note if provided
@@ -1396,9 +1453,13 @@ async function handler(req, res) {
       const ids = [...new Set((req.body?.contactIds || []).map(v => String(v || '').trim()).filter(Boolean))];
       if (ids.length === 0) return res.json({ tags: {}, missing: [] });
       const tags = {};
-      // HubSpot's batch read takes at most 100 inputs per call.
-      for (let i = 0; i < ids.length; i += 100) {
-        const chunk = ids.slice(i, i + 100);
+      // The app's own store first; HubSpot only for contacts it hasn't seen
+      // (and those are seeded from it).
+      const stored = await loadContactTags(db(), uid);
+      for (const id of ids) if (Object.prototype.hasOwnProperty.call(stored, id)) tags[id] = stored[id];
+      const unseenTagIds = ids.filter(id => tags[id] === undefined);
+      for (let i = 0; i < unseenTagIds.length; i += 100) {
+        const chunk = unseenTagIds.slice(i, i + 100);
         const data = await hubspotPost('/crm/v3/objects/contacts/batch/read', token, {
           properties: ['dans_tags'],
           inputs: chunk.map(id => ({ id })),
@@ -1406,6 +1467,10 @@ async function handler(req, res) {
         for (const r of (data.results || [])) {
           tags[String(r.id)] = r.properties?.dans_tags || '';
         }
+      }
+      const seeded = unseenTagIds.filter(id => tags[id] !== undefined).map(id => ({ id, tags: tags[id] }));
+      if (seeded.length) {
+        try { await saveContactTags(db(), uid, seeded, { source: 'seed', prev: stored }); } catch (e) { console.error('contact-tags seed failed', e?.message || e); }
       }
       return res.json({ tags, missing: ids.filter(id => tags[id] === undefined) });
     }

@@ -43,6 +43,7 @@ import { DataTable } from '../common/DataTable';
 import { ROSTER_CATEGORIES, rescoreTagCoverage, makeAccountRecordLookup } from '../../utils/contactRosters';
 import { companyClosedBuckets, serviceBucketContext } from '../../utils/bucketServices';
 import { BUCKETS } from '../ProspectModal/contactTags';
+import { TagRecoveryPanel } from './TagRecoveryPanel';
 import { TAG_OPTIONS, scoredTagOptions, tagKey } from '../../utils/contactTagReview';
 import { keyContactsNotMet } from '../../utils/metInPerson';
 import { makeOwnedContactGate } from '../../utils/ladderOwnership';
@@ -541,6 +542,8 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
           Tagged:
         </span>
         {onTagFocus && <TagFocusPicker selected={tagFocus} onChange={onTagFocus} />}
+        {/* Tags and answers that went missing, put back from the backups. */}
+        <TagRecoveryPanel coverage={fullCoverage} tagReviewMap={tagReviewMap} updateSettings={updateSettings} />
         {/* How many rosters still have tagging to finish, one apiece. Shown
             whatever the rest of the ladder is doing, and always over the
             full tag set: it's the debt count, not the lens above. */}

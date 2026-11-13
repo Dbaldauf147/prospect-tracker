@@ -2617,9 +2617,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                 { key: 'yes',     label: 'Yes',      on: { bg: '#DCFCE7', border: '#4ADE80', color: '#166534' },
                   tip: (tag) => `${tag} is this person's area. Puts the tag on in HubSpot, unless a Not sold below is holding it off` },
                 { key: 'no',      label: 'No',       on: { bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B' },
-                  tip: (tag) => `Record ${tag} as “No” - doesn't apply to this person. Kept here, not sent to HubSpot` },
+                  tip: (tag) => `Record ${tag} as “No” - doesn't apply to this person. Kept in the app` },
                 { key: 'unsure',  label: 'Not sure', on: { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
-                  tip: (tag) => `Record ${tag} as “Not sure” - haven't worked it out yet. Kept here, not sent to HubSpot` },
+                  tip: (tag) => `Record ${tag} as “Not sure” - haven't worked it out yet. Kept in the app` },
               ];
               const STATUSES = [
                 { key: 'sold',    label: 'Sold',     on: { bg: '#CCFBF1', border: '#5EEAD4', color: '#115E59' },
@@ -2642,7 +2642,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                         {' · '}{done ? 'all tags mapped' : `${answered} of ${total} mapped`}
                       </span>
                     </span>
-                    <span style={{ fontWeight: 500, color: '#94A3B8' }}>“Yes” and “Sold” put the tag in HubSpot - “Not sold” holds it off</span>
+                    <span style={{ fontWeight: 500, color: '#94A3B8' }}>“Yes” and “Sold” put the tag on - “Not sold” holds it off. Tags are kept in the app, not HubSpot</span>
                   </div>
                   {onSaveTagPresets && (
                     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '0.4rem 0.7rem', borderBottom: '1px solid #E2E8F0', background: '#FAF5FF' }}>
