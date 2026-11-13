@@ -218,6 +218,8 @@ export function gapFillIssueRecords(gapRows = [], substatusOf = (a) => a?.substa
 }
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// "a", "a and b", "a, b and c".
+const joinList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 
 /**
  * The Issues tab's rows for those records, one per account. With
@@ -231,10 +233,16 @@ export function gapFillIssues(records = [], { prospects = [] } = {}) {
     if (!r || (!r.add && !r.fill)) continue;
     const live = r.accountId ? byId.get(r.accountId) : null;
     if (check && r.accountId && !live) continue;
-    const what = [
-      r.add ? `${plural(r.add, 'contact', 'contacts')} HubSpot has that the app doesn't` : '',
-      r.fill ? `${plural(r.fill, 'contact', 'contacts')} with blanks HubSpot can fill (${Object.entries(r.fields || {}).map(([k, n]) => `${k} ${n}`).join(', ')})` : '',
-    ].filter(Boolean).join(', and ');
+    // Plain sentences: what is missing, that HubSpot has it, and which
+    // button copies it over. The old "blanks HubSpot can fill (Company 4)"
+    // read as a code rather than a sentence.
+    const missing = Object.entries(r.fields || {})
+      .map(([label, n]) => `${label} for ${plural(n, 'contact', 'contacts')}`);
+    const sentences = [
+      r.add ? `HubSpot has ${plural(r.add, 'contact', 'contacts')} at this company that ${r.add === 1 ? "isn't" : "aren't"} in the app yet.` : '',
+      r.fill && missing.length ? `The app is missing ${joinList(missing)}, and HubSpot has ${r.fill === 1 && missing.length === 1 ? 'it' : 'them'}.` : '',
+    ].filter(Boolean);
+    const buttons = r.add && r.fill ? 'Add or Fill' : r.add ? 'Add' : 'Fill';
     out.push({
       id: `hubspot-gap-fill:${r.accountId || r.company}`,
       source: 'Hubspot Mapping',
@@ -243,7 +251,7 @@ export function gapFillIssues(records = [], { prospects = [] } = {}) {
       prospectId: live?.id || r.accountId || null,
       daysUntil: null,
       expirationDate: null,
-      detail: `${what}. Add or Fill them on My Accounts > Hubspot Mapping > Gap Fill.`,
+      detail: `${sentences.join(' ')} Click ${buttons} on My Accounts > Hubspot Mapping > Gap Fill to copy it into the app.`,
     });
   }
   return out;

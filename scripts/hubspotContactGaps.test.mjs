@@ -115,8 +115,10 @@ assert.deepEqual(gfIssues.map(i => [i.id, i.source, i.type, i.company, i.prospec
   ['hubspot-gap-fill:p1', 'Hubspot Mapping', 'Contacts to add and fill from HubSpot', 'Aegon', 'p1'],
   ['hubspot-gap-fill:p3', 'Hubspot Mapping', 'Contact data to fill from HubSpot', 'AIMCo', 'p3'],
 ]);
-assert.equal(gfIssues[0].detail, "2 contacts HubSpot has that the app doesn't, and 1 contact with blanks HubSpot can fill (Phone 1, LinkedIn 1). Add or Fill them on My Accounts > Hubspot Mapping > Gap Fill.");
+assert.equal(gfIssues[0].detail, "HubSpot has 2 contacts at this company that aren't in the app yet. The app is missing Phone for 1 contact and LinkedIn for 1 contact, and HubSpot has them. Click Add or Fill on My Accounts > Hubspot Mapping > Gap Fill to copy it into the app.");
 assert.equal(gapFillIssues([{ accountId: 'p9', company: 'Gone', add: 1, fill: 0 }], { prospects: [{ id: 'p1' }] }).length, 0, 'a deleted account drops');
 assert.equal(gapFillIssues([{ accountId: 'p1', company: 'Aegon', add: 0, fill: 0 }]).length, 0, 'nothing left, no issue');
 
+assert.equal(gapFillIssues([{ accountId: '', company: 'Alberta', add: 0, fill: 4, fields: { Company: 4 } }])[0].detail,
+  'The app is missing Company for 4 contacts, and HubSpot has them. Click Fill on My Accounts > Hubspot Mapping > Gap Fill to copy it into the app.');
 console.log('hubspotContactGaps: all assertions passed');
