@@ -17298,16 +17298,19 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // Rows the current Date / Status / Show / Hide-history filters allow.
   // Always computed so `hiddenByFilterCount` stays accurate even when
   // the Show-hidden toggle is on.
-  const filteredByActiveFilters = useMemo(() => {
+  // Whether a row is history the Hide-history gate keeps off the table:
+  // Call-In-less rows are history and hidden by default, except the 100
+  // most-recently-closed ones, which stay visible alongside the active
+  // callback rows.
+  const isGatedHistory = useCallback(
+    (r) => resolveCallIn(r) == null && !recentClosedHistoryIds.has(r._id),
+    [recentClosedHistoryIds],
+  );
+  // The Date / Status / Show filters, everything but the history gate.
+  const passesOtherFilters = useMemo(() => {
     const fromTs = dateFrom ? Date.parse(dateFrom) : null;
     const toTs = dateTo ? Date.parse(dateTo) + 86399999 : null;
-    return records.filter(r => {
-      // History gate runs first so it short-circuits before the more
-      // expensive date / stage checks for the bulk of dormant rows.
-      // Call-In-less rows are history and hidden by default — except the
-      // 100 most-recently-closed ones, which stay visible alongside the
-      // active callback rows.
-      if (hideHistory && resolveCallIn(r) == null && !recentClosedHistoryIds.has(r._id)) return false;
+    return (r) => {
       if (fromTs != null || toTs != null) {
         const raw = r['Start Date'];
         const ts = raw ? Date.parse(raw) : NaN;
@@ -17320,8 +17323,23 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       if (effectiveActivityFilter === 'active' && CLOSED_STAGES.has(stage)) return false;
       if (effectiveActivityFilter === 'closed' && !CLOSED_STAGES.has(stage)) return false;
       return true;
-    });
-  }, [records, dateFrom, dateTo, statusFilter, effectiveActivityFilter, hideHistory, CLOSED_STAGES, recentClosedHistoryIds]);
+    };
+  }, [dateFrom, dateTo, statusFilter, effectiveActivityFilter, CLOSED_STAGES]);
+  const filteredByActiveFilters = useMemo(
+    // History gate first, so it short-circuits before the date / stage
+    // checks for the bulk of dormant rows.
+    () => records.filter(r => !(hideHistory && isGatedHistory(r)) && passesOtherFilters(r)),
+    [records, hideHistory, isGatedHistory, passesOtherFilters],
+  );
+  // The history the gate keeps off the table, handed to it as search-only
+  // rows: they stay out of the way (and off the counts, chips and exports
+  // that read the filtered set) until a column filter is typed or ticked,
+  // and then any that match it show up with the rest. So an old opp is a
+  // search away without loading all of history with Show history.
+  const historySearchRows = useMemo(() => {
+    if (!hideHistory || showHiddenByFilter || (showOnlySelected && selectedIds.size > 0)) return [];
+    return records.filter(r => isGatedHistory(r) && passesOtherFilters(r));
+  }, [records, hideHistory, showHiddenByFilter, showOnlySelected, selectedIds, isGatedHistory, passesOtherFilters]);
 
   // Standalone count of rows the Hide-history gate is suppressing, so
   // the toggle button can show "Show history (N)" without depending on
@@ -18480,7 +18498,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             onClick={() => setHideHistory(v => !v)}
             disabled={hideHistory && historyCount === 0}
             title={hideHistory
-              ? 'Rows with no Call In number are hidden as history. Click to include them.'
+              ? 'Rows with no Call In number are hidden as history. A column filter still searches them: type or tick a value under any header and matching history shows up. Click to show all of it.'
               : 'Hide rows with no Call In number: they aren’t on a callback schedule.'}
           >
             {hideHistory
@@ -19271,6 +19289,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               tableId="opps2"
               columns={scheduledAwareColumns}
               rows={rowsForTable}
+              searchOnlyRows={historySearchRows}
               sortSignal={callInSortSignal}
               alwaysVisible={['Account', '_select', '_info']}
               // No default sort — editing Follow Up / Last Client Heard From
