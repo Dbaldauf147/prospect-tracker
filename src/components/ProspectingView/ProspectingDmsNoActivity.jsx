@@ -90,8 +90,12 @@ const toIso = (ms) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, cdmName = '', onSelectProspect, onOpenContact = null }) {
-  const { lists, accountOf, noIndex } = useDmsNoActivity({ prospects, settings, cdmName });
+// `noPlanned`: the "No Activity and no Planned Activity" subtab. The same
+// people, less anyone already on an email campaign, since a campaign is
+// outreach already lined up for them. Adding someone to a campaign from
+// here moves them off it.
+export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, cdmName = '', onSelectProspect, onOpenContact = null, noPlanned = false }) {
+  const { lists: allLists, accountOf, noIndex } = useDmsNoActivity({ prospects, settings, cdmName });
 
   // The saved email campaigns (useEmailCampaigns), re-read whenever one of
   // the campaign pop-ups adds someone, so the Email Campaign column follows
@@ -109,6 +113,18 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     }
     return out;
   }, [campaigns]);
+
+  // Each window's people, less the ones on a campaign when this is the
+  // no-planned-activity subtab. Everything below reads these lists, so the
+  // window chips, DM buttons and table all count the same people.
+  const lists = useMemo(() => {
+    if (!allLists || !noPlanned) return allLists;
+    const out = new Map();
+    for (const [w, entries] of allLists) {
+      out.set(w, entries.filter(({ contact }) => !campaignsByEmail.has(normEmail(contact.email))));
+    }
+    return out;
+  }, [allLists, noPlanned, campaignsByEmail]);
 
   const [windowDays, setWindowState] = useState(readWindow);
   const setWindow = (w) => {
@@ -442,6 +458,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', minHeight: 0, padding: '0 1.25rem 1.25rem' }}>
       <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
         Decision makers at your accounts that nothing has reached: no HubSpot email or call to them, and no Last Contacted date.
+        {noPlanned && ' Nothing is lined up for them either: anyone already on an email campaign is left out (they are on DMs Without Activity).'}
         {' '}The History chart's Decision Makers (tagged Decision Maker, less Hide, Left and the clients every roster leaves out), without the Hold Off, Lost - Not Sold, Old Client and Client accounts. A company with a Substatus counts as Hold Off.
         {noIndex && <span style={{ color: '#B45309' }}> HubSpot emails and calls count once the Activity tab has loaded its feed, so until then this list may hold people who were emailed.</span>}
       </div>
@@ -505,7 +522,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
         <div style={{ height: '70vh', display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
           <DataTable
             tableId="prospecting-dms-no-activity"
-            exportFileName="Decision Makers Without Activity"
+            exportFileName={noPlanned ? 'Decision Makers Without Activity or Planned Activity' : 'Decision Makers Without Activity'}
             columns={columns}
             rows={rows}
             alwaysVisible={['__select__', 'name']}
@@ -513,7 +530,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
             // Biggest deals first; rows with no priced deal sort to the end.
             defaultSort={{ key: 'deal', direction: 'desc' }}
             defaultHidden={['company', 'status']}
-            emptyMessage={dmTopics.length && windowEntries.length ? 'No decision makers here match the lit DM buttons.' : windowDays == null ? 'Every decision maker at your accounts has had some activity.' : `Every decision maker at your accounts has had activity in the last ${windowDays} days.`}
+            emptyMessage={dmTopics.length && windowEntries.length ? 'No decision makers here match the lit DM buttons.' : noPlanned ? 'Every decision maker here has had some activity or is on an email campaign.' : windowDays == null ? 'Every decision maker at your accounts has had some activity.' : `Every decision maker at your accounts has had activity in the last ${windowDays} days.`}
             settings={settings}
             updateSettings={updateSettings}
           />

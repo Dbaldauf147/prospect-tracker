@@ -117,6 +117,7 @@ const SUBTABS = [
   { key: 'pcs', label: 'PCs' },
   { key: 'tiered', label: 'Tiered Activity' },
   { key: 'dmsNoActivity', label: 'DMs Without Activity' },
+  { key: 'dmsNoPlanned', label: 'No Activity and no Planned Activity' },
   { key: 'news', label: 'News' },
   { key: 'logic', label: 'Prospecting Logic' },
 ];
@@ -1583,8 +1584,13 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
         <ProspectingLogic steps={steps} settings={settings} updateSettings={updateSettings} canEdit={canEdit} maxWidth={PAGE_MAX} />
       ) : subtab === 'news' ? (
         <ProspectingNews />
-      ) : subtab === 'dmsNoActivity' ? (
+      ) : subtab === 'dmsNoActivity' || subtab === 'dmsNoPlanned' ? (
+        // Two subtabs, one page: the second leaves out anyone already on an
+        // email campaign. Keyed so switching between them starts the
+        // selection and filters fresh.
         <ProspectingDmsNoActivity
+          key={subtab}
+          noPlanned={subtab === 'dmsNoPlanned'}
           prospects={prospects}
           settings={settings}
           updateSettings={updateSettings}
