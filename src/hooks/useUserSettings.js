@@ -4,11 +4,37 @@ import { pushBackup } from '../utils/settingsBackup';
 import { autoMergeValue, mergeSettingsKey, foldWriteResult } from '../utils/settingsMerge';
 import { guardLeadLinks, recordLeadLinks, LEAD_LINK_LEDGER_KEY } from '../utils/leadLinks';
 import { guardLeadMappings, recordLeadMappings, LEAD_MAPPING_LEDGER_KEY } from '../utils/leadMappings';
+import { KEY_AT_FIELD, ENCODED_SETTINGS_KEYS } from '../utils/settingsCodec';
 import { overSettingsBudget, overBudgetMessage, settingsDocReport, settingsIndexReport, isIndexEntryLimitError, indexLimitMessage } from '../utils/settingsDocSize';
 import fieldExemptions from '../../firestore.field-exemptions.json';
 import {
   isClientWedged, isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash, autoReloadWhenWedged,
 } from '../utils/firestoreClientHealth';
+
+// Record on `next` that this device wrote these big maps' documents at
+// `at` (settingsCodec KEY_AT_FIELD), so its next save of them compares
+// against its own write rather than the copy it loaded.
+function stampKeyAt(next, keys, at) {
+  if (!keys?.length || !at) return;
+  const held = { ...(next[KEY_AT_FIELD] || {}) };
+  for (const k of keys) held[k] = Math.max(Number(held[k]) || 0, Number(at));
+  next[KEY_AT_FIELD] = held;
+}
+
+// The stored settings a stale save read, filled out with the big maps it
+// didn't read from what this device holds. The stale check reads only the
+// maps the save writes, so without this every other map (targetMap and
+// friends) went missing from the state rebuilt on it until the next
+// snapshot, and a save built on that state in between would have written a
+// map down to nothing.
+function withUnreadMaps(remote, held) {
+  const out = { ...(remote || {}) };
+  for (const k of ENCODED_SETTINGS_KEYS) {
+    if (!(k in out) && held && k in held) out[k] = held[k];
+  }
+  out[KEY_AT_FIELD] = { ...(held?.[KEY_AT_FIELD] || {}), ...(remote?.[KEY_AT_FIELD] || {}) };
+  return out;
+}
 
 // Set (or delete, when value is null/undefined) one dotted path on a
 // plain nested object, creating intermediate objects as needed.
@@ -222,10 +248,14 @@ export function useUserSettings(user) {
       console.warn('Settings not loaded yet: a save built on them was skipped');
       return false;
     }
-    const rawUpdates = typeof updatesOrFn === 'function'
+    const built = typeof updatesOrFn === 'function'
       ? updatesOrFn(settingsRef.current || {})
       : updatesOrFn;
-    if (!rawUpdates || typeof rawUpdates !== 'object') return false;
+    if (!built || typeof built !== 'object') return false;
+    // The map write stamps are read, never saved (a restored backup carries
+    // an old copy of them).
+    const rawUpdates = { ...built };
+    delete rawUpdates[KEY_AT_FIELD];
     const clears = { links: opts?.clearLeadLinks || [], mappings: opts?.clearLeadMappings || [] };
 
     // Snapshot the pre-save state for recovery.
@@ -234,6 +264,7 @@ export function useUserSettings(user) {
     const prev = settingsRef.current || {};
     const updates = protectLeadLinks(rawUpdates, prev, clears);
     const expectedAt = prev._lastWriteAt || null;
+    const expectedKeyAt = prev[KEY_AT_FIELD] || {};
     const optimistic = { ...prev, ...updates };
     // Refuse before touching local state, so a save that can't be stored
     // doesn't leave this device showing data the server never took.
@@ -251,9 +282,10 @@ export function useUserSettings(user) {
     // Whether the write ended up going over plain HTTPS because the SDK
     // had crashed — the user is told once, after the state has settled.
     let viaRest = false;
+    let keysWritten = [];
 
     try {
-      const result = await saveUserSettings(userIdRef.current, updates, { expectedAt });
+      const result = await saveUserSettings(userIdRef.current, updates, { expectedAt, expectedKeyAt });
 
       if (result.stale) {
         // Silent auto-merge — never prompt. For any key both devices
@@ -264,9 +296,19 @@ export function useUserSettings(user) {
         // changes to keys we didn't touch. Pre-save backup above means
         // the prior state is recoverable if the heuristic ever picks
         // the wrong side on a primitive overlap.
-        const remote = result.remoteData || {};
+        const remote = withUnreadMaps(result.remoteData, settingsRef.current);
+        // A save written as a function of the settings is simply made
+        // again on the stored ones: it is one edit (hide this contact,
+        // snooze that one), and applied to the fresh map it lands exactly,
+        // removals included, where a merge of two whole maps can't tell a
+        // removal from an entry the other copy never had.
+        let redone = null;
+        if (typeof updatesOrFn === 'function') {
+          try { redone = updatesOrFn({ ...remote }); } catch (err) { console.warn('Settings: could not redo a save on the stored settings', err); }
+        }
         let mergedUpdates = { ...updates };
         for (const k of updateKeys) {
+          if (redone && typeof redone === 'object' && k in redone) { mergedUpdates[k] = redone[k]; continue; }
           if (!(k in remote)) continue;
           mergedUpdates[k] = mergeSettingsKey(k, updates[k], remote[k]);
         }
@@ -277,24 +319,28 @@ export function useUserSettings(user) {
         written = mergedUpdates;
         writtenAt = forced.writtenAt;
         viaRest = !!forced.viaRest;
+        keysWritten = forced.keysWritten || [];
         const merged = foldWriteResult(
           { ...remote, ...mergedUpdates },
           optimistic,
           settingsRef.current,
         );
         merged._lastWriteAt = forced.writtenAt;
+        stampKeyAt(merged, keysWritten, forced.writtenAt);
         settingsRef.current = merged;
         setSettings(merged);
         saved = true;
       } else {
         writtenAt = result.writtenAt;
         viaRest = !!result.viaRest;
+        keysWritten = result.keysWritten || [];
         // Folded into whatever is current rather than replayed from
         // `optimistic`: edits made while this write was in the air are newer
         // than anything it can say, and rebuilding from the pre-write
         // snapshot silently undid them on screen.
         const next = foldWriteResult(optimistic, optimistic, settingsRef.current);
         next._lastWriteAt = result.writtenAt;
+        stampKeyAt(next, keysWritten, result.writtenAt);
         settingsRef.current = next;
         setSettings(next);
         console.log('Settings saved to Firestore:', Object.keys(updates));
@@ -327,6 +373,7 @@ export function useUserSettings(user) {
         );
         const at = Math.max(Number(pending._lastWriteAt) || 0, Number(writtenAt) || 0);
         if (at) next._lastWriteAt = at;
+        stampKeyAt(next, keysWritten, writtenAt);
         settingsRef.current = next;
         setSettings(next);
         // The snapshot that landed mid-write may have been the first one: it
@@ -353,6 +400,7 @@ export function useUserSettings(user) {
 
     const prev = settingsRef.current || {};
     const expectedAt = prev._lastWriteAt || null;
+    const expectedKeyAt = prev[KEY_AT_FIELD] || {};
 
     // Build optimistic local state by walking each path.
     let optimistic = prev;
@@ -369,11 +417,12 @@ export function useUserSettings(user) {
     let written = pathUpdates;
     let writtenAt = null;
     let viaRest = false;
+    let keysWritten = [];
 
     try {
       // The big maps are stored whole (utils/settingsCodec), so a path into
       // one is written as the map's whole new value, read off `optimistic`.
-      const result = await savePathUpdates(userIdRef.current, pathUpdates, { expectedAt, wholeValues: optimistic });
+      const result = await savePathUpdates(userIdRef.current, pathUpdates, { expectedAt, expectedKeyAt, wholeValues: optimistic });
       if (result.stale) {
         // Silent auto-merge for path-based saves. Path writes target
         // specific dotted keys (e.g. "companyOpportunities.acme-inc"),
@@ -383,7 +432,7 @@ export function useUserSettings(user) {
         // (id-keyed list union, recursive object merge, etc.). Keys
         // the other device changed and we didn't touch are preserved
         // by force-writing only our paths via savePathUpdates.
-        const remote = result.remoteData || {};
+        const remote = withUnreadMaps(result.remoteData, settingsRef.current);
         const mergedPathUpdates = {};
         for (const [path, value] of Object.entries(pathUpdates)) {
           if (value == null) {
@@ -415,17 +464,21 @@ export function useUserSettings(user) {
         written = mergedPathUpdates;
         writtenAt = forced.writtenAt;
         viaRest = !!forced.viaRest;
+        keysWritten = forced.keysWritten || [];
         const next = foldWriteResult(rebuilt, optimistic, settingsRef.current);
         next._lastWriteAt = forced.writtenAt;
+        stampKeyAt(next, keysWritten, forced.writtenAt);
         settingsRef.current = next;
         setSettings(next);
       } else {
         writtenAt = result.writtenAt;
         viaRest = !!result.viaRest;
+        keysWritten = result.keysWritten || [];
         // Same as updateSettings: a path written while this one was in
         // flight is newer than this write's snapshot of the document.
         const next = foldWriteResult(optimistic, optimistic, settingsRef.current);
         next._lastWriteAt = result.writtenAt;
+        stampKeyAt(next, keysWritten, result.writtenAt);
         settingsRef.current = next;
         setSettings(next);
       }
@@ -449,6 +502,7 @@ export function useUserSettings(user) {
         const next = foldWriteResult(rebuilt, optimistic, settingsRef.current);
         const at = Math.max(Number(pending._lastWriteAt) || 0, Number(writtenAt) || 0);
         if (at) next._lastWriteAt = at;
+        stampKeyAt(next, keysWritten, writtenAt);
         settingsRef.current = next;
         setSettings(next);
         // The snapshot that landed mid-write may have been the first one: it

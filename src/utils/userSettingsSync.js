@@ -3,7 +3,7 @@ import { onSnapshot } from './safeOnSnapshot';
 import { db } from '../firebase';
 import { restGetDoc, restUpdateFields, dottedFieldEntries, keyFieldEntries } from './firestoreRest.js';
 import { isClientWedgedError, isClientWedged, noteClientWedged } from './firestoreClientHealth.js';
-import { composeSettings, legacyKeysIn, splitSettingsUpdates, splitPathUpdates, ENCODED_SETTINGS_KEYS } from './settingsCodec.js';
+import { composeSettings, legacyKeysIn, splitSettingsUpdates, splitPathUpdates, staleKeysIn, KEY_AT_FIELD, ENCODED_SETTINGS_KEYS } from './settingsCodec.js';
 import { subscribeToSettingsKeys, readSettingsKeys, writeSettingsKeys } from './settingsKeyStore.js';
 import {
   SITE_LISTS_KEY,
@@ -27,6 +27,7 @@ export function subscribeToUserSettings(userId, onChange) {
   let pending = false; // whether that snapshot carries this tab's own unsent writes
   let lists;     // undefined until the site lists' first snapshot
   let keyValues; // undefined until the big maps' first snapshot
+  let keyAts = {}; // when each of those was written (settingsCodec KEY_AT_FIELD)
   let migrating = false;
   let movingKeys = false;
   // Set once a move has failed (rules not released yet, say): tried again on
@@ -41,7 +42,7 @@ export function subscribeToUserSettings(userId, onChange) {
     if (rawDoc === undefined || lists === undefined || keyValues === undefined) return;
     if (rawDoc === null && !Object.keys(lists).length && !Object.keys(keyValues).length) { onChange(null); return; }
 
-    const merged = composeSettings(rawDoc || {}, keyValues);
+    const merged = composeSettings(rawDoc || {}, keyValues, keyAts);
     const legacy = merged[SITE_LISTS_KEY];
     // A migration that hasn't finished yet leaves a company in both
     // places; the subcollection holds the newer copy either way.
@@ -60,7 +61,7 @@ export function subscribeToUserSettings(userId, onChange) {
     if (!movingKeys && !moveFailed && due.length && !pending) {
       movingKeys = true;
       const updates = Object.fromEntries(due.map(k => [k, merged[k] ?? null]));
-      saveUserSettings(userId, updates, { expectedAt: Number(rawDoc?._lastWriteAt || 0) })
+      saveUserSettings(userId, updates, { expectedAt: Number(rawDoc?._lastWriteAt || 0), expectedKeyAt: keyAts })
         .then((res) => { if (!res?.stale) console.log('Settings: moved to their own documents:', due); })
         .catch((err) => { moveFailed = true; console.warn('Settings: could not move the big maps to their own documents yet', err); })
         .finally(() => { movingKeys = false; });
@@ -92,8 +93,9 @@ export function subscribeToUserSettings(userId, onChange) {
     if (lists === undefined) { lists = {}; emit(); }
   });
 
-  const unsubKeys = subscribeToSettingsKeys(userId, (map) => {
+  const unsubKeys = subscribeToSettingsKeys(userId, (map, ats) => {
     keyValues = map;
+    keyAts = ats || {};
     emit();
   }, () => {
     // Same as the site lists: carry on with what the settings document
@@ -132,11 +134,28 @@ const settingsPath = (userId) => `${COL}/${userId}`;
 // device's entries, or all of them for a full read. The rest come back as
 // whatever the settings document itself still holds for them.
 async function readSettingsDoc(userId, ref, keys = []) {
+  const ats = {};
   const [raw, keyValues] = await Promise.all([
     readRawSettingsDoc(userId, ref),
-    keys.length ? readSettingsKeys(userId, keys) : {},
+    keys.length ? readSettingsKeys(userId, keys, ats) : {},
   ]);
-  return raw || Object.keys(keyValues).length ? composeSettings(raw || {}, keyValues) : null;
+  return raw || Object.keys(keyValues).length ? composeSettings(raw || {}, keyValues, ats) : null;
+}
+
+// Whether a save's copy is behind the stored settings: the settings document
+// moved on since `expectedAt`, or (given `expectedKeyAt`, the save's
+// settings[KEY_AT_FIELD]) a map it writes was saved after the copy it holds.
+//
+// The second half is why hidden and snoozed Changed Jobs contacts came back.
+// The settings document and the maps' documents arrive in separate
+// snapshots, so for a moment after a load a tab can hold the settings
+// document fresh from the server and a map, contactLocalFields say, still as
+// the local cache had it days ago. _lastWriteAt matched, the save went
+// through as "not stale", and the old map plus one click replaced the
+// stored one.
+function isBehind(remote, keyNames, expectedAt, expectedKeyAt) {
+  if (Number(remote._lastWriteAt || 0) > Number(expectedAt)) return true;
+  return expectedKeyAt != null && staleKeysIn(keyNames, expectedKeyAt, remote[KEY_AT_FIELD]).length > 0;
 }
 
 async function readRawSettingsDoc(userId, ref) {
@@ -182,7 +201,7 @@ async function writeSettingsFields(userId, fieldEntries, sdkWrite) {
 // Always stamps the write with a new _lastWriteAt.
 export async function saveUserSettings(userId, updates, opts = {}) {
   const ref = doc(db, COL, userId);
-  const { expectedAt, force } = opts;
+  const { expectedAt, expectedKeyAt, force } = opts;
   // companySiteLists lives in its own subcollection; everything else is a
   // field on the document.
   const { ops, rest: fields } = splitSiteListUpdates(updates);
@@ -193,11 +212,9 @@ export async function saveUserSettings(userId, updates, opts = {}) {
   if (!force && expectedAt != null) {
     try {
       const remote = await readSettingsDoc(userId, ref, keyNames);
-      if (remote) {
+      if (remote && isBehind(remote, keyNames, expectedAt, expectedKeyAt)) {
         const remoteAt = Number(remote._lastWriteAt || 0);
-        if (remoteAt > Number(expectedAt)) {
-          return { stale: true, remoteAt, remoteData: await withSiteLists(userId, remote, ops) };
-        }
+        return { stale: true, remoteAt, remoteData: await withSiteLists(userId, remote, ops) };
       }
     } catch (err) {
       // We can't tell whether our copy is stale (e.g. laptop just woke
@@ -223,7 +240,7 @@ export async function saveUserSettings(userId, updates, opts = {}) {
     keyFieldEntries(written),
     () => writeWholeKeys(ref, written),
   );
-  return { stale: false, writtenAt, viaRest };
+  return { stale: false, writtenAt, viaRest, keysWritten: keyNames };
 }
 
 // Write whole settings keys, each one REPLACING what the document holds
@@ -334,7 +351,7 @@ async function migrateFromLocalStorage(userId) {
 // such a path is in the update.
 export async function savePathUpdates(userId, pathUpdates, opts = {}) {
   const ref = doc(db, COL, userId);
-  const { expectedAt, force, wholeValues } = opts;
+  const { expectedAt, expectedKeyAt, force, wholeValues } = opts;
   const { ops, rest: rawRest } = splitSiteListPaths(pathUpdates);
   const { keys, main: rest } = splitPathUpdates(rawRest, wholeValues);
   const keyNames = Object.keys(keys);
@@ -342,11 +359,9 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
   if (!force && expectedAt != null) {
     try {
       const remote = await readSettingsDoc(userId, ref, keyNames);
-      if (remote) {
+      if (remote && isBehind(remote, keyNames, expectedAt, expectedKeyAt)) {
         const remoteAt = Number(remote._lastWriteAt || 0);
-        if (remoteAt > Number(expectedAt)) {
-          return { stale: true, remoteAt, remoteData: await withSiteLists(userId, remote, ops) };
-        }
+        return { stale: true, remoteAt, remoteData: await withSiteLists(userId, remote, ops) };
       }
     } catch (err) {
       // Same as saveUserSettings: an unverifiable stale check must not
@@ -399,7 +414,7 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
     }
   });
 
-  return { stale: false, writtenAt, viaRest };
+  return { stale: false, writtenAt, viaRest, keysWritten: keyNames };
 }
 
 export async function initUserSettings(userId) {

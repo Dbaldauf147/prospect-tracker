@@ -65,6 +65,32 @@ function parse(raw, what) {
   }
 }
 
+/**
+ * Where the settings object carries when each map's document was last
+ * written, as key -> `at`. Read alongside the maps and never written back:
+ * it is how a save tells that the map it holds is older than the stored one
+ * (see staleKeysIn), which the settings document's _lastWriteAt alone can't
+ * say, since the two arrive in separate snapshots.
+ */
+export const KEY_AT_FIELD = '_keyAt';
+
+/** A key document's write stamp, 0 when it has none. */
+export function keyDocAt(data) {
+  const at = Number(data?.at);
+  return Number.isFinite(at) ? at : 0;
+}
+
+/**
+ * The keys among `keys` whose stored document was written after the copy a
+ * save holds (`heldAt`, the save's settings[KEY_AT_FIELD]). A map the save
+ * holds no stamp for counts as older than any stored one.
+ */
+export function staleKeysIn(keys, heldAt, remoteAt) {
+  const held = isPlainObject(heldAt) ? heldAt : {};
+  const remote = isPlainObject(remoteAt) ? remoteAt : {};
+  return (keys || []).filter(k => (Number(remote[k]) || 0) > (Number(held[k]) || 0));
+}
+
 /** A key document's value, undefined when there is none (or it won't parse). */
 export function keyDocValue(data, key = 'settings key') {
   return data ? parse(data.json, key) : undefined;
@@ -88,12 +114,15 @@ function overlay(base, plain) {
  * undefined for a key with no document or not read), else from where the
  * settings document still holds it.
  */
-export function composeSettings(raw, keyValues = {}) {
+export function composeSettings(raw, keyValues = {}, keyAts = null) {
   if (!raw || typeof raw !== 'object') {
     if (!keyValues || !Object.values(keyValues).some(v => v !== undefined)) return raw;
     raw = {};
   }
   const out = { ...raw };
+  // Never a stored field: only the stamps read with these key documents.
+  delete out[KEY_AT_FIELD];
+  if (keyAts) out[KEY_AT_FIELD] = { ...keyAts };
   for (const key of ENCODED_SETTINGS_KEYS) {
     const field = encodedFieldName(key);
     const own = keyValues?.[key];
@@ -123,6 +152,10 @@ const dropLegacy = (main, key) => { main[key] = null; main[encodedFieldName(key)
 export function splitSettingsUpdates(updates) {
   const keys = {};
   if (!updates || typeof updates !== 'object') return { keys, main: updates };
+  if (KEY_AT_FIELD in updates) {
+    updates = { ...updates };
+    delete updates[KEY_AT_FIELD];
+  }
   const touched = ENCODED_SETTINGS_KEYS.filter(k => k in updates || encodedFieldName(k) in updates);
   if (!touched.length) return { keys, main: updates };
   const decoded = composeSettings(updates);
@@ -151,6 +184,7 @@ export function splitPathUpdates(pathUpdates, wholeValues) {
   const roots = new Map();
   for (const [path, value] of Object.entries(pathUpdates || {})) {
     const root = pathRoot(path);
+    if (root === KEY_AT_FIELD) continue;
     if (!isEncodedSettingsKey(root)) { main[path] = value; continue; }
     if (path === root) roots.set(root, { direct: value });
     else if (!roots.has(root)) roots.set(root, null);
