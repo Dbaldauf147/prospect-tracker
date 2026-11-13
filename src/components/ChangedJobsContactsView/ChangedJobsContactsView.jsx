@@ -24,6 +24,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { isChangedJobs, isSchneiderContact, activeSnoozeMs } from '../../utils/changedJobs';
 import { useAuth } from '../../contexts/AuthContext';
 import { MonthlyEmailButton } from './MonthlyEmailButton';
+import { findLostChangedJobsFlags, recoverChangedJobsFlags, RECOVERABLE_FLAGS } from '../../utils/changedJobsRecovery';
 
 
 const SUBTABS = [
@@ -92,6 +93,57 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
     return out;
   }, [contacts, isHidden, subtabOf, subtab]);
 
+  // "Recover from backups": put back Hide / Snooze / Reached Out / New
+  // Company flags a save wiped (see utils/changedJobsRecovery). Fills blanks
+  // only, shows what it found first, and is applied to the settings as they
+  // are when the save lands.
+  const [recovery, setRecovery] = useState({ busy: false, note: '' });
+  async function recoverFlags() {
+    if (recovery.busy) return;
+    setRecovery({ busy: true, note: 'Searching backups...' });
+    try {
+      const { found, sources, read } = await findLostChangedJobsFlags(settings, {
+        onProgress: (note) => setRecovery({ busy: true, note }),
+      });
+      const searched = `Searched ${read.browser} browser backup${read.browser === 1 ? '' : 's'} and ${read.cloud} cloud backup${read.cloud === 1 ? '' : 's'}${read.oldest ? `, back to ${read.oldest}` : ''}.`
+        + (read.cloudFailed || read.cloudError ? `\nCloud backups that could not be read: ${read.cloudFailed}${read.cloudError ? ` (${read.cloudError})` : ''}.` : '');
+      if (!found.length) {
+        window.alert(`Nothing to recover: every hide, snooze, Reached Out and New Company the backups hold is already in place.\n\n${searched}`);
+        setRecovery({ busy: false, note: 'Nothing to recover.' });
+        return;
+      }
+      const nameById = new Map(contacts.map(c => [
+        String(c?.id || c?.vid || ''),
+        [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || '',
+      ]));
+      const nameOf = (id) => nameById.get(id) || `contact ${id}`;
+      const perFlag = RECOVERABLE_FLAGS
+        .map(f => [f.label, found.filter(x => x.flag === f.key).length])
+        .filter(([, n]) => n > 0)
+        .map(([label, n]) => `${label}: ${n}`);
+      const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return iso; } };
+      const lines = found.slice(0, 15).map(x => `${nameOf(x.id)}: ${x.flag === 'snoozed' ? `Snoozed to ${fmtDate(x.value)}` : x.flag === 'newCompany' ? `New Company ${x.value}` : x.label}`);
+      if (found.length > 15) lines.push(`and ${found.length - 15} more`);
+      const people = new Set(found.map(x => x.id)).size;
+      const ok = window.confirm(
+        `Found ${found.length} Changed Jobs edit${found.length === 1 ? '' : 's'} for ${people} contact${people === 1 ? '' : 's'} in your backups that ${found.length === 1 ? 'is' : 'are'} missing now.\n\n${perFlag.join('\n')}\n\n${lines.join('\n')}\n\nPut them back? Contacts keep anything they have now. If you unhid or un-snoozed someone on purpose since the backup, they will be hidden or snoozed again.\n\n${searched}`,
+      );
+      if (!ok) { setRecovery({ busy: false, note: '' }); return; }
+      const saved = await updateSettings((s) => {
+        const { patch } = recoverChangedJobsFlags(s, sources);
+        return patch ? { contactLocalFields: patch } : null;
+      });
+      if (saved === false) {
+        setRecovery({ busy: false, note: 'Found them, but the save did not go through. Reload the page and try again.' });
+        window.alert('Found the edits, but saving them did not go through. Reload the page and click Recover from backups again.');
+        return;
+      }
+      setRecovery({ busy: false, note: `Recovered ${found.length} edit${found.length === 1 ? '' : 's'} for ${people} contact${people === 1 ? '' : 's'}.` });
+    } catch (err) {
+      setRecovery({ busy: false, note: `Recovery failed: ${err?.message || err}` });
+    }
+  }
+
   const pills = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: '0.6rem', flexWrap: 'wrap' }}>
     <div role="tablist" style={{ display: 'flex', gap: 6 }}>
@@ -136,6 +188,20 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
         }}
       >{counts.hidden}</span>
     </label>
+    <button
+      type="button"
+      onClick={recoverFlags}
+      disabled={recovery.busy}
+      title={recovery.note || 'Search your backups for hides, snoozes, Reached Out and New Company mappings that were lost, and put them back. Contacts keep anything they have now.'}
+      style={{
+        padding: '0.25rem 0.6rem', fontSize: '0.7rem', fontWeight: 600, fontFamily: 'inherit',
+        border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', color: '#334155',
+        cursor: recovery.busy ? 'wait' : 'pointer',
+      }}
+    >{recovery.busy ? (recovery.note || 'Searching...') : 'Recover from backups'}</button>
+    {!recovery.busy && recovery.note && (
+      <span style={{ fontSize: '0.7rem', color: '#475569', maxWidth: 260 }}>{recovery.note}</span>
+    )}
     {/* The monthly email covers Other contacts, so it sits there. */}
     {isAdmin && subtab === 'other' && <MonthlyEmailButton />}
     </div>
