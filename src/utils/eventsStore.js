@@ -115,3 +115,51 @@ export function eventsNewestFirst(events) {
     return String(a?.name || '').localeCompare(String(b?.name || ''));
   });
 }
+
+// ---- Event series --------------------------------------------------------
+// The same event recurs year after year, saved as one record per year
+// ("Greenbuild 2024" on 2024-11-12, "Greenbuild" on 2025-11-04). The
+// contact popup groups those into one series so it can show every year of
+// an event and which of them this person went to. A series is the name
+// with any year taken out, compared case- and spacing-blind.
+const YEAR_IN_NAME = /\b(19|20)\d{2}\b/g;
+
+export function eventSeriesLabel(name) {
+  const label = cleanText(String(name || '').replace(YEAR_IN_NAME, ' '))
+    .replace(/^[\s\-,:|]+|[\s\-,:|]+$/g, '').trim();
+  return label || cleanText(name);
+}
+
+export function eventSeriesKey(name) {
+  return eventSeriesLabel(name).toLowerCase();
+}
+
+// The year an event record is for: its date's, else one in its name, else ''.
+export function eventYear(event) {
+  const fromDate = /^(\d{4})-\d{2}-\d{2}/.exec(String(event?.date || ''));
+  if (fromDate) return fromDate[1];
+  const fromName = String(event?.name || '').match(YEAR_IN_NAME);
+  return fromName ? fromName[fromName.length - 1] : '';
+}
+
+/**
+ * Events grouped into series, each with its years newest first:
+ *   [{ key, label, events: [event, ...] }]
+ * Series come back in the order of their newest year, undated last.
+ */
+export function groupEventSeries(events) {
+  const byKey = new Map();
+  for (const ev of eventsNewestFirst(events)) {
+    const key = eventSeriesKey(ev?.name) || `__untitled__${ev?.id}`;
+    if (!byKey.has(key)) byKey.set(key, { key, label: eventSeriesLabel(ev?.name) || 'Untitled event', events: [] });
+    byKey.get(key).events.push(ev);
+  }
+  for (const s of byKey.values()) {
+    s.events.sort((a, b) => {
+      const ya = eventYear(a), yb = eventYear(b);
+      if (ya !== yb) return !ya ? 1 : !yb ? -1 : yb.localeCompare(ya);
+      return String(b?.date || '').localeCompare(String(a?.date || ''));
+    });
+  }
+  return [...byKey.values()];
+}
