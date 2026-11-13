@@ -17,7 +17,7 @@
 // Imported with the extension so this module also loads under plain Node
 // (scripts/rosterTagDebt.test.mjs), not just through the bundler.
 import { matchesCdm } from './cdmMatch.js';
-import { tagReviewScore } from './contactTagReview.js';
+import { tagReviewScore, scoredTagOptions } from './contactTagReview.js';
 import { isCancellingForSure } from './serviceCoverage.js';
 import { onMyBook, reportingTier } from './tierSource.js';
 
@@ -776,8 +776,15 @@ function finalizeCoverage(buckets, left) {
 // `yesOnly` counts a tag only when it is a Yes (tagReviewScore). Together
 // they are the Prospecting Tagged table: of the decision makers on each
 // roster, how many are tagged with each area.
-export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decisionMakersOnly = false, yesOnly = false } = {}) {
-  const narrowed = decisionMakersOnly || yesOnly;
+//
+// `byCompany` scores companies rather than contacts: a company has a tag
+// once ANY of its contacts in the bucket answers it (with yesOnly, any one
+// DM tagged Yes), so one person covering it is enough. The bucket's
+// `contacts` and `done` then count companies (`unit: 'company'`), and its
+// `people` lists only the contacts at companies still missing something -
+// once the Yes is found there is nothing left to ask the rest of them.
+export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decisionMakersOnly = false, yesOnly = false, byCompany = false } = {}) {
+  const narrowed = decisionMakersOnly || yesOnly || byCompany;
   if (!coverage) return coverage;
   if ((!Array.isArray(tags) || !tags.length) && !narrowed) return coverage;
   const scoreTags = Array.isArray(tags) && tags.length ? tags : undefined;
@@ -795,8 +802,14 @@ export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decision
   for (const [key, b] of Object.entries(coverage)) {
     if (!b || typeof b !== 'object' || !Array.isArray(b.people)) continue;
     const nb = { contacts: 0, answered: 0, slots: 0, done: 0, people: [] };
-    for (const p of b.people) {
-      if (decisionMakersOnly && !tagsOf(p.contact).split(';').map(t => t.trim()).includes('decision maker')) continue;
+    const kept = decisionMakersOnly
+      ? b.people.filter(p => tagsOf(p.contact).split(';').map(t => t.trim()).includes('decision maker'))
+      : b.people;
+    if (byCompany) {
+      buckets[key] = companyBucket(kept, scoreTags || scoredTagOptions(), tagReviewMap, yesOnly, rowFor);
+      continue;
+    }
+    for (const p of kept) {
       const row = rowFor(p);
       nb.contacts += 1;
       nb.answered += row.answered;
@@ -807,4 +820,30 @@ export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decision
     buckets[key] = nb;
   }
   return finalizeCoverage(buckets, left);
+}
+
+// One bucket of rescoreTagCoverage's byCompany reading. Contacts with no
+// company each stand as their own company, so they are not merged into one.
+function companyBucket(people, tags, tagReviewMap, yesOnly, rowFor) {
+  const groups = new Map();
+  for (const p of people) {
+    const k = String(p.company || '').trim().toLowerCase() || `id:${p.id ?? p.email ?? p.name}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(p);
+  }
+  const nb = { contacts: groups.size, answered: 0, slots: groups.size * tags.length, done: 0, people: [], unit: 'company' };
+  for (const members of groups.values()) {
+    let covered = 0;
+    for (const tag of tags) {
+      const hit = members.some(p => {
+        const review = p.id == null ? null : tagReviewMap[p.id];
+        return tagReviewScore(p.contact || {}, review, [tag], { yesOnly }).answered > 0;
+      });
+      if (hit) covered += 1;
+    }
+    nb.answered += covered;
+    if (covered === tags.length) nb.done += 1;
+    else for (const p of members) nb.people.push(rowFor(p));
+  }
+  return nb;
 }

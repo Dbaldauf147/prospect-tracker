@@ -55,5 +55,21 @@ const dmAll = rescoreTagCoverage(dmCov, [], dmReview, lens);
 eq(dmAll.all.contacts, 2, 'lens with no tags picked still narrows to DMs');
 eq(rescoreTagCoverage(dmCov, ['ESG'], dmReview).all.pct, 100, 'without the lens Not sure still counts as answered');
 
+// By company: one DM tagged Yes covers the company, and its other contacts
+// drop off the list. G and H are DMs at Acme, only G is tagged ESG; I is a
+// DM at Beta with nothing.
+const g = { id: '7', name: 'G', company: 'Acme', email: '', answered: 0, total: 0, done: false, contact: { id: 7, dans_tags: 'Decision Maker; ESG' } };
+const h = { id: '8', name: 'H', company: 'acme ', email: '', answered: 0, total: 0, done: false, contact: { id: 8, dans_tags: 'Decision Maker' } };
+const i9 = { id: '9', name: 'I', company: 'Beta', email: '', answered: 0, total: 0, done: false, contact: { id: 9, dans_tags: 'Decision Maker' } };
+const coCov = { all: { contacts: 3, answered: 0, slots: 0, done: 0, people: [g, h, i9], pct: 0 } };
+const coLens = { decisionMakersOnly: true, yesOnly: true, byCompany: true };
+const coEsg = rescoreTagCoverage(coCov, ['ESG'], {}, coLens);
+eq([coEsg.all.contacts, coEsg.all.done, coEsg.all.pct, coEsg.all.unit], [2, 1, 50, 'company'], 'by company: Acme covered by G alone');
+eq(coEsg.all.people.map(p => p.name), ['I'], 'by company: covered company drops off the list');
+const coTwo = rescoreTagCoverage(coCov, ['ESG', 'Utilities'], { 8: { Utilities: { answer: 'yes' } } }, coLens);
+eq([coTwo.all.done, coTwo.all.answered, coTwo.all.slots], [0, 1, 4], 'by company: a stored Yes without the tag is not a Yes');
+const coTwoTagged = rescoreTagCoverage({ all: { ...coCov.all, people: [g, { ...h, contact: { id: 8, dans_tags: 'Decision Maker; Utilities' } }, i9] } }, ['ESG', 'Utilities'], {}, coLens);
+eq([coTwoTagged.all.done, coTwoTagged.all.pct], [1, 50], 'by company: two DMs can cover two tags between them');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
