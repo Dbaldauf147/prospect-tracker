@@ -190,7 +190,9 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAu
       }}>
         <span style={{ fontSize: '0.7rem', fontWeight: 800, color: cell.color }}>{cell.label}</span>
         <span style={{ fontSize: '0.68rem', color: '#475569' }}>
-          {people.length} contact{people.length === 1 ? '' : 's'}
+          {bucket?.unit === 'company'
+            ? <>{bucket.contacts - bucket.done} of {bucket.contacts} compan{bucket.contacts === 1 ? 'y' : 'ies'} missing a Yes · {people.length} contact{people.length === 1 ? '' : 's'} there</>
+            : <>{people.length} contact{people.length === 1 ? '' : 's'}</>}
           {bucket?.pct != null && <> · {bucket.pct}% tagged</>}
         </span>
         <span style={{ flex: 1 }} />
@@ -231,7 +233,9 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAu
       </div>
       {people.length === 0 ? (
         <div style={{ padding: '7px 9px', fontSize: '0.68rem', color: '#94A3B8' }}>
-          No contacts on this roster.
+          {bucket?.unit === 'company' && bucket.contacts > 0
+            ? 'Every company here has a decision maker tagged Yes.'
+            : 'No contacts on this roster.'}
         </div>
       ) : (
         <div style={{ maxHeight: 260, overflowY: 'auto' }}>
@@ -431,7 +435,9 @@ function TagPctCell({ bucket, roster, onOpen, isOpen, tagLabel }) {
       type="button"
       onClick={onOpen}
       aria-expanded={isOpen}
-      title={`${roster.label}, ${tagLabel}: ${pct}% tagged Yes across ${bucket.contacts} decision maker${bucket.contacts === 1 ? '' : 's'} (${bucket.done} tagged Yes on every one). No and Not sure don't count. Click to list them.`}
+      title={bucket.unit === 'company'
+        ? `${roster.label}, ${tagLabel}: ${pct}% covered across ${bucket.contacts} compan${bucket.contacts === 1 ? 'y' : 'ies'} with decision makers (${bucket.done} fully covered). A company is covered once any one of its decision makers is tagged Yes. No and Not sure don't count. Click to list the contacts at companies still missing it.`
+        : `${roster.label}, ${tagLabel}: ${pct}% answered across ${bucket.contacts} contact${bucket.contacts === 1 ? '' : 's'} (${bucket.done} fully answered). Click to list them.`}
       style={{
         minWidth: 46, padding: '1px 8px', borderRadius: 999, cursor: 'pointer',
         background: tone.bg, color: tone.color, fontFamily: 'inherit',
@@ -462,7 +468,9 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
     // is the share of a roster's DMs tagged with that area. Not sure and No
     // are not tagged. (The step's auto-clear and the debt pill still read
     // the answered rule over everyone - see tagsAllMapped.)
-    const lens = { decisionMakersOnly: true, yesOnly: true };
+    // Scored per company: one DM tagged Yes covers the whole company, so its
+    // other contacts drop off the list under the cell.
+    const lens = { decisionMakersOnly: true, yesOnly: true, byCompany: true };
     const out = tags.map(tag => ({ id: tagKey(tag), tag, cov: rescoreTagCoverage(fullCoverage, [tag], map, lens) }));
     out.push({
       id: TAG_TOTAL_ROW,
