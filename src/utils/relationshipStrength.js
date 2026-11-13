@@ -36,15 +36,20 @@ import { rosterCompaniesMatch } from './contactRosters.js';
 
 export const RELATIONSHIP_CONFIG = Object.freeze({
   // How each component weighs in the account score. A contact has no
-  // breadth, so a contact's score is the first four re-scaled to 100
+  // breadth, so a contact's score is the first five re-scaled to 100
   // (divided by their sum, 0.85) rather than capped at 85.
   weights: Object.freeze({
-    engagement: 0.35,
-    reciprocity: 0.25,
+    engagement: 0.30,
+    reciprocity: 0.20,
     consistency: 0.15,
     opportunity: 0.10,
+    tenure: 0.10,
     breadth: 0.15,
   }),
+
+  // Tenure: how long the relationship has run (contactDateAdded, which
+  // counts the oldest opp the contact is named on), full marks at this age.
+  tenureFullDays: 3 * 365,
 
   // Engagement: points per touch, decayed by age.
   points: Object.freeze({
@@ -571,14 +576,16 @@ export function linkReplies(touches, config = RELATIONSHIP_CONFIG) {
 
 /**
  * When the relationship started: the Date Added you set on the contact
- * (log.dateAdded), else the earlier of HubSpot's created date and the
- * first activity on record. HubSpot's date alone can be an import date
+ * (log.dateAdded), else the earliest of HubSpot's created date, the first
+ * activity on record and the oldest opp they are named on (oppsRecords).
+ * An old opp is the best evidence of all: it says you were working with
+ * them by then, before HubSpot or the activity feed knew them. HubSpot's date alone can be an import date
  * years after you met, and the first activity alone misses the time
  * before the history begins, so the earlier of the two is the better read.
  *
  * Returns { ms, day, source: 'set' | 'hubspot' | 'activity' } or null.
  */
-export function contactDateAdded(contact, { log = null, touches = [] } = {}) {
+export function contactDateAdded(contact, { log = null, touches = [], oppsRecords = null } = {}) {
   const id = contactKey(contact);
   const set = id ? log?.dateAdded?.[id] : null;
   if (set?.date && !set.cleared) {
@@ -587,9 +594,11 @@ export function contactDateAdded(contact, { log = null, touches = [] } = {}) {
   }
   const created = hsMs(contact?.createdate);
   const first = (touches || []).reduce((m, t) => (Number.isFinite(t.ms) && t.ms < m ? t.ms : m), Infinity);
+  const oppMs = earliestOppMs(contact, oppsRecords);
   const candidates = [
     Number.isFinite(created) ? { ms: created, source: 'hubspot' } : null,
     Number.isFinite(first) ? { ms: first, source: 'activity' } : null,
+    oppMs != null ? { ms: oppMs, source: 'opp' } : null,
   ].filter(Boolean);
   if (!candidates.length) return null;
   const pick = candidates.reduce((a, b) => (b.ms < a.ms ? b : a));
@@ -654,16 +663,37 @@ export function oppStatus(row) {
  * list, at an Account that matches their company (or any account, when
  * the contact has no company to check). Returns { open, won, past }.
  */
+// The opp rows a contact is named on (see oppsForContact for the rule).
+function oppRowsForContact(contact, oppsRecords) {
+  const name = contactName(contact).toLowerCase();
+  if (!name || !oppsRecords?.length) return [];
+  const company = String(contact?.company || '').trim();
+  return oppsRecords.filter(r => {
+    const names = String(r?.Contact ?? '').split(',').map(s => s.trim().toLowerCase());
+    if (!names.includes(name)) return false;
+    const acct = String(r?.Account || '').trim();
+    return !(company && acct && !rosterCompaniesMatch(company, acct));
+  });
+}
+
+/**
+ * When the oldest opp a contact is named on began: its Start Date, else
+ * its Close Date. null when they are on none with a date. An old opp with
+ * them on it means you knew them by then, however recent HubSpot's record.
+ */
+export function earliestOppMs(contact, oppsRecords) {
+  let min = Infinity;
+  for (const r of oppRowsForContact(contact, oppsRecords)) {
+    const start = Date.parse(r?.['Start Date']);
+    const ms = Number.isFinite(start) ? start : Date.parse(r?.['Close Date']);
+    if (Number.isFinite(ms) && ms < min) min = ms;
+  }
+  return Number.isFinite(min) ? min : null;
+}
+
 export function oppsForContact(contact, oppsRecords, { nowMs = Infinity } = {}) {
   const counts = { open: 0, won: 0, past: 0 };
-  const name = contactName(contact).toLowerCase();
-  if (!name || !oppsRecords?.length) return counts;
-  const company = String(contact?.company || '').trim();
-  for (const r of oppsRecords) {
-    const names = String(r?.Contact ?? '').split(',').map(s => s.trim().toLowerCase());
-    if (!names.includes(name)) continue;
-    const acct = String(r?.Account || '').trim();
-    if (company && acct && !rosterCompaniesMatch(company, acct)) continue;
+  for (const r of oppRowsForContact(contact, oppsRecords)) {
     const start = Date.parse(r?.['Start Date']);
     if (Number.isFinite(start) && start > nowMs) continue;
     const st = oppStatus(r);
@@ -681,7 +711,7 @@ export function oppsForContact(contact, oppsRecords, { nowMs = Infinity } = {}) 
  *   opps     { open, won, past } (oppsForContact), or null
  *
  * Returns { score, tier, components: { engagement, reciprocity,
- * consistency, opportunity } (each 0-100), trend: 'up'|'down'|'flat',
+ * consistency, opportunity, tenure } (each 0-100), trend: 'up'|'down'|'flat',
  * daysSinceTwoWay (null when never), lastTwoWayMs, touchCount }.
  */
 export function scoreContact(touches, { opps = null, nowMs = Date.now(), addedMs = null, config = RELATIONSHIP_CONFIG } = {}) {
@@ -720,10 +750,14 @@ export function scoreContact(touches, { opps = null, nowMs = Date.now(), addedMs
   const op = config.oppPoints;
   const opportunity = Math.min(config.oppCap, (o.open || 0) * op.open + (o.won || 0) * op.won + (o.past || 0) * op.past);
 
+  // Tenure: how long you have known them, full marks at tenureFullDays.
+  // Unknown age scores nothing rather than guessing.
+  const tenure = ageDays == null ? 0 : 100 * clamp01(ageDays / config.tenureFullDays);
+
   const w = config.weights;
-  const contactWeight = w.engagement + w.reciprocity + w.consistency + w.opportunity;
+  const contactWeight = w.engagement + w.reciprocity + w.consistency + w.opportunity + w.tenure;
   const raw = (w.engagement * engagement + w.reciprocity * reciprocity
-    + w.consistency * consistency + w.opportunity * opportunity) / contactWeight;
+    + w.consistency * consistency + w.opportunity * opportunity + w.tenure * tenure) / contactWeight;
   const score = Math.round(Math.max(0, Math.min(100, raw)));
 
   const lastTwoWayMs = twoWay.length ? twoWay[twoWay.length - 1].ms : null;
@@ -739,6 +773,7 @@ export function scoreContact(touches, { opps = null, nowMs = Date.now(), addedMs
       reciprocity: Math.round(reciprocity),
       consistency: Math.round(consistency),
       opportunity: Math.round(opportunity),
+      tenure: Math.round(tenure),
     },
     trend: trendFor(touches, nowMs, config),
     lastTwoWayMs: everTwoWay,

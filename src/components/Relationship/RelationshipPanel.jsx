@@ -18,6 +18,7 @@ const ADDED_SOURCE = {
   set: 'set by you',
   hubspot: 'created in HubSpot',
   activity: 'first activity on record',
+  opp: 'oldest opp they are on',
 };
 
 // When the relationship started. Defaults to the earlier of HubSpot's
@@ -38,7 +39,7 @@ function DateAddedField({ contact, added, ageDays, isNew }) {
         max={today}
         onChange={e => saveContactDateAdded(id, e.target.value)}
         style={{ padding: '0.15rem 0.35rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.72rem', fontFamily: 'inherit' }}
-        title="When this relationship started. Defaults to the earlier of HubSpot's created date and the first activity; set it if you knew them before either."
+        title="When this relationship started. Defaults to the earliest of HubSpot's created date, the first activity and the oldest opp they are on; set it if you knew them before any of those."
       />
       {added && (
         <span>
@@ -58,6 +59,7 @@ const COMPONENTS = [
   { key: 'reciprocity', label: 'Reciprocity', weight: RELATIONSHIP_CONFIG.weights.reciprocity, tip: 'Share of two-way activity, plus a bonus for each one they started' },
   { key: 'consistency', label: 'Consistency', weight: RELATIONSHIP_CONFIG.weights.consistency, tip: 'Months with a two-way touch, of the last 6' },
   { key: 'opportunity', label: 'Opportunities', weight: RELATIONSHIP_CONFIG.weights.opportunity, tip: 'Open, won and past opps this contact is named on' },
+  { key: 'tenure', label: 'Relationship age', weight: RELATIONSHIP_CONFIG.weights.tenure, tip: 'How long you have known them, full marks at 3 years. Counted from the Date added, which goes back to the oldest opp they are on' },
 ];
 
 const RECENT_SHOWN = 8;
