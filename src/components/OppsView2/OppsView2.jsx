@@ -6757,7 +6757,7 @@ const requiredFieldLook = { border: '1px solid #FCA5A5', background: '#FEF2F2' }
 // values via updateOppField (skipping fields the user left
 // untouched). Skip leaves the row as-is — Stage is still set to Not
 // Sold and the stamped Close Date stays.
-function NotSoldFollowUpModal({ opp, optionLink = null, reasonOptions, competitionOptions, solutionOptions, onSave, onClose }) {
+function NotSoldFollowUpModal({ opp, revertStage = '', onCancelNotSold = null, optionLink = null, reasonOptions, competitionOptions, solutionOptions, onSave, onClose }) {
   const marginSuggestion = useMemo(() => suggestedFinalMargin(opp, optionLink), [opp, optionLink]);
   const [closeDate, setCloseDate] = useState(toISODate(opp?.['Close Date']) || '');
   const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
@@ -7036,6 +7036,23 @@ function NotSoldFollowUpModal({ opp, optionLink = null, reasonOptions, competiti
               color: 'var(--color-text-muted)', cursor: 'pointer',
             }}
           >Skip for now</button>
+          {/* Changed your mind: take the opp back off Not Sold to the
+              stage it came from. Only offered right after the Stage move,
+              while there is a snapshot of it to put back. */}
+          {onCancelNotSold && (
+            <button
+              type="button"
+              onClick={onCancelNotSold}
+              title={`Undo the move to Not Sold and put this opp back${revertStage ? ` in ${revertStage}` : ''}, with its Close Date as it was.`}
+              style={{
+                marginLeft: 'auto', marginRight: '0.5rem',
+                padding: '0.35rem 0.7rem', background: '#fff',
+                border: '1px solid #FCA5A5', borderRadius: 4,
+                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                color: '#B91C1C', cursor: 'pointer',
+              }}
+            >Cancel Not Sold{revertStage ? `, back to ${revertStage}` : ''}</button>
+          )}
           <button
             type="button"
             onClick={handleSave}
@@ -14578,6 +14595,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // the close-out reporting views have what they need. Cleared on Save
   // or Skip.
   const [notSoldPromptId, setNotSoldPromptId] = useState(null);
+  // opp id -> { fields, prevStage }: the snapshot of the stage change that
+  // opened the Not Sold popup, so its Cancel can revert that change (the
+  // Stage, the stamped Close Date, the stage clock and history) in one go.
+  const notSoldRevertRef = useRef(new Map());
   // _id of the opp that just moved into the "Quoted" stage. When set,
   // the QuotedFollowUpModal asks the user to enter / review Quoted On,
   // Chance?, and Margin Email Date - Sales Leader Review Date. Cleared on
@@ -15925,6 +15946,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         chanceStamp = { col, value: EXPECTED_CHANCE };
       }
     }
+    let undoFields = null;
     if (row) {
       const snap = (f) => ({ field: f, hadField: f in row, prevValue: f in row ? row[f] : undefined });
       const fields = [snap(field)];
@@ -15969,6 +15991,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         for (const c of [...closeClear.yearCols, ...closeClear.monthCols]) fields.push(snap(c));
       }
       pushUndoEntry({ id, fields });
+      undoFields = fields;
     }
     setData(prev => {
       const records = prev?.records || [];
@@ -16064,8 +16087,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     const nextStage = String(value ?? '').trim().toLowerCase();
     let stagePrompt = null;
     if (stageChanged) {
-      if (nextStage === 'not sold') stagePrompt = 'notSold';
-      else if (nextStage === 'quoted') stagePrompt = 'quoted';
+      if (nextStage === 'not sold') {
+        stagePrompt = 'notSold';
+        // What the Not Sold popup's "Cancel Not Sold" puts back: the stage
+        // the opp came from plus everything the move stamped alongside it.
+        notSoldRevertRef.current.set(id, { fields: undoFields, prevStage: String(row['Stage'] ?? '').trim() });
+      } else if (nextStage === 'quoted') stagePrompt = 'quoted';
       else if (nextStage === 'agreement sent') stagePrompt = 'agreementSent';
       else if (nextStage === 'sold') stagePrompt = 'sold';
       else if (nextStage === 'lead' && prevStage === 'not started') stagePrompt = 'leadQuoted';
@@ -16134,6 +16161,40 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       };
     });
   }, []);
+
+  // The Not Sold popup's Cancel: put the opp back exactly as it stood
+  // before the move to Not Sold, from the snapshot taken when the Stage
+  // changed. Written straight to the row (not through updateOppField) so
+  // the revert isn't a stage change of its own: no popup for the old
+  // stage, no wipe of close-out fields, no new stage-history entry, and
+  // the stage clock keeps counting from when the opp really entered it.
+  // Field times are stamped so the other device takes the revert.
+  const revertNotSold = useCallback((id) => {
+    const snapshot = notSoldRevertRef.current.get(id);
+    if (!snapshot?.fields?.length) return;
+    notSoldRevertRef.current.delete(id);
+    setData(cur => {
+      const records = cur?.records || [];
+      return {
+        ...cur,
+        records: records.map(r => {
+          if (r._id !== id) return r;
+          const now = Date.now();
+          const next = { ...r, _rowUpdatedAt: now };
+          for (const f of snapshot.fields) {
+            if (f.hadField) next[f.field] = f.prevValue;
+            else delete next[f.field];
+          }
+          next._fieldUpdatedAt = stampChangedFields(r, next, now);
+          return next;
+        }),
+      };
+    });
+    // The move is gone, so its undo entry goes too: undoing it later
+    // would only write the same values over again.
+    setUndoStack(prev => prev.filter(e => e.fields !== snapshot.fields));
+    requestCallInSort();
+  }, [requestCallInSort]);
 
   /**
    * What an opp learns from a call just mapped to it in the "Calls to
@@ -18596,6 +18657,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         return (
           <NotSoldFollowUpModal
             opp={opp}
+            revertStage={notSoldRevertRef.current.get(opp._id)?.prevStage || ''}
+            onCancelNotSold={notSoldRevertRef.current.has(opp._id) ? () => {
+              revertNotSold(opp._id);
+              setNotSoldPromptId(null);
+            } : null}
             optionLink={optionLinks[String(opp._id)] || null}
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
             competitionOptions={listRegistry.get('competition')?.options || []}
@@ -18638,9 +18704,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               if (JSON.stringify(nextStepsWait) !== JSON.stringify(readStepsWait(opp))) {
                 updateOppField(opp._id, NEXT_STEPS_WAIT_FIELD, nextStepsWait);
               }
+              notSoldRevertRef.current.delete(opp._id);
               setNotSoldPromptId(null);
             }}
-            onClose={() => setNotSoldPromptId(null)}
+            onClose={() => {
+              notSoldRevertRef.current.delete(opp._id);
+              setNotSoldPromptId(null);
+            }}
           />
         );
       })()}
