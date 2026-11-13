@@ -6,13 +6,11 @@
 // and "activity" is the same per-contact outreach that chart counts: a
 // HubSpot email or call from the Activity tab's index, or HubSpot's Last
 // Contacted date (utils/tieredAccountActivity, decisionMakersWithoutActivity).
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { useAuth } from '../../contexts/AuthContext';
+import { useCallback, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { BulkContactEditModal } from '../common/BulkContactEditModal';
-import { ContactsCampaignBulkAdd, EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
+import { ContactsCampaignBulkAdd } from '../ProspectModal/ContactCampaignAdd';
+import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
 import { campaignsByRecency } from '../../utils/campaignPicker';
 import { campaignAddresses } from '../../utils/campaignAddContact';
 import { normEmail } from '../../utils/campaignRoster';
@@ -64,25 +62,10 @@ const toIso = (ms) => {
 export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, cdmName = '', onSelectProspect, onOpenContact = null }) {
   const { lists, accountOf, noIndex } = useDmsNoActivity({ prospects, settings, cdmName });
 
-  // The saved email campaigns, read the way the campaign pop-ups read them
-  // and again whenever one of them adds someone, so the Email Campaign
-  // column follows an Add to Campaign made from this page.
-  const auth = useAuth();
-  const uid = auth?.user?.uid || null;
-  const [campaigns, setCampaigns] = useState([]);
-  useEffect(() => {
-    let live = true;
-    const load = async () => {
-      if (!uid) { if (live) setCampaigns([]); return; }
-      try {
-        const snap = await getDoc(doc(db, 'emailCampaigns', uid));
-        if (live) setCampaigns(snap.exists() ? (snap.data().campaigns || []) : []);
-      } catch { /* keep what we had */ }
-    };
-    load();
-    window.addEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load);
-    return () => { live = false; window.removeEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load); };
-  }, [uid]);
+  // The saved email campaigns (useEmailCampaigns), re-read whenever one of
+  // the campaign pop-ups adds someone, so the Email Campaign column follows
+  // an Add to Campaign made from this page.
+  const campaigns = useEmailCampaigns();
   // email -> the campaigns it is on, most recently active first.
   const campaignsByEmail = useMemo(() => {
     const out = new Map();
