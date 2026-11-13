@@ -12722,6 +12722,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <BfoHistoryTab
               history={fields.bfoHistory}
               bfoCompanyName={bfoCompanyNamesOf(fields).join(', ')}
+              noBfoAccount={markedNoBfoName(fields)}
               onChange={(next) => set('bfoHistory', next)}
               settings={settings}
               updateSettings={updateSettings}
