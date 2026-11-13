@@ -139,10 +139,10 @@ eq(todayISO(new Date(2026, 11, 31, 23, 30)), '2026-12-31', 'late-evening local t
 // work above it sends the user down the ladder too early.
 
 const TODAY = '2026-08-26';
-// The Changed Jobs step is backfilled into every stored ladder (just above
-// market updates) and is counted, so a test that isn't about it reads it as
+// The Changed Jobs and DMs-no-activity steps are backfilled into every
+// stored ladder (just above market updates) and are counted, so a test that isn't about it reads it as
 // clear (0) rather than still loading. Tests about it pass their own count.
-const ladder = (steps, counts, map, autoClear) => ladderStates({ steps, counts: { 'changed-jobs': 0, ...counts }, autoClear, caughtUpMap: map, today: TODAY });
+const ladder = (steps, counts, map, autoClear) => ladderStates({ steps, counts: { 'changed-jobs': 0, 'dms-no-activity': 0, ...counts }, autoClear, caughtUpMap: map, today: TODAY });
 const stateOf = (steps, counts, map, key, autoClear) => statesByKey(ladder(steps, counts, map, autoClear))[key]?.state;
 
 // Built the way the page builds it, so the flags and count functions are
