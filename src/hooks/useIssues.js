@@ -253,6 +253,9 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     return JSON.stringify(bfoHistoryMissingNameIssues(bfoHistoryTargets(dmsLists.get(readDmsWindow()), dmsAccountOf)));
   }, [dmsLists, dmsAccountOf]);
   const bfoHistoryMissing = useMemo(() => JSON.parse(bfoHistoryMissingKey), [bfoHistoryMissingKey]);
+  // The Prospecting ladder's "Decision makers with no activity" step: the
+  // tab's "No activity ever" list, counted. null while it is still loading.
+  const dmsNoActivityCount = dmsLists ? (dmsLists.get(null) || []).length : null;
 
   const issues = useMemo(() => {
     const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, now: issuesNow });
@@ -274,5 +277,5 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 
-  return { issues, openCount, serviceGaps, knownServices, ignoredScopeServices, oppsRecords: oppsCache?.records || null };
+  return { issues, openCount, serviceGaps, knownServices, ignoredScopeServices, oppsRecords: oppsCache?.records || null, dmsNoActivityCount };
 }

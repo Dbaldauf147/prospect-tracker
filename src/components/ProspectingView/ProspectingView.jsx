@@ -1822,8 +1822,14 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                       // The changed-jobs step's work is one subtab of Contacts,
                       // so its button lands there rather than on whichever
                       // subtab Contacts last showed (unless re-pointed).
-                      onClick={() => (step.key === 'changed-jobs' && step.view === 'contacts' ? openChangedJobs() : onNavigate(step.view))}
-                      title={step.key === 'changed-jobs' && step.view === 'contacts' ? 'Open Contacts > Changed Jobs' : `Open the ${step.viewLabel} tab`}
+                      // And the DMs step's is a subtab of this page, so it
+                      // switches to that rather than re-opening Prospecting.
+                      onClick={() => (step.key === 'changed-jobs' && step.view === 'contacts' ? openChangedJobs()
+                        : step.key === 'dms-no-activity' && step.view === 'prospecting' ? setSubtab('dmsNoActivity')
+                        : onNavigate(step.view))}
+                      title={step.key === 'changed-jobs' && step.view === 'contacts' ? 'Open Contacts > Changed Jobs'
+                        : step.key === 'dms-no-activity' && step.view === 'prospecting' ? 'Open Prospecting > DMs Without Activity'
+                        : `Open the ${step.viewLabel} tab`}
                       style={{
                         width: ACTION_COL, flexShrink: 0, alignSelf: hasList ? 'flex-start' : 'center',
                         padding: '0.3rem 0.7rem', borderRadius: 6, cursor: 'pointer',

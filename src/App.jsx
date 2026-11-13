@@ -167,7 +167,7 @@ function App() {
   });
   // Dropdowns > Service Pricing History's % priced or no fee, once a day.
   useServicePricingRecorder({ settings, settingsLoaded, userId: user?.uid });
-  const { issues, openCount: openIssuesCount, serviceGaps } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
+  const { issues, openCount: openIssuesCount, serviceGaps, dmsNoActivityCount } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
   // The Prospecting page's renewal step counts these rows, and its Top PC
   // step reads the prospects directly. While the prospects are still
   // loading the detectors see an empty roster and find nothing — passing
@@ -200,6 +200,9 @@ function App() {
     // Tagged row on that step prints, off the one hook that computes them, so
     // the pill and the row underneath it can't disagree.
     tagCoverage: tagDebt.coverage,
+    // The DMs-with-no-activity step's count, off the list useIssues already
+    // builds for the Agents tab rather than a second run of it.
+    dmsNoActivityCount: dataLoading ? null : dmsNoActivityCount,
     // Which book the PE-intro step lists: this user's firms, minus the ones
     // already written off.
     cdmName,

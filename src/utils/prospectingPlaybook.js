@@ -124,6 +124,22 @@ export const DEFAULT_STEPS = [
     workTitle: n => `${n} ${n === 1 ? 'contact' : 'contacts'} on Changed Jobs > Other contacts ${n === 1 ? 'has' : 'have'} not been reached out to, snoozed or hidden (former Schneider Electric coworkers are not counted)`,
     clearTitle: 'Everyone on Changed Jobs > Other contacts has been reached out to, snoozed or hidden',
   },
+  // The decision makers at your accounts that nothing has reached yet: no
+  // HubSpot email or call, no Last Contacted date. Counted off the same list
+  // Prospecting > DMs Without Activity shows on its "No activity ever" chip
+  // (useDmsNoActivity). Just ahead of the campaign step (Dan's call): who
+  // has never heard from you is the question to answer before deciding
+  // what the next campaign goes to.
+  {
+    key: 'dms-no-activity',
+    title: 'Decision makers with no activity',
+    detail: 'Decision makers at your accounts that nothing has reached yet: no HubSpot email or call, and no Last Contacted date.',
+    view: 'prospecting',
+    viewLabel: 'Prospecting',
+    workLabel: n => `${n} DM${n === 1 ? '' : 's'}`,
+    workTitle: n => `${n} decision ${n === 1 ? 'maker at your accounts has' : 'makers at your accounts have'} had no activity ever (Prospecting > DMs Without Activity, "No activity ever")`,
+    clearTitle: 'Every decision maker at your accounts has had some activity',
+  },
   {
     key: 'market-updates',
     title: 'Reach out to contacts with market updates',
@@ -271,6 +287,9 @@ const BACKFILLED_STEPS = [
   // ahead of the market-updates step, where the shipped ladder has it;
   // without that step, ahead of renewals; failing both, at the end.
   { key: 'changed-jobs', before: ['market-updates', 'renewals'] },
+  // "Decision makers with no activity" sits straight ahead of the campaign
+  // step; without it, ahead of renewals; failing both, at the end.
+  { key: 'dms-no-activity', before: ['market-updates', 'renewals'] },
 ];
 
 // `before` is one anchor or a list tried in order; the first one present

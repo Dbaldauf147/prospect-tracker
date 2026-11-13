@@ -41,7 +41,7 @@ function subscribeHydrated(onChange) {
 // Returns { steps, counts, autoClear, peFirmsToWork, campaignsToFinish,
 // changedJobsWork, work,
 // states, stateByKey, today, caughtUpMap, dueCount }.
-export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null, tagCoverage = null, cdmName = '' } = {}) {
+export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null, tagCoverage = null, cdmName = '', dmsNoActivityCount = null } = {}) {
   // The Opps 2 records, read the way every other consumer of that store
   // reads them: newest of the local cache and Firestore on mount, then the
   // cache on focus / after any Opps 2 save / on a timer, since Call In is
@@ -135,7 +135,8 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     'targeted-services': countServiceGaps(serviceGaps),
     'pe-intros': peFirmsToWork ? peFirmsToWork.length : null,
     'changed-jobs': changedJobsWork ? changedJobsWork.length : null,
-  }), [oppsRecords, issues, serviceGaps, peFirmsToWork, changedJobsWork]);
+    'dms-no-activity': typeof dmsNoActivityCount === 'number' ? dmsNoActivityCount : null,
+  }), [oppsRecords, issues, serviceGaps, peFirmsToWork, changedJobsWork, dmsNoActivityCount]);
 
   // The steps nothing counts, but that something in the app can still
   // answer for. "Reach out to contacts with market updates" is the batch a

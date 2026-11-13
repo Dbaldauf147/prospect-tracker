@@ -54,7 +54,7 @@ const renamed = readSteps(withSteps([
 ]));
 // 'visits' rides along on every read of a stored ladder — see the backfill
 // block at the bottom — so it shows up in these key lists.
-checkDeep('stored order wins', keys(renamed), ['opps', 'visits', 'cold', 'changed-jobs']);
+checkDeep('stored order wins', keys(renamed), ['opps', 'visits', 'cold', 'changed-jobs', 'dms-no-activity']);
 check('the new title is used', byKey(renamed, 'opps').title, 'Chase the deals I already have');
 check('a retitled built-in keeps its count', typeof byKey(renamed, 'opps').workLabel, 'function');
 check('and its work tooltip', typeof byKey(renamed, 'opps').workTitle, 'function');
@@ -87,7 +87,7 @@ const messy = readSteps(withSteps([
   { key: 'opps', title: 'duplicate' },   // first one wins
   { key: 'ps_x' },                       // custom with no title: nothing to show
 ]));
-checkDeep('junk is dropped, not thrown on', keys(messy), ['opps', 'visits', 'changed-jobs']);
+checkDeep('junk is dropped, not thrown on', keys(messy), ['opps', 'visits', 'changed-jobs', 'dms-no-activity']);
 check('the duplicate did not overwrite', messy[0].title, DEFAULT_STEPS[0].title);
 
 // --- serialize: store only what changed -----------------------------------
@@ -108,7 +108,7 @@ const roundTrip = readSteps(withSteps(serializeSteps([
   { ...stepByKey('opps'), detail: 'my own words' },
   { key: 'ps_new', title: 'Added step', detail: '', view: 'pe' },
 ])));
-checkDeep('order round-trips', keys(roundTrip), ['visits', 'cold', 'opps', 'ps_new', 'changed-jobs']);
+checkDeep('order round-trips', keys(roundTrip), ['visits', 'cold', 'opps', 'ps_new', 'changed-jobs', 'dms-no-activity']);
 check('edited detail round-trips', byKey(roundTrip, 'opps').detail, 'my own words');
 check('the count survives the round trip', typeof byKey(roundTrip, 'opps').workLabel, 'function');
 check('the added step round-trips', byKey(roundTrip, 'ps_new').viewLabel, 'PE Portfolio');
@@ -128,7 +128,7 @@ check('both halves go red once the ladder reaches them',
 
 const preSplit = readSteps(withSteps([{ key: 'opps' }, { key: 'market-updates' }, { key: 'cold' }]));
 checkDeep('a ladder stored before the split gains the mapping step',
-  keys(preSplit), ['opps', 'contact-mapping', 'changed-jobs', 'market-updates', 'visits', 'cold']);
+  keys(preSplit), ['opps', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'visits', 'cold']);
 check('and it arrives whole, not as a bare key',
   byKey(preSplit, 'contact-mapping').title, stepByKey('contact-mapping').title);
 check('an edit to the step it split from is untouched',
@@ -136,9 +136,9 @@ check('an edit to the step it split from is untouched',
     .find(s => s.key === 'market-updates').title, 'Mine');
 checkDeep('a ladder that already has both is left alone',
   keys(readSteps(withSteps([{ key: 'contact-mapping' }, { key: 'market-updates' }]))),
-  ['contact-mapping', 'changed-jobs', 'market-updates', 'visits']);
+  ['contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'visits']);
 checkDeep('a ladder with neither gets neither: that step was deleted',
-  keys(readSteps(withSteps([{ key: 'opps' }, { key: 'cold' }]))), ['opps', 'visits', 'cold', 'changed-jobs']);
+  keys(readSteps(withSteps([{ key: 'opps' }, { key: 'cold' }]))), ['opps', 'visits', 'cold', 'changed-jobs', 'dms-no-activity']);
 checkDeep('an emptied ladder stays empty', keys(readSteps(withSteps([]))), []);
 
 // --- the in-person visits step -------------------------------------------
@@ -155,14 +155,14 @@ check('it opens My Accounts', stepByKey('visits').viewLabel, 'My Accounts');
 
 checkDeep('a ladder stored before it gains it above cold outreach',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'cold' }, { key: 'renewals' }]))),
-  ['opps', 'visits', 'cold', 'changed-jobs', 'renewals']);
+  ['opps', 'visits', 'cold', 'changed-jobs', 'dms-no-activity', 'renewals']);
 check('and it arrives whole, not as a bare key',
   byKey(readSteps(withSteps([{ key: 'cold' }])), 'visits').title, stepByKey('visits').title);
 checkDeep('with cold outreach deleted it lands at the end',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }]))),
-  ['opps', 'changed-jobs', 'renewals', 'visits']);
+  ['opps', 'changed-jobs', 'dms-no-activity', 'renewals', 'visits']);
 checkDeep('a ladder that already carries it is left alone',
-  keys(readSteps(withSteps([{ key: 'visits' }, { key: 'opps' }, { key: 'changed-jobs' }]))), ['visits', 'opps', 'changed-jobs']);
+  keys(readSteps(withSteps([{ key: 'visits' }, { key: 'opps' }, { key: 'changed-jobs' }]))), ['visits', 'opps', 'changed-jobs', 'dms-no-activity']);
 check('an edit to it survives the backfill',
   byKey(readSteps(withSteps([{ key: 'visits', title: 'Book the trips' }])), 'visits').title,
   'Book the trips');
@@ -178,24 +178,33 @@ check('off the bottom is a no-op', moveStep(three, 2, 1), three);
 check('an out-of-range index is a no-op', moveStep(three, 9, -1), three);
 checkDeep('the original is not mutated', keys(three), ['a', 'b', 'c']);
 
+// --- the dms-no-activity step ----------------------------------------------
+check('dms step: counted, not marked by hand', typeof stepByKey('dms-no-activity').workLabel, 'function');
+check('dms step: opens Prospecting', stepByKey('dms-no-activity').view, 'prospecting');
+check('dms step: names its count', stepByKey('dms-no-activity').workLabel(3), '3 DMs');
+checkDeep('dms step: a stored ladder gains it right ahead of the market updates',
+  keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }, { key: 'market-updates' }, { key: 'cold' }]))),
+  ['opps', 'renewals', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'visits', 'cold']);
+checkDeep('dms step: an emptied ladder stays empty', keys(readSteps(withSteps([]))), []);
+
 // --- the changed-jobs step -------------------------------------------------
 // New work, straight after the market updates (step 3 on the shipped ladder).
 checkDeep('the shipped ladder puts it ahead of the market updates',
-  keys(DEFAULT_STEPS).slice(1, 4), ['contact-mapping', 'changed-jobs', 'market-updates']);
+  keys(DEFAULT_STEPS).slice(1, 5), ['contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates']);
 check('it is counted, not marked by hand', typeof stepByKey('changed-jobs').workLabel, 'function');
 check('it opens Contacts', stepByKey('changed-jobs').view, 'contacts');
 checkDeep('a stored ladder gains it right ahead of the market updates',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'contact-mapping' }, { key: 'market-updates' }, { key: 'renewals' }, { key: 'visits' }, { key: 'cold' }]))),
-  ['opps', 'contact-mapping', 'changed-jobs', 'market-updates', 'renewals', 'visits', 'cold']);
+  ['opps', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'renewals', 'visits', 'cold']);
 checkDeep('a ladder with an extra step of its own still gets it one place up',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'ps_mine', title: 'Mine' }, { key: 'contact-mapping' }, { key: 'market-updates' }, { key: 'renewals' }]))),
-  ['opps', 'ps_mine', 'contact-mapping', 'changed-jobs', 'market-updates', 'renewals', 'visits']);
+  ['opps', 'ps_mine', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'renewals', 'visits']);
 checkDeep('even when the market updates were moved down the ladder',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }, { key: 'market-updates' }, { key: 'visits' }, { key: 'cold' }]))),
-  ['opps', 'renewals', 'contact-mapping', 'changed-jobs', 'market-updates', 'visits', 'cold']);
+  ['opps', 'renewals', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'visits', 'cold']);
 checkDeep('without the market updates it goes ahead of renewals',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }, { key: 'visits' }]))),
-  ['opps', 'changed-jobs', 'renewals', 'visits']);
+  ['opps', 'changed-jobs', 'dms-no-activity', 'renewals', 'visits']);
 
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);
