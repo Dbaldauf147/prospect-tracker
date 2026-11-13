@@ -332,6 +332,43 @@ export function makeClientAccountLookup(prospects) {
   };
 }
 
+/**
+ * (contact) => the Table View company record the contact belongs to, or
+ * null. The same matching as makeClientAccountLookup (near-name on the
+ * contact's company, then an email domain the record claims), over every
+ * record whatever its status. Memoised per company name.
+ */
+export function makeAccountRecordLookup(prospects) {
+  const rows = (prospects || []).filter(p => String(p?.company || '').trim());
+  const keys = rows.map(p => rosterMatchKey(p.company));
+  const exact = new Map(rows.map(p => [String(p.company).trim().toLowerCase(), p]));
+  const byDomain = new Map();
+  for (const p of rows) {
+    const ds = new Set();
+    collectClientDomains(p, ds);
+    for (const d of ds) if (!byDomain.has(d)) byDomain.set(d, p);
+  }
+  const byName = new Map();
+  return (c) => {
+    const company = String(c?.company || '').trim();
+    if (company) {
+      let hit = byName.get(company);
+      if (hit === undefined) {
+        hit = exact.get(company.toLowerCase()) || null;
+        if (!hit) {
+          const ck = rosterMatchKey(company);
+          const i = keys.findIndex(k => rosterKeysMatch(k, ck));
+          hit = i >= 0 ? rows[i] : null;
+        }
+        byName.set(company, hit);
+      }
+      if (hit) return hit;
+    }
+    const domain = accountDomain(c);
+    return (domain && byDomain.get(domain)) || null;
+  };
+}
+
 export function makeRosterGates({
   prospects = [],
   cdmName = '',
@@ -783,7 +820,12 @@ function finalizeCoverage(buckets, left) {
 // `contacts` and `done` then count companies (`unit: 'company'`), and its
 // `people` lists only the contacts at companies still missing something -
 // once the Yes is found there is nothing left to ask the rest of them.
-export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decisionMakersOnly = false, yesOnly = false, byCompany = false } = {}) {
+//
+// `closedFor(person, tag)`, with byCompany, says a tag is already settled at
+// that person's company without anyone answering it - its services are all
+// Not Sold or N/A (utils/bucketServices). Such a tag counts as covered, so
+// the company is not listed as missing anybody for it.
+export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decisionMakersOnly = false, yesOnly = false, byCompany = false, closedFor = null } = {}) {
   const narrowed = decisionMakersOnly || yesOnly || byCompany;
   if (!coverage) return coverage;
   if ((!Array.isArray(tags) || !tags.length) && !narrowed) return coverage;
@@ -806,7 +848,7 @@ export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decision
       ? b.people.filter(p => tagsOf(p.contact).split(';').map(t => t.trim()).includes('decision maker'))
       : b.people;
     if (byCompany) {
-      buckets[key] = companyBucket(kept, scoreTags || scoredTagOptions(), tagReviewMap, yesOnly, rowFor);
+      buckets[key] = companyBucket(kept, scoreTags || scoredTagOptions(), tagReviewMap, yesOnly, rowFor, closedFor);
       continue;
     }
     for (const p of kept) {
@@ -824,7 +866,7 @@ export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decision
 
 // One bucket of rescoreTagCoverage's byCompany reading. Contacts with no
 // company each stand as their own company, so they are not merged into one.
-function companyBucket(people, tags, tagReviewMap, yesOnly, rowFor) {
+function companyBucket(people, tags, tagReviewMap, yesOnly, rowFor, closedFor = null) {
   const groups = new Map();
   for (const p of people) {
     const k = String(p.company || '').trim().toLowerCase() || `id:${p.id ?? p.email ?? p.name}`;
@@ -835,7 +877,7 @@ function companyBucket(people, tags, tagReviewMap, yesOnly, rowFor) {
   for (const members of groups.values()) {
     let covered = 0;
     for (const tag of tags) {
-      const hit = members.some(p => {
+      const hit = (closedFor && closedFor(members[0], tag)) || members.some(p => {
         const review = p.id == null ? null : tagReviewMap[p.id];
         return tagReviewScore(p.contact || {}, review, [tag], { yesOnly }).answered > 0;
       });

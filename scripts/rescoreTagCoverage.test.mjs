@@ -71,5 +71,10 @@ eq([coTwo.all.done, coTwo.all.answered, coTwo.all.slots], [0, 1, 4], 'by company
 const coTwoTagged = rescoreTagCoverage({ all: { ...coCov.all, people: [g, { ...h, contact: { id: 8, dans_tags: 'Decision Maker; Utilities' } }, i9] } }, ['ESG', 'Utilities'], {}, coLens);
 eq([coTwoTagged.all.done, coTwoTagged.all.pct], [1, 50], 'by company: two DMs can cover two tags between them');
 
+// A tag closed at a company (its services all Not Sold or N/A) counts as
+// covered there, so Beta drops off the ESG list.
+const coClosed = rescoreTagCoverage(coCov, ['ESG'], {}, { ...coLens, closedFor: (p, tag) => p.company === 'Beta' && tag === 'ESG' });
+eq([coClosed.all.done, coClosed.all.pct, coClosed.all.people.length], [2, 100, 0], 'by company: closed-by-services counts as covered');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
