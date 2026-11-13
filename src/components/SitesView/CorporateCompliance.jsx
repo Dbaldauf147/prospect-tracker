@@ -911,7 +911,7 @@ function answerSelectStyle(val, derived = false) {
 // company (`sharedLinks` / `onSetSharedLink`) — a statute is the same page
 // whoever is being screened. `links` is the old per-company map, read as a
 // fallback so anything saved before that stays on screen.
-function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, findings, onSetFindings, caSiteCount = 0, revenue = '', revenueEntity = '', employees = null, onSet, disabled, onResearch, researching, researchError, research }) {
+function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, findings, onSetFindings, caSiteCount = 0, revenue = '', revenueEntity = '', employees = null, onSet, disabled, onResearch, researching, researchError, research, onShownVerdicts }) {
   // Revenue drives the derived Applies? verdicts (SB 253 / SB 261). Parsed
   // once per render rather than per regulation row.
   //
@@ -948,6 +948,24 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
   // mandates read as ruled out rather than merely unanswered.
   const caScreen = californiaRevenueScreen(answers, criterionContext);
   const caRuledOut = caScreen.screenedOut;
+  // The California mandates' Applies? as the card shows them, derived
+  // dashed Yes included, published up so the company pop-up can badge CA SB
+  // from it. Same rule as the rows below: a saved answer wins, else the
+  // derived verdict. Serialized so the effect only fires on a real change.
+  const caShownJson = JSON.stringify(Object.fromEntries((REGULATIONS_BY_JURISDICTION.california || []).map((r) => {
+    const rKey = regulationAnswerKey('california', r.regulation);
+    const saved = answers?.[rKey] || '';
+    const auto = saved ? null : deriveRegulationVerdict(r, {
+      revenueUsd, revenueLabel, revenueEntity,
+      jurisdictionAnswer: answers?.california || '',
+      jurisdictionLabel: 'California',
+      doingBusiness: doingBusinessInCA,
+    });
+    return [rKey, saved || auto?.verdict || null];
+  })));
+  useEffect(() => {
+    onShownVerdicts?.(JSON.parse(caShownJson));
+  }, [caShownJson, onShownVerdicts]);
   const caRuledOutWhy = `Revenue is under ${caScreen.floorLabel}, the lowest California threshold, so no California mandate can apply and this test can't change that.`;
   // Ruled-out rows carry the tint; the red left rule keeps them legible for
   // anyone who can't pick the fill out of a dense table.
@@ -1796,6 +1814,35 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
     updateSettingsPath({ [`corporateComplianceScreening.${slug}.${key}`]: value || null });
   }, [updateSettingsPath]);
 
+  // What each card's California mandate rows show (saved or derived), kept
+  // under settings.corporateComplianceShown so the company pop-up can flag
+  // CA SB without re-deriving it from site lists and research. Written only
+  // when it differs from what is stored, so rendering a card is not a write.
+  const shownVerdictsRef = useRef(settings?.corporateComplianceShown || {});
+  shownVerdictsRef.current = settings?.corporateComplianceShown || {};
+  // Cards report as they mount, so changes are pooled and flushed as one
+  // save a moment later rather than one save per card.
+  const pendingShownRef = useRef({});
+  const shownTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(shownTimerRef.current), []);
+  const setShownVerdicts = useCallback((slug, verdicts) => {
+    if (!updateSettingsPath || !slug) return;
+    const cur = shownVerdictsRef.current[slug] || {};
+    let changed = false;
+    for (const [k, v] of Object.entries(verdicts || {})) {
+      const path = `corporateComplianceShown.${slug}.${k}`;
+      if ((cur[k] || null) !== (v || null)) { pendingShownRef.current[path] = v || null; changed = true; }
+      else delete pendingShownRef.current[path];
+    }
+    if (!changed || shownTimerRef.current) return;
+    shownTimerRef.current = setTimeout(() => {
+      shownTimerRef.current = null;
+      const patch = pendingShownRef.current;
+      pendingShownRef.current = {};
+      if (Object.keys(patch).length) updateSettingsPath(patch);
+    }, 800);
+  }, [updateSettingsPath]);
+
   // Each company's ultimate parent, keyed the same way the screening
   // answers are (the canonical company identity, not a raw-name slug) so
   // the two travel together. Blank means the company is its own parent.
@@ -2608,6 +2655,7 @@ export default function CorporateCompliance({ sites = [], settings, updateSettin
                         revenueEntity={thresholdRevenue.entity}
                         disabled={!c.key}
                         onSet={(qKey, value) => setScreeningAnswer(c.key, qKey, value)}
+                        onShownVerdicts={c.key ? (v) => setShownVerdicts(c.key, v) : undefined}
                         onResearch={() => researchCompliance(c.name, c.key)}
                         researching={!!screenState[c.key]?.loading}
                         researchError={screenState[c.key]?.error || null}
