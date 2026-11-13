@@ -25,6 +25,7 @@ import {
   scheduledOppDueMs,
   scheduledOppPending,
   scheduledServicesForCompany,
+  isCheckBackEntry,
 } from '../src/utils/scheduledOpps.js';
 import { easternWallToUtcMs } from '../src/utils/nfatSchedules.js';
 
@@ -148,6 +149,23 @@ const kept = pruneScheduledOpps([
 ], now);
 check('pending entries are kept however far out', j(kept.map(e => e.id).includes('pending')), j(true));
 check('a recent stamp stays, so every device sees it', j(kept.map(e => e.id)), j(['pending', 'justFired']));
+
+// Check-backs: a Not Sold opp queued to come back into the Call In. The
+// queue has to keep what identifies the opp and the term through a
+// normalize, and the company card must not read one as a new opp booked.
+{
+  const [cb] = normalizeScheduledOpps([{
+    id: 'cb1', kind: 'checkBack', oppId: 42, company: 'Acme Corp', notes: 'Check in.',
+    checkBackAmount: 18, checkBackUnit: 'months', closedOn: '2026-11-13', dueDate: '2028-05-13',
+  }]);
+  check('check-back keeps its kind', j(isCheckBackEntry(cb)), j(true));
+  check('check-back keeps its opp id as a string', j(cb.oppId), j('42'));
+  check('check-back keeps its term', j([cb.checkBackAmount, cb.checkBackUnit, cb.closedOn]), j([18, 'months', '2026-11-13']));
+  const [plain] = normalizeScheduledOpps([{ id: 'n1', company: 'Acme Corp', dueDate: '2028-05-13' }]);
+  check('a new-opp entry is not a check-back', j(isCheckBackEntry(plain)), j(false));
+  check('a check-back is not a pending opp for the company card',
+    j(pendingScheduledOppsForCompany('Acme Corp', [cb, plain]).map(e => e.id)), j(['n1']));
+}
 
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);

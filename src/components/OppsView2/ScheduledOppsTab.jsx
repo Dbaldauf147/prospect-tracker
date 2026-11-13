@@ -12,6 +12,7 @@ import {
   formatScheduledOppWhen,
   scheduledOppDueMs,
   scheduledOppPending,
+  isCheckBackEntry,
 } from '../../utils/scheduledOpps';
 
 const inputStyle = {
@@ -43,6 +44,9 @@ function scheduledOppTableRows(entries = []) {
       _id: e.id,
       __entry: e,
       company: e.company || '',
+      // A New Opp waiting to be created, or a Not Sold opp waiting to come
+      // back into the Call In (utils/scheduledOpps, check-back entries).
+      kind: isCheckBackEntry(e) ? 'Check back' : 'New opp',
       dueDate: e.dueDate,
       dueTime: e.dueTime,
       when: formatScheduledOppWhen(e),
@@ -51,7 +55,7 @@ function scheduledOppTableRows(entries = []) {
       source: e.source || '',
       type: e.type || '',
       peOwner: e.peOwner || '',
-      pullThrough: e.pullThrough ? 'Yes' : 'No',
+      pullThrough: isCheckBackEntry(e) ? '' : (e.pullThrough ? 'Yes' : 'No'),
       createdAt: e.createdAt ? new Date(e.createdAt).toISOString().slice(0, 10) : '',
     }));
 }
@@ -62,8 +66,16 @@ export function ScheduledOppsTab({ entries = [], onChangeEntry, onCreateNow, onC
   const columns = useMemo(() => [
     { key: 'company', label: 'Company', render: (r) => <strong>{r.company || '(no company)'}</strong> },
     {
+      key: 'kind',
+      label: 'What',
+      headerTitle: 'New opp: created on the date. Check back: a Not Sold opp that goes back in the Call In on the date, with its note on Loss Notes.',
+      render: (r) => (r.kind === 'Check back'
+        ? <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700, background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', whiteSpace: 'nowrap' }}>Check back</span>
+        : r.kind),
+    },
+    {
       key: 'dueDate',
-      label: 'Start Date',
+      label: 'Date',
       render: (r) => (
         <input
           type="date"
@@ -91,9 +103,9 @@ export function ScheduledOppsTab({ entries = [], onChangeEntry, onCreateNow, onC
         />
       ),
     },
-    { key: 'when', label: 'Creates' },
+    { key: 'when', label: 'When' },
     { key: 'scope', label: 'Services' },
-    { key: 'notes', label: 'Notes', render: (r) => <span style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</span> },
+    { key: 'notes', label: 'Notes', headerTitle: 'For a check-back, the note that goes on the opp\'s Loss Notes when it comes back.', render: (r) => <span style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</span> },
     { key: 'source', label: 'Source' },
     { key: 'type', label: 'Type' },
     { key: 'peOwner', label: 'PE Owner' },
@@ -108,16 +120,19 @@ export function ScheduledOppsTab({ entries = [], onChangeEntry, onCreateNow, onC
             type="button"
             onClick={(ev) => { ev.stopPropagation(); onCreateNow(r.id); }}
             style={actionBtn('#2563EB')}
-            title="Create this opp right now instead of waiting for its start date"
-          >Create now</button>
+            title={r.kind === 'Check back' ? 'Put this opp back in the Call In today instead of waiting for its date' : 'Create this opp right now instead of waiting for its start date'}
+          >{r.kind === 'Check back' ? 'Bring back now' : 'Create now'}</button>
           <button
             type="button"
             onClick={(ev) => {
               ev.stopPropagation();
-              if (window.confirm(`Cancel the scheduled opp for ${r.company || 'this company'}? No row will be created.`)) onCancelEntry(r.id);
+              const msg = r.kind === 'Check back'
+                ? `Cancel the check-back for ${r.company || 'this opp'}? It stays closed and won't come back on its own.`
+                : `Cancel the scheduled opp for ${r.company || 'this company'}? No row will be created.`;
+              if (window.confirm(msg)) onCancelEntry(r.id);
             }}
             style={actionBtn('#dc2626')}
-            title="Drop this scheduled opp: no row is ever created"
+            title={r.kind === 'Check back' ? 'Drop this check-back: the opp stays closed' : 'Drop this scheduled opp: no row is ever created'}
           >Cancel</button>
         </span>
       ),
@@ -127,7 +142,7 @@ export function ScheduledOppsTab({ entries = [], onChangeEntry, onCreateNow, onC
   return (
     <>
       <div style={{ padding: '0.5rem 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-        {rows.length} scheduled opp{rows.length === 1 ? '' : 's'} not created yet. Each one is added to the Opps table the first time this page is open at or after its start date and time (Eastern). Change the date here to move it.
+        {rows.length} scheduled opp{rows.length === 1 ? '' : 's'} waiting. Each one happens the first time this page is open at or after its date and time (Eastern): a new opp is added to the Opps table, a check-back puts its Not Sold opp back in the Call In. Change the date here to move it.
       </div>
       <DataTable
         tableId="opps2-scheduled"
