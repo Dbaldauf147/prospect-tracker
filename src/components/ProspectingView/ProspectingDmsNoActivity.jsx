@@ -90,29 +90,16 @@ const toIso = (ms) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-// DMs Without Activity's own subtabs: everyone, and "No Activity and no
-// Planned Activity" (the same people less anyone on an email campaign).
-// The one last open is remembered per browser. Someone who had the short-
-// lived top-level 'dmsNoPlanned' subtab open lands on its inner one.
+// DMs Without Activity's own subtabs: "No Activity and no Planned
+// Activity" (the people less anyone on an email campaign), which is the
+// default and opens every time, and the full list beside it.
 const DMS_TABS = [
-  { key: 'all', label: 'DMs Without Activity' },
   { key: 'noPlanned', label: 'No Activity and no Planned Activity' },
+  { key: 'all', label: 'DMs Without Activity' },
 ];
-const DMS_TAB_KEY = 'prospecting-dms-no-activity:subtab';
-const readDmsTab = () => {
-  try {
-    const v = localStorage.getItem(DMS_TAB_KEY);
-    if (DMS_TABS.some(t => t.key === v)) return v;
-    return localStorage.getItem('prospecting-view:active-subtab') === 'dmsNoPlanned' ? 'noPlanned' : 'all';
-  } catch { return 'all'; }
-};
 
 export function ProspectingDmsNoActivityTabs(props) {
-  const [tab, setTabState] = useState(readDmsTab);
-  const setTab = (k) => {
-    setTabState(k);
-    try { localStorage.setItem(DMS_TAB_KEY, k); } catch { /* per-viewer convenience only */ }
-  };
+  const [tab, setTab] = useState('noPlanned');
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div role="tablist" style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid #E2E8F0', margin: '0 1.25rem 0.6rem' }}>
