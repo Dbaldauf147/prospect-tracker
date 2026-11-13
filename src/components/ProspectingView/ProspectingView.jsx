@@ -40,7 +40,9 @@ import {
   viewLabelFor,
 } from '../../utils/prospectingPlaybook';
 import { DataTable } from '../common/DataTable';
-import { ROSTER_CATEGORIES, rescoreTagCoverage } from '../../utils/contactRosters';
+import { ROSTER_CATEGORIES, rescoreTagCoverage, makeAccountRecordLookup } from '../../utils/contactRosters';
+import { companyClosedBuckets, serviceBucketContext } from '../../utils/bucketServices';
+import { BUCKETS } from '../ProspectModal/contactTags';
 import { TAG_OPTIONS, scoredTagOptions, tagKey } from '../../utils/contactTagReview';
 import { keyContactsNotMet } from '../../utils/metInPerson';
 import { makeOwnedContactGate } from '../../utils/ladderOwnership';
@@ -436,7 +438,7 @@ function TagPctCell({ bucket, roster, onOpen, isOpen, tagLabel }) {
       onClick={onOpen}
       aria-expanded={isOpen}
       title={bucket.unit === 'company'
-        ? `${roster.label}, ${tagLabel}: ${pct}% covered across ${bucket.contacts} compan${bucket.contacts === 1 ? 'y' : 'ies'} with decision makers (${bucket.done} fully covered). A company is covered once any one of its decision makers is tagged Yes. No and Not sure don't count. Click to list the contacts at companies still missing it.`
+        ? `${roster.label}, ${tagLabel}: ${pct}% covered across ${bucket.contacts} compan${bucket.contacts === 1 ? 'y' : 'ies'} with decision makers (${bucket.done} fully covered). A company is covered once any one of its decision makers is tagged Yes, or once every service tagged to it there is Not Sold or N/A. No and Not sure don't count. Click to list the contacts at companies still missing it.`
         : `${roster.label}, ${tagLabel}: ${pct}% answered across ${bucket.contacts} contact${bucket.contacts === 1 ? '' : 's'} (${bucket.done} fully answered). Click to list them.`}
       style={{
         minWidth: 46, padding: '1px 8px', borderRadius: 999, cursor: 'pointer',
@@ -449,7 +451,7 @@ function TagPctCell({ bucket, roster, onOpen, isOpen, tagLabel }) {
   );
 }
 
-function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOpenContact, onAudit, tagFocus = [], onTagFocus = null, tagReviewMap = null, settings = null, updateSettings = null }) {
+function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOpenContact, onAudit, tagFocus = [], onTagFocus = null, tagReviewMap = null, settings = null, updateSettings = null, prospects = null }) {
   // Which cell's contacts are listed underneath, if any: { roster, row }.
   // Local to the step: it's a look, not a setting.
   const [open, setOpen] = useState(null);
@@ -460,6 +462,26 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
   // One row per tag question (the picked ones, or all of them), each the
   // coverage re-scored over that single tag, then a total row over the whole
   // set - the figure the chips used to show.
+  // A tag whose services are all Not Sold or N/A at a company is closed
+  // there (the company card's By Category heading says so), so that company
+  // isn't missing anybody for it. Read the way My Accounts > Company Data
+  // reads it (companyClosedBuckets), once per company record.
+  const closedFor = useMemo(() => {
+    if (!prospects || !prospects.length) return null;
+    const ctx = serviceBucketContext(settings);
+    const recordOf = makeAccountRecordLookup(prospects);
+    const closedByRecord = new Map();
+    const bucketByTag = new Map(BUCKETS.map(b => [tagKey(b.label), b.key]));
+    return (person, tag) => {
+      const bucketKey = bucketByTag.get(tagKey(tag));
+      if (!bucketKey) return false;
+      const rec = recordOf(person?.contact || person);
+      if (!rec) return false;
+      let closed = closedByRecord.get(rec);
+      if (!closed) { closed = companyClosedBuckets(rec, ctx, BUCKETS); closedByRecord.set(rec, closed); }
+      return closed.has(bucketKey);
+    };
+  }, [prospects, settings]);
   const rows = useMemo(() => {
     if (!fullCoverage || !fullCoverage.all?.contacts) return [];
     const map = tagReviewMap || {};
@@ -470,7 +492,7 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
     // the answered rule over everyone - see tagsAllMapped.)
     // Scored per company: one DM tagged Yes covers the whole company, so its
     // other contacts drop off the list under the cell.
-    const lens = { decisionMakersOnly: true, yesOnly: true, byCompany: true };
+    const lens = { decisionMakersOnly: true, yesOnly: true, byCompany: true, closedFor };
     const out = tags.map(tag => ({ id: tagKey(tag), tag, cov: rescoreTagCoverage(fullCoverage, [tag], map, lens) }));
     out.push({
       id: TAG_TOTAL_ROW,
@@ -479,7 +501,7 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
       total: true,
     });
     return out;
-  }, [fullCoverage, tagFocus, tagReviewMap]);
+  }, [fullCoverage, tagFocus, tagReviewMap, closedFor]);
   const columns = useMemo(() => [
     {
       key: 'tag', label: 'Tag', defaultWidth: 190,
@@ -1949,6 +1971,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                 {!editing && step.key === 'contact-mapping' && (
                   <TagCoverageBar
                     coverage={tagCoverage}
+                    prospects={prospects}
                     onAudit={queueTagAudit}
                     onNavigate={onNavigate ? () => onNavigate('contacts') : null}
                     missing={tagDebt || []}
