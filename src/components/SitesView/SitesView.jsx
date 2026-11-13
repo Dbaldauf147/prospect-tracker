@@ -196,6 +196,11 @@ const SITES_STORAGE_KEY = 'sites-list-override';
 // came back unmapped after a refresh: the data still in the rows, every
 // cost, usage and savings figure blank.
 const SITES_MAPPING_STORAGE_KEY = 'sites-list-mapping';
+// Per-site figures typed by hand where the upload has no column (see
+// siteValueEdits in the component).
+const SITE_VALUE_EDITS_KEY = 'utility-lookup:site-value-edits';
+// The source a typed-in consumption figure is credited to.
+const TYPED_IN_SOURCE = 'typed in on this page';
 
 // Sentinel for the Division scope's "sites with no division" choice. A
 // real division can't collide with it — a blank division is exactly the
@@ -597,6 +602,7 @@ function isStateCodeCountry(rawCountry) {
 // that is what this looks like.
 function EditableSiteCell({
   siteName, editable, editing, edited, seedValue, onStartEdit, onCancel, onCommit, children,
+  editHint = 'It writes the uploaded column, so everything derived from it moves too.',
 }) {
   if (editing) {
     return (
@@ -610,9 +616,9 @@ function EditableSiteCell({
   }
 
   const where = describeSiteCellEdit(editable, siteName);
-  const title = edited
+  const title = edited?.note ? edited.note : edited
     ? `Set by hand${edited.previous ? ` (was “${edited.previous}”)` : ' (was blank)'}. Double-click to edit ${where} again.`
-    : `Double-click to edit ${where}. It writes the uploaded column, so everything derived from it moves too.`;
+    : `Double-click to edit ${where}. ${editHint}`;
   return (
     <span
       onDoubleClick={(e) => { e.stopPropagation(); onStartEdit(); }}
@@ -1751,6 +1757,30 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       return parsed && typeof parsed === 'object' ? parsed : {};
     } catch { return {}; }
   });
+  // Figures typed into a cell the upload has no column for: annual electric
+  // (kWh), annual gas (therms), and the two annual costs. They can't be
+  // written into the file - adding a consumption or cost column would make
+  // the page stop estimating every OTHER site (an uploaded column is never
+  // padded out with estimates) - so they're kept beside it, keyed by row
+  // like the supplier overrides, and stand in for that one site's estimate.
+  //   { [rowId]: { electric, gas, electricCost, gasCost } }
+  const [siteValueEdits, setSiteValueEdits] = useState(() => {
+    try {
+      const raw = readWorkKey(SITE_VALUE_EDITS_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch { return {}; }
+  });
+  const setSiteValueEdit = useCallback((rowId, field, value) => {
+    setSiteValueEdits(prev => {
+      const next = { ...prev };
+      const row = { ...(next[rowId] || {}) };
+      if (value == null || value === '') delete row[field]; else row[field] = value;
+      if (Object.keys(row).length) next[rowId] = row; else delete next[rowId];
+      try { writeWorkKey(SITE_VALUE_EDITS_KEY, JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+  }, []);
   const setSupplierOverride = (rowId, commodity, value) => {
     const key = `${rowId}_${commodity}`;
     setSupplierOverrides(prev => {
@@ -2156,6 +2186,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       if (!isUpdate) {
         setSupplierOverrides({});
         try { clearWorkKey('utility-lookup:supplier-overrides'); } catch {}
+        setSiteValueEdits({});
+        try { clearWorkKey(SITE_VALUE_EDITS_KEY); } catch { /* noop */ }
       }
       // The mass-edit selection is row positions, so it means nothing
       // once a different file occupies those positions — and a stale one
@@ -2355,6 +2387,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     if (!window.confirm(prompt)) return;
     await clearListFromIDB(SITES_STORAGE_KEY);
     await clearListFromIDB(SITES_MAPPING_STORAGE_KEY);
+    setSiteValueEdits({});
+    try { clearWorkKey(SITE_VALUE_EDITS_KEY); } catch { /* noop */ }
     setSitesData([]);
     if (mapped) setPortfolioCompanyName('');
     setLookupResetSignal(n => n + 1);
@@ -2956,13 +2990,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const gasUsageUploaded = consumption.gas.length > 0;
       const electricCostUploaded = !!electricCostOverride;
       const gasCostUploaded = !!gasCostOverride;
-      const elecValueFinal = elec.value ?? (electricUsageUploaded ? null : propertyTypeEstimate?.electricKwh ?? null);
-      const elecValueFromEstimate = elec.value == null && elecValueFinal != null;
+      // A figure typed on the page for a site the upload has no column
+      // for (siteValueEdits) replaces that site's estimate, and only that
+      // site's: the others keep theirs.
+      const valueEdit = siteValueEdits[i] || null;
+      const editedKwh = !electricUsageUploaded && valueEdit?.electric != null ? Number(valueEdit.electric) : null;
+      const editedTherms = !gasUsageUploaded && valueEdit?.gas != null ? Number(valueEdit.gas) : null;
+      const elecValueFinal = elec.value ?? editedKwh ?? (electricUsageUploaded ? null : propertyTypeEstimate?.electricKwh ?? null);
+      const elecValueFromEstimate = elec.value == null && editedKwh == null && elecValueFinal != null;
       // gasDth → therms is ×10 (1 Dth = 10 therms). The on-screen
       // gas-usage cell is denominated in therms, matching what
       // toTherms normalizes to for actual data.
-      const gasValueFinal = gas.value ?? ((propertyTypeEstimate && !gasUsageUploaded) ? propertyTypeEstimate.gasDth * 10 : null);
-      const gasValueFromEstimate = gas.value == null && gasValueFinal != null;
+      const gasValueFinal = gas.value ?? editedTherms ?? ((propertyTypeEstimate && !gasUsageUploaded) ? propertyTypeEstimate.gasDth * 10 : null);
+      const gasValueFromEstimate = gas.value == null && editedTherms == null && gasValueFinal != null;
       const parseRate = (v) => {
         if (v == null || v === '') return null;
         const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
@@ -2996,8 +3036,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
         return Number.isFinite(n) && n !== 0 ? n : null;
       };
-      const actualElectricCost = electricCostOverride ? parseDollar(r[electricCostOverride]) : null;
-      const actualGasCost = gasCostOverride ? parseDollar(r[gasCostOverride]) : null;
+      const actualElectricCost = electricCostOverride
+        ? parseDollar(r[electricCostOverride])
+        : (valueEdit?.electricCost != null ? Number(valueEdit.electricCost) : null);
+      const actualGasCost = gasCostOverride
+        ? parseDollar(r[gasCostOverride])
+        : (valueEdit?.gasCost != null ? Number(valueEdit.gasCost) : null);
       const electricCost = actualElectricCost ?? estElectricCost;
       const gasCost = actualGasCost ?? estGasCost;
       const totalCost = (electricCost ?? 0) + (gasCost ?? 0);
@@ -3185,8 +3229,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __thermsFromEstimate__: gasValueFromEstimate,
         __kwh__: elecValueFinal,
         __therms__: gasValueFinal,
-        __kwhSource__: elec.sourceHeader,
-        __thermsSource__: gas.sourceHeader,
+        // A typed-in figure counts as actual (it's somebody's number, not
+        // the model's), so it's given a source the way a file column is.
+        __kwhSource__: elec.sourceHeader || (elec.value == null && editedKwh != null ? TYPED_IN_SOURCE : null),
+        __thermsSource__: gas.sourceHeader || (gas.value == null && editedTherms != null ? TYPED_IN_SOURCE : null),
         __electricRate__: electricRate,
         __gasRate__: gasRate,
         __electricRateSource__: electricRateSource,
@@ -3216,7 +3262,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0 || !!eiaElectric,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityColumn, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteStatusColumn, siteStatusOptions, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, contractPriceUomColumns, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityColumn, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteStatusColumn, siteStatusOptions, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, contractPriceUomColumns, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides, siteValueEdits]);
 
   // The analysis set. The Division scope narrows it, so every consumer of
   // `rows` — the table, the stats, all four other tabs and every export —
@@ -4491,8 +4537,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const usage = key === 'electricCost' ? row.__kwh__ : row.__therms__;
           const rate = key === 'electricCost' ? row.__electricRate__ : row.__gasRate__;
           title = (usage != null && rate != null)
-            ? `Actual cost from your file. Estimate would be ${formatMoney(usage * rate)}.`
-            : 'Actual cost from your file.';
+            ? `Actual cost, not an estimate. Estimate would be ${formatMoney(usage * rate)}.`
+            : 'Actual cost, not an estimate.';
         } else if (key === 'electricCost' && row.__kwh__ != null) {
           title = `Estimated: ${row.__kwh__.toLocaleString()} kWh × ${formatRate(row.__electricRate__, 'electric')}${row.__kwhSource__ ? ` · from "${row.__kwhSource__}"` : ''}`;
         } else if (key === 'gasCost' && row.__therms__ != null) {
@@ -4537,7 +4583,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // can tell modeled rows from measured ones at a glance.
           const tip = fromEstimate
             ? `Estimated from Property Type "${row.__propertyType__}": no actual ${isElectric ? 'electric' : 'gas'} consumption in the upload`
-            : (sourceHeader ? `From "${sourceHeader}" column` : `${isElectric ? 'kWh' : 'Dth'} pulled from the uploaded sites file`);
+            : sourceHeader === TYPED_IN_SOURCE ? 'Typed in on this page, in place of the estimate'
+              : (sourceHeader ? `From "${sourceHeader}" column` : `${isElectric ? 'kWh' : 'Dth'} pulled from the uploaded sites file`);
           return (
             <span
               title={tip}
@@ -4842,8 +4889,27 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // than inside the columns memo above so the derivation and the editing
   // stay separable: that memo is about what a value means, this is about
   // changing it.
+  // The four figures that are estimated when the upload has no column for
+  // them. With no column there's nothing in the file to write, so a cell of
+  // one of these is edited into siteValueEdits instead (see there) - which
+  // replaces that site's estimate and leaves the others estimated.
+  //   columnKey -> { field, label, toStored, fromStored }
+  const valueEditCols = useMemo(() => {
+    const out = new Map();
+    if (!consumption.electric.length) {
+      out.set('electric_consumption', { field: 'electric', label: 'Annual Electric (kWh)', toStored: n => n, fromStored: n => n });
+    }
+    if (!consumption.gas.length) {
+      // Shown and typed in Dth; held in therms like every other gas figure.
+      out.set('gas_consumption', { field: 'gas', label: 'Annual Gas (Dth)', toStored: n => n * 10, fromStored: n => n / 10 });
+    }
+    if (!electricCostOverride) out.set('electricCost', { field: 'electricCost', label: 'Annual Electric Cost ($)', toStored: n => n, fromStored: n => n });
+    if (!gasCostOverride) out.set('gasCost', { field: 'gasCost', label: 'Annual Gas Cost ($)', toStored: n => n, fromStored: n => n });
+    return out;
+  }, [consumption, electricCostOverride, gasCostOverride]);
+
   const editableColumns = useMemo(() => {
-    if (!columns.length || cellEditors.size === 0) return columns;
+    if (!columns.length || (cellEditors.size === 0 && valueEditCols.size === 0)) return columns;
     const dateHeaders = new Set(
       [electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride].filter(Boolean),
     );
@@ -4862,6 +4928,48 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     };
     return columns.map(col => {
       const editable = cellEditors.get(col.key);
+      const valueEdit = !editable ? valueEditCols.get(col.key) : null;
+      if (valueEdit) {
+        const editor = { header: '', label: valueEdit.label, sub: '', type: 'number', options: null, mapped: false };
+        return {
+          ...col,
+          render: (row) => {
+            const source = cleanSitesData[row.id];
+            const cellKey = `${row.id}|${col.key}`;
+            const stored = siteValueEdits[row.id]?.[valueEdit.field];
+            const hasEdit = stored != null;
+            // Opens on what the cell shows: the typed figure, else the
+            // estimate, rounded the way the cell rounds it.
+            const shownRaw = col.key === 'electric_consumption' ? row.__kwh__
+              : col.key === 'gas_consumption' ? (row.__therms__ == null ? null : row.__therms__ / 10)
+                : row[`__${col.key}__`];
+            const seed = hasEdit
+              ? String(Math.round(valueEdit.fromStored(Number(stored)) * 100) / 100)
+              : (shownRaw == null ? '' : String(Math.round(shownRaw)));
+            return (
+              <EditableSiteCell
+                siteName={source && siteNameColumn ? String(source[siteNameColumn] ?? '').trim() : ''}
+                editable={editor}
+                editing={editingCell === cellKey}
+                edited={hasEdit ? { note: `Typed in, replacing this site's estimate. Double-click to change it, or clear it to go back to the estimate.` } : null}
+                editHint="It replaces this site's estimate. Clear it to go back to the estimate."
+                seedValue={seed}
+                onStartEdit={() => { setCellEditError(''); setEditingCell(cellKey); }}
+                onCancel={() => setEditingCell(null)}
+                onCommit={(v) => {
+                  setEditingCell(null);
+                  const coerced = coerceSiteValue(editor, v);
+                  if (!coerced.ok) { setCellEditError(coerced.error); return; }
+                  setCellEditError('');
+                  // Retyping the estimate as it stands is not an edit.
+                  if (!hasEdit && coerced.value !== '' && String(coerced.value) === seed) return;
+                  setSiteValueEdit(row.id, valueEdit.field, coerced.value === '' ? null : valueEdit.toStored(coerced.value));
+                }}
+              >{col.render(row)}</EditableSiteCell>
+            );
+          },
+        };
+      }
       if (!editable) return col;
       return {
         ...col,
@@ -4886,6 +4994,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   }, [
     columns, cellEditors, editingCell, cellEdits, cleanSitesData, siteNameColumn, commitCellEdit,
     electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride,
+    valueEditCols, siteValueEdits, setSiteValueEdit,
   ]);
 
   // Only the two columns a row can't do without are locked on. Every
