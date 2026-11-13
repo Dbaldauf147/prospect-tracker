@@ -26,6 +26,13 @@ export const RECOVERABLE_FLAGS = [
   { key: 'newCompany', label: 'New Company', has: (e) => typeof e?._newCompany === 'string' && !!e._newCompany.trim(), fields: ['_newCompany'] },
 ];
 
+// The Company pin (utils/contactCompanyOverride): a company typed over a
+// contact so it maps to one of your accounts. Lost the same way, and put
+// back the same way, by the contacts pages' Recover company mappings.
+export const COMPANY_PIN_FLAG = {
+  key: 'companyOverride', label: 'Company', has: (e) => typeof e?._companyOverride === 'string' && !!e._companyOverride.trim(), fields: ['_companyOverride'],
+};
+
 const hasAnyFlag = (data) => isMap(data?.contactLocalFields);
 
 /**
@@ -36,20 +43,20 @@ const hasAnyFlag = (data) => isMap(data?.contactLocalFields);
  * Returns { patch, found }: `patch` is the new contactLocalFields (null when
  * nothing would change), `found` is [{ id, flag, label, value, from }].
  */
-export function recoverChangedJobsFlags(current, sources, nowMs = Date.now()) {
+export function recoverChangedJobsFlags(current, sources, nowMs = Date.now(), { flags = RECOVERABLE_FLAGS, allowId = null } = {}) {
   const cur = isMap(current?.contactLocalFields) ? current.contactLocalFields : {};
   const out = { ...cur };
   const found = [];
   const done = new Set(); // `${id}|${flag}` already settled, by now or by a newer backup
   for (const [id, entry] of Object.entries(cur)) {
-    for (const f of RECOVERABLE_FLAGS) if (f.has(entry, nowMs)) done.add(`${id}|${f.key}`);
+    for (const f of flags) if (f.has(entry, nowMs)) done.add(`${id}|${f.key}`);
   }
   for (const src of sources || []) {
     const map = src?.data?.contactLocalFields;
     if (!isMap(map)) continue;
     for (const [id, entry] of Object.entries(map)) {
-      if (!isMap(entry)) continue;
-      for (const f of RECOVERABLE_FLAGS) {
+      if (!isMap(entry) || (allowId && !allowId(id, entry))) continue;
+      for (const f of flags) {
         const k = `${id}|${f.key}`;
         if (done.has(k) || !f.has(entry, nowMs)) continue;
         done.add(k);
@@ -62,7 +69,7 @@ export function recoverChangedJobsFlags(current, sources, nowMs = Date.now()) {
           id,
           flag: f.key,
           label: f.label,
-          value: f.key === 'snoozed' ? entry._changedJobsSnoozeUntil : f.key === 'newCompany' ? entry._newCompany : true,
+          value: f.key === 'snoozed' ? entry._changedJobsSnoozeUntil : f.key === 'newCompany' ? entry._newCompany : f.key === 'companyOverride' ? entry._companyOverride : true,
           from: src.label || '',
         });
       }
@@ -75,4 +82,14 @@ export function recoverChangedJobsFlags(current, sources, nowMs = Date.now()) {
 export async function findLostChangedJobsFlags(current, opts) {
   const { sources, read } = await settingsBackupSources(hasAnyFlag, opts);
   return { ...recoverChangedJobsFlags(current, sources), sources, read };
+}
+
+/**
+ * Company pins the backups hold for contacts that have none now. `allowId`
+ * narrows it to the contacts worth putting one back on (the contacts page
+ * passes the ones whose company maps to none of your accounts).
+ */
+export async function findLostCompanyPins(current, allowId, opts) {
+  const { sources, read } = await settingsBackupSources(hasAnyFlag, opts);
+  return { ...recoverChangedJobsFlags(current, sources, Date.now(), { flags: [COMPANY_PIN_FLAG], allowId }), sources, read };
 }
