@@ -1,4 +1,5 @@
 import { splitBfoNames } from '../../utils/bfoCompanyNames';
+import { PopupListField } from './PopupListField';
 
 // The company's other BFO Account names (utils/bfoCompanyNames), as chips:
 // Enter or clicking away adds the typed name, x removes one. `value` is the
@@ -16,6 +17,7 @@ export function BfoNamesField({ value, primary = '', onChange }) {
     if (val && !taken(val)) onChange([...names, val].join('\n'));
   };
   return (
+    <PopupListField title="Other BFO Names" items={names} placeholder="+ Add another BFO name">
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.1rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', minHeight: '28px', alignItems: 'center' }}>
       {names.map((n, i) => (
         <span key={n} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.72rem', color: '#1E40AF' }}>
@@ -30,6 +32,7 @@ export function BfoNamesField({ value, primary = '', onChange }) {
       ))}
       <input
         type="text"
+        autoFocus
         placeholder={names.length === 0 ? '+ Add another BFO name' : '+ Add another'}
         title="Other Account names this company has in BFO. Each one is matched against BFO Activity and searched in the BFO History task."
         onKeyDown={e => { if (e.key === 'Enter' && e.target.value.trim()) { e.preventDefault(); add(e.target); } }}
@@ -37,5 +40,6 @@ export function BfoNamesField({ value, primary = '', onChange }) {
         style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
       />
     </div>
+    </PopupListField>
   );
 }
