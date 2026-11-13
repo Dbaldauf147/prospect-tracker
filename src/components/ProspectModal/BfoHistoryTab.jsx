@@ -37,7 +37,7 @@ const byKey = (k) => BFO_HISTORY_COLUMNS.find(c => c.key === k);
 const DISPLAY_COLUMNS = [byKey('status'), byKey('account'), ...BFO_HISTORY_COLUMNS.filter(c => c.key !== 'status' && c.key !== 'account')];
 const WIDTHS = { account: 180, status: 90, name: 300, leader: 160, stage: 190, amount: 130, closeDate: 120, lastModified: 140, reporting: 110, probability: 110 };
 
-export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings, updateSettings }) {
+export function BfoHistoryTab({ history, bfoCompanyName = '', noBfoAccount = false, onChange, settings, updateSettings }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -294,9 +294,16 @@ export function BfoHistoryTab({ history, bfoCompanyName = '', onChange, settings
             updateSettings={updateSettings}
           />
         </div>
-      ) : !pasteOpen && !isNone && (
+      ) : !pasteOpen && !isNone && (noBfoAccount ? (
+        // "None in BFO" ticked on the company's details: there is no BFO
+        // account to pull opportunities from.
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.8rem', padding: '0.5rem 0' }}>
+          <span style={{ padding: '0.2rem 0.6rem', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#334155', fontWeight: 600 }}>No BFO Account</span>
+          <span style={{ color: '#475569' }}>This company is marked &quot;None in BFO&quot;, so BFO has no opportunities to pull for it.</span>
+        </div>
+      ) : (
         <div style={{ fontSize: '0.8rem', color: '#94A3B8', padding: '1rem 0' }}>No BFO history pasted yet.</div>
-      )}
+      ))}
     </div>
   );
 }

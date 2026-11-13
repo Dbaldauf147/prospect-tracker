@@ -21,7 +21,7 @@ import { useDmsNoActivity, DMS_WINDOWS as WINDOWS, readDmsWindow as readWindow, 
 import { daysSince, accountStatusOf } from '../../utils/tieredAccountActivity';
 import { reportingTier } from '../../utils/tierSource.js';
 import { formatDateDisplay } from '../../utils/isoDate';
-import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
+import { bfoCompanyNamesOf, markedNoBfoName } from '../../utils/bfoCompanyNames';
 import { bfoHistoryIsNone, bfoHistoryReviewState } from '../../utils/bfoHistory';
 import { useBiggestDeals } from '../../hooks/useBiggestDeals';
 import { dealMid } from '../../utils/prospectingDeals.js';
@@ -282,17 +282,20 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       getSortValue: r => Date.parse(r.account?.bfoHistory?.pastedAt || '') || null,
       getFilterValue: r => {
         const at = r.account?.bfoHistory?.pastedAt;
-        if (!at) return 'Never';
+        if (!at) return markedNoBfoName(r.account) ? 'No BFO Account' : 'Never';
         return `${formatDateDisplay(toIso(Date.parse(at)))}${bfoHistoryIsNone(r.account.bfoHistory) ? ' (no BFO history)' : ''}`;
       },
       exportValue: r => {
         const at = r.account?.bfoHistory?.pastedAt;
-        if (!at) return '';
+        if (!at) return markedNoBfoName(r.account) ? 'No BFO Account' : '';
         return `${toIso(Date.parse(at))}${bfoHistoryIsNone(r.account.bfoHistory) ? ' (no BFO history)' : ''}`;
       },
       render: r => {
         const h = r.account?.bfoHistory;
         const state = bfoHistoryReviewState(h);
+        // "None in BFO" ticked on the company: there is no BFO account to
+        // pull a history from, so say that rather than "Never".
+        if (!h?.pastedAt && markedNoBfoName(r.account)) return <span style={fillPill(BFO_FILL.none)} title='Marked "None in BFO" on the company: it has no account in BFO'>No BFO Account</span>;
         if (!h?.pastedAt) return <span style={fillPill(BFO_FILL.none)} title="No BFO History pasted yet">Never</span>;
         const none = bfoHistoryIsNone(h);
         const n = (h.rows || []).length;
