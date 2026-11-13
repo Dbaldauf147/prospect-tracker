@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+import { complianceFlaggedFrameworks } from './complianceFrameworkFlags.js';
 import { userLsGet } from './userLs.js';
 import { containsWholeWords, withoutParenNotes } from './companyIndex.js';
 
@@ -146,5 +148,41 @@ export async function computeListFlags(names, opts = {}) {
       }
     }
   }
+  // Frameworks flagged on Sites > Corporate Compliance (CA SB when SB 253
+  // or SB 261 shows Applies? = Yes there). Opt-in through opts.compliance
+  // (useComplianceFlagSource) so
+  // callers that want only the Lists-page mappings (the pop-up's "Auto"
+  // provenance) leave it out. Which labels came this way is kept on
+  // flags.compliance so a surface can mark them.
+  flags.compliance = new Map();
+  if (opts.compliance) {
+    const { screening, shown } = opts.compliance;
+    if (screening || shown) {
+      for (const t of targets) {
+        const p = prospectsByKey.get(t.key);
+        const aliases = Array.isArray(p?.aliases) ? p.aliases : String(p?.aliases || '').split(/[,;\n]/);
+        const found = complianceFlaggedFrameworks([t.company, p?.goesBy, ...aliases].filter(Boolean), screening, shown);
+        for (const label of found) {
+          // Lists-page or hand-entered flags already cover it: no mark.
+          if (!flags.get(t.key)?.has(label)) {
+            if (!flags.compliance.has(t.key)) flags.compliance.set(t.key, new Set());
+            flags.compliance.get(t.key).add(label);
+          }
+          addFlag(t.key, label);
+        }
+      }
+    }
+  }
   return flags;
 }
+
+// The Corporate Compliance answers computeListFlags reads, as one object
+// that only changes when they do, so it can sit in an effect's deps.
+export function useComplianceFlagSource(settings) {
+  const screening = settings?.corporateComplianceScreening;
+  const shown = settings?.corporateComplianceShown;
+  return useMemo(() => ({ screening, shown }), [screening, shown]);
+}
+
+// The small "DAN" mark beside a flag that came from Corporate Compliance.
+export const COMPLIANCE_FLAG_MARK = { label: 'DAN', bg: '#FEF3C7', text: '#92400E', title: 'Flagged on Sites > Corporate Compliance (SB 253 or SB 261 Applies? = Yes), not from the Lists page' };

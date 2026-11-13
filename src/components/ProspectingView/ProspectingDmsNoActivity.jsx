@@ -19,7 +19,8 @@ import { useDmsNoActivity, DMS_WINDOWS as WINDOWS, readDmsWindow as readWindow, 
 import { daysSince, accountStatusOf } from '../../utils/tieredAccountActivity';
 import { ownTargetTierLabel } from '../../utils/tierSource.js';
 import { NOT_ON_TIER_LIST } from '../../data/enums.js';
-import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { computeListFlags, useComplianceFlagSource } from '../../utils/listFlags';
+import { FrameworkFlagPill } from '../common/FrameworkFlagPill';
 import { formatDateDisplay } from '../../utils/isoDate';
 import { bfoCompanyNamesOf, markedNoBfoName } from '../../utils/bfoCompanyNames';
 import { bfoHistoryIsNone, bfoHistoryReviewState } from '../../utils/bfoHistory';
@@ -131,6 +132,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
   // way My Accounts does (computeListFlags), and redone when a mapping
   // changes on the Lists page.
   const [listFlagsByCompany, setListFlagsByCompany] = useState(() => new Map());
+  const complianceFlagSource = useComplianceFlagSource(settings);
   const [flagVersion, setFlagVersion] = useState(0);
   useEffect(() => {
     const bump = () => setFlagVersion(v => v + 1);
@@ -144,11 +146,11 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
   useEffect(() => {
     let cancelled = false;
     const names = dealAccounts.map(a => a.company).filter(Boolean);
-    computeListFlags(names, { prospects: dealAccounts })
+    computeListFlags(names, { prospects: dealAccounts, compliance: complianceFlagSource })
       .then(flags => { if (!cancelled) setListFlagsByCompany(flags); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [dealAccounts, flagVersion]);
+  }, [dealAccounts, flagVersion, complianceFlagSource]);
   const deals = useBiggestDeals(dealAccounts, settings);
 
   const [dmTopics, setDmTopicsState] = useState(readTopics);
@@ -183,6 +185,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       name: nameOf(contact),
       tier: tierCellOf(account),
       frameworks: [...(listFlagsByCompany.get(companyKey(account?.company)) || [])],
+      frameworksDan: listFlagsByCompany.compliance?.get(companyKey(account?.company)) || null,
       status: accountStatusOf(account),
       campaigns: campaignsByEmail.get(normEmail(contact.email)) || [],
     };
@@ -305,10 +308,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       getFilterValue: r => r.frameworks.join(', '), exportValue: r => r.frameworks.join(', '),
       render: r => (!r.frameworks.length ? blank : (
         <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-          {r.frameworks.map(label => {
-            const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
-            return <span key={label} title={label} style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}>{label}</span>;
-          })}
+          {r.frameworks.map(label => <FrameworkFlagPill key={label} label={label} dan={!!r.frameworksDan?.has(label)} />)}
         </span>
       )),
     },

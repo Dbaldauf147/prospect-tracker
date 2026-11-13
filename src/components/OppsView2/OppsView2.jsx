@@ -138,7 +138,7 @@ import {
   CHECK_BACK_UNITS,
   isCheckBackEntry,
 } from '../../utils/scheduledOpps';
-import { computeListFlags } from '../../utils/listFlags';
+import { computeListFlags, useComplianceFlagSource } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { FRAMEWORKS, SERVICE_STATUSES } from '../../data/enums';
@@ -6009,6 +6009,7 @@ function NewOppModal({
   const cdm = String(matchedProspect?.cdm || '').trim();
   const tier = String(matchedProspect?.tier || '').trim();
   const [flaggedFrameworks, setFlaggedFrameworks] = useState([]);
+  const complianceFlagSource = useComplianceFlagSource(settings);
   // User edits to the framework flags, scoped to the company they were
   // made for so changing the Company resets to that company's computed
   // flags (and a background prospects refresh can't clobber the edit).
@@ -6018,7 +6019,7 @@ function NewOppModal({
     (async () => {
       if (!trimmedCompany) { if (!cancelled) setFlaggedFrameworks([]); return; }
       try {
-        const flags = await computeListFlags([trimmedCompany], { prospects });
+        const flags = await computeListFlags([trimmedCompany], { prospects, compliance: complianceFlagSource });
         if (cancelled) return;
         const set = flags.get(trimmedCompany.toLowerCase().trim()) || new Set();
         setFlaggedFrameworks([...set].sort((a, b) => a.localeCompare(b)));
@@ -6027,7 +6028,7 @@ function NewOppModal({
       }
     })();
     return () => { cancelled = true; };
-  }, [trimmedCompany, prospects]);
+  }, [trimmedCompany, prospects, complianceFlagSource]);
   const frameworks = (frameworkEdit && frameworkEdit.company === trimmedCompany)
     ? frameworkEdit.list
     : flaggedFrameworks;

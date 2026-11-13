@@ -11,7 +11,8 @@ import { reportingStatus, hasSubstatus, holdOffMissingSubstatus, SUBSTATUS_HOLD_
 import { STATUSES, TYPES, TIER_OPTIONS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { FrameworkFlagPill } from '../common/FrameworkFlagPill';
+import { computeListFlags, useComplianceFlagSource } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex, containsWholeWords } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { slimHubspotContact } from '../../utils/hubspotContactFields';
@@ -1134,6 +1135,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   // allAccounts is resolved; declared here so it's available while
   // building the row entries.
   const [listFlagsByCompany, setListFlagsByCompany] = useState(() => new Map());
+  const complianceFlagSource = useComplianceFlagSource(settings);
 
   // HubSpot contact cache (IndexedDB-backed). Declared here near the top so
   // useMemos lower in the function body can safely reference it without TDZ.
@@ -2913,11 +2915,11 @@ Fix that now?
     let cancelled = false;
     (async () => {
       const names = allAccounts.map(a => a.company).filter(Boolean);
-      const flags = await computeListFlags(names, { prospects: allAccounts });
+      const flags = await computeListFlags(names, { prospects: allAccounts, compliance: complianceFlagSource });
       if (!cancelled) setListFlagsByCompany(flags);
     })();
     return () => { cancelled = true; };
-  }, [allAccounts, flagVersion]);
+  }, [allAccounts, flagVersion, complianceFlagSource]);
 
   // Dynamic filter options — any visible column with ≤30 unique string values gets a filter
   const SKIP_FILTER_KEYS = new Set(['company', 'notes', 'dmNames', 'targetName', 'otherReps', 'sources', 'divisions', '_hide', 'id', 'createdAt', 'updatedAt', 'assetTypes', 'frameworks']);
@@ -3471,21 +3473,14 @@ Fix that now?
           const set = listFlagsByCompany.get((row.company || '').toLowerCase().trim());
           return set ? [...set].join(', ') : '';
         }, render: (row) => {
-          const set = listFlagsByCompany.get((row.company || '').toLowerCase().trim());
+          const rowKey = (row.company || '').toLowerCase().trim();
+          const set = listFlagsByCompany.get(rowKey);
           const flags = set ? [...set] : [];
           if (!flags.length) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
+          const dan = listFlagsByCompany.compliance?.get(rowKey);
           return (
             <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
-              {flags.map(label => {
-                const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
-                return (
-                  <span
-                    key={label}
-                    title={label}
-                    style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}
-                  >{label}</span>
-                );
-              })}
+              {flags.map(label => <FrameworkFlagPill key={label} label={label} dan={!!dan?.has(label)} />)}
             </span>
           );
         }};
