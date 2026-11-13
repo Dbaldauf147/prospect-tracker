@@ -50,8 +50,8 @@ export function useRelationshipData() {
   );
   // When the relationship started (utils/relationshipStrength contactDateAdded).
   const dateAddedFor = useCallback(
-    (contact, touches = touchesFor(contact)) => contactDateAdded(contact, { log, touches }),
-    [log, touchesFor],
+    (contact, touches = touchesFor(contact)) => contactDateAdded(contact, { log, touches, oppsRecords }),
+    [log, touchesFor, oppsRecords],
   );
   const scoreFor = useCallback((contact, nowMs = Date.now()) => {
     const touches = touchesFor(contact);

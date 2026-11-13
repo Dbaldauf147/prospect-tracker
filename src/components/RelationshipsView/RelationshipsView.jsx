@@ -391,8 +391,9 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
     <div style={{ padding: '0.75rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', overflow: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 300px', maxWidth: 820 }}>
-          Relationship Strength for every contact with activity on record: engagement (35%), reciprocity (25%),
-          consistency (15%) and opportunity history (10%). An account adds a breadth bonus (15%) for engaged
+          Relationship Strength for every contact with activity on record: engagement (30%), reciprocity (20%),
+          consistency (15%), opportunity history (10%) and relationship age (10%, full at 3 years, counted back to the
+          oldest opp they are on). An account adds a breadth bonus (15%) for engaged
           contacts and buying roles covered. Strong is 75+, Warm 50-74, Developing 25-49, Cold under 25.
           The arrow compares the last 30 days with the 60 before. Tick up to {MAX_LINES} contacts to draw them on the chart.
         </div>

@@ -41,7 +41,7 @@ function breakdownTitle(result, extra = '') {
   const c = result.components || {};
   const parts = [
     `Relationship Strength ${result.score} (${result.tier.label})`,
-    c.engagement != null ? `Engagement ${c.engagement} · Reciprocity ${c.reciprocity} · Consistency ${c.consistency} · Opportunities ${c.opportunity}` : '',
+    c.engagement != null ? `Engagement ${c.engagement} · Reciprocity ${c.reciprocity} · Consistency ${c.consistency} · Opportunities ${c.opportunity}${c.tenure != null ? ` · Age ${c.tenure}` : ''}` : '',
     extra,
     `Last two-way touch: ${daysLabel(result.daysSinceTwoWay)}`,
   ];

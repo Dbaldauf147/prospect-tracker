@@ -12,7 +12,7 @@ import {
   RELATIONSHIP_CONFIG as CFG, DAY_MS, normalizeTouch, touchPoints, isTwoWay, linkReplies,
   scoreContact, scoreAccount, tierFor, trendFor, hubspotCallOutcome, hubspotMeetingMedium,
   buildTouchIndex, touchesForContact, oppsForContact, encodeTouch, decodeTouch, scoreHistory,
-  buildMeetingTouchIndex, mergeTouchIndexes, calendarMeetingRecord, calendarLog, buildCalendarTouchIndex, contactDateAdded, ageLabel, logDayMs,
+  buildMeetingTouchIndex, mergeTouchIndexes, calendarMeetingRecord, calendarLog, buildCalendarTouchIndex, contactDateAdded, ageLabel, logDayMs, earliestOppMs,
 } from '../src/utils/relationshipStrength.js';
 import { mergeRelationshipLogs, parseRelationshipLog } from '../src/utils/relationshipLog.js';
 
@@ -312,6 +312,36 @@ check('steady is flat', trendFor([t(10, { type: 'call', outcome: 'connected' }),
   check('order does not matter', mergeRelationshipLogs(b, a).activities.x.note, 'new');
   check('junk parses empty', parseRelationshipLog('nope'), { activities: {}, overrides: {}, dateAdded: {} });
   check('date added merges, newer wins', mergeRelationshipLogs({ dateAdded: { 7: { date: '2025-01-01', updatedAt: '2026-01-01T00:00:00Z' } } }, { dateAdded: { 7: { date: '2024-06-01', updatedAt: '2026-03-01T00:00:00Z' } } }).dateAdded['7'].date, '2024-06-01');
+}
+
+// --- relationship age: old opps date it, and it counts in the score ---------
+{
+  const contact = { id: '9', firstname: 'Jenna', lastname: 'Hakken', company: 'Lineage', createdate: new Date(ago(300)).toISOString() };
+  const opps = [
+    { Contact: 'Jenna Hakken, Bob Smith', Account: 'Lineage', Stage: 'Sold', 'Start Date': new Date(ago(1500)).toISOString().slice(0, 10) },
+    { Contact: 'Jenna Hakken', Account: 'Lineage', Stage: 'Quoting', 'Start Date': new Date(ago(400)).toISOString().slice(0, 10) },
+    { Contact: 'Jenna Hakken', Account: 'Someone Else Inc', Stage: 'Sold', 'Start Date': new Date(ago(4000)).toISOString().slice(0, 10) },
+    { Contact: 'Jenna Hakken', Account: 'Lineage', Stage: 'Not Sold', 'Close Date': new Date(ago(2000)).toISOString().slice(0, 10) },
+  ];
+  near('the oldest opp at their company dates the relationship (Close Date when there is no Start)', (NOW - earliestOppMs(contact, opps)) / DAY_MS, 2000, 1);
+  check('no opps: no opp date', earliestOppMs(contact, []), null);
+  const added = contactDateAdded(contact, { touches: [{ ms: ago(100) }], oppsRecords: opps });
+  check('Date added goes back to the old opp', added.source, 'opp');
+  check('without opps it is HubSpot\'s date', contactDateAdded(contact, { touches: [{ ms: ago(100) }] }).source, 'hubspot');
+  const set = contactDateAdded({ ...contact }, { touches: [], oppsRecords: opps, log: { dateAdded: { 9: { date: '2025-01-01' } } } });
+  check('a Date added set by hand still wins', set.source, 'set');
+
+  const touches = [normalizeTouch({ id: 'a', ms: ago(10), type: 'meeting' })];
+  const young = scoreContact(touches, { nowMs: NOW, addedMs: ago(30) });
+  const old = scoreContact(touches, { nowMs: NOW, addedMs: ago(2000) });
+  const mid = scoreContact(touches, { nowMs: NOW, addedMs: ago(365) });
+  check('tenure is full at 3 years', old.components.tenure, 100);
+  near('and a third at 1 year', mid.components.tenure, 33, 1);
+  check('an older relationship scores higher, all else equal', old.score > young.score, true);
+  near('worth its weight: 10 of the 85 a contact is scored on (1 yr vs 3 yr, same consistency)', old.score - mid.score, 100 * 0.1 / 0.85 * (1 - 365 / 1095), 1);
+  check('unknown age scores no tenure', scoreContact(touches, { nowMs: NOW }).components.tenure, 0);
+  const w = CFG.weights;
+  near('weights still sum to 1', w.engagement + w.reciprocity + w.consistency + w.opportunity + w.tenure + w.breadth, 1, 1e-9);
 }
 
 console.log(`${failed ? 'FAIL' : 'PASS'} relationshipStrength: ${passed} passed, ${failed} failed`);
