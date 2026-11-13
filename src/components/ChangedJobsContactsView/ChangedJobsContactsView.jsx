@@ -219,12 +219,7 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
       pageTitle="Changed Jobs"
       showNewCompanyEmail
       showReachedOut
-      pageSubtitle={
-        <>
-          HubSpot contacts who have changed jobs: either tagged <code>Left</code> or with their Company set to <code>Changed Jobs</code>. Use this to find people you want to chase down at their new employer. Map their <strong>New Company</strong> and (if that company's email format is known), the <strong>Expected Email</strong> column predicts their new address. Use the <strong>Reached Out</strong> toggle to track who you've contacted. <strong>Hide</strong> next to it takes someone off this page only (tick <strong>Show hidden</strong> to bring them back); <strong>Hide</strong> at the far right of a row tags them Hide in HubSpot, which drops them from every contacts page. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up. <strong>Schneider Electric</strong> holds former coworkers (a Schneider company or address, tagged <code>Left</code>); <strong>Other contacts</strong> is everyone else, and is emailed to you on the 1st of each month. <strong>Snooze</strong> in the Reached Out column moves someone to <strong>Snoozed</strong> for the months you pick; when that runs out they come back by themselves.
-          {pills}
-        </>
-      }
+      pageSubtitle={pills}
       emptyTitle={showHidden ? 'Nobody hidden on this subtab' : snoozedTab ? 'Nobody is snoozed' : schneider ? 'No Schneider Electric contacts have changed jobs' : 'No Changed Jobs contacts found'}
       emptyDetail={showHidden
         ? <>Contacts you hide with <strong>Hide</strong> in the Reached Out column are listed here. Untick <strong>Show hidden</strong> to go back.</>
