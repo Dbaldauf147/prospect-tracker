@@ -53,4 +53,26 @@ assert.equal(cal.reduce((n, b) => n + b.n, 0), 400);
 const filled = cal.filter(b => b.n >= 20);
 for (let i = 1; i < filled.length; i++) assert.ok(filled[i].actual >= filled[i - 1].actual - 0.1, 'higher scores move on more');
 assert.equal(modelWeights(model).length, model.w.length);
+
+// Days in stage is learned per stage too: here long Leads stall, but long
+// Agreement Sent stints still close, so the two stages read opposite ways
+// (one shared days weight used to pull Agreement Sent down with the rest).
+seed = 11;
+const mixed = [];
+for (let i = 0; i < 300; i++) {
+  const lead = i % 2 === 0;
+  const days = Math.round(rnd() * 300);
+  const p = lead ? Math.max(0.05, 0.9 - days / 120) : Math.min(0.95, 0.4 + days / 400);
+  const moved = rnd() < p;
+  const exit = 30 + days;
+  mixed.push({
+    Stage: moved ? 'Sold' : 'Not Sold', 'Start Date': iso(0), 'Last Client Heard From Us': iso(exit - 5),
+    _stageHistory: [{ stage: lead ? 'Lead' : 'Agreement Sent', days, exitedAt: iso(exit) }],
+  });
+}
+const mprog = stageProgression(mixed);
+const mm = fitMoveOnModel(mprog.stints);
+const at = (stage, days) => moveOnChance(mm, { stage, days, silence: 5, age: 30 + days });
+assert.ok(at('Lead', 250) < at('Lead', 10), 'long Leads stall');
+assert.ok(at('Agreement Sent', 250) > at('Agreement Sent', 10), `long Agreement Sent still closes (${at('Agreement Sent', 250)} vs ${at('Agreement Sent', 10)})`);
 console.log('PASS closeLikelihood');

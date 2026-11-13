@@ -7,6 +7,10 @@
 //      stage, days in the stage, days since we heard from the contact
 //      (unknown is its own signal), and how old the opp was. The history
 //      decides how much each matters; nothing is weighted by hand.
+//      Days in stage gets a shared weight plus one per stage, because a
+//      long wait means different things in different stages: a stalled
+//      Lead rarely moves, but Agreement Sent often sits for months with
+//      legal and still closes. A single shared weight dragged those down.
 //   2. Times each later stage's historical moved-on rate, up to Sold.
 //
 // So an opp in Quoted at 42% to move on, where Contracting moves on 45% of
@@ -42,8 +46,24 @@ function featuresOf({ stage, days, silence, age }) {
   x.push(age == null ? 1 : 0);
   return x;
 }
-export const FEATURE_NAMES = [...PROGRESS_STAGES.map(s => `Stage: ${s}`), 'Days in stage (log)', 'Days since heard from (log)', 'Never heard from', 'Opp age (log)', 'No Start Date'];
+export const FEATURE_NAMES = [
+  ...PROGRESS_STAGES.map(s => `Stage: ${s}`), 'Days in stage (log)', 'Days since heard from (log)', 'Never heard from', 'Opp age (log)', 'No Start Date',
+  ...PROGRESS_STAGES.map(s => `Days in stage (log), ${s} only`),
+];
 const N_STAGE = PROGRESS_STAGES.length;
+const DAYS_COL = N_STAGE; // the shared days-in-stage column in featuresOf
+const N_BASE = N_STAGE + 5;
+
+// featuresOf, standardised with the fitted mean / sd, then the per-stage
+// days columns: the stage flag times the standardised days, so each stage
+// can bend the shared days weight its own way. They go after the
+// standardising so they are on the same scale as the shared column (and a
+// stage's own column is 0 for every other stage).
+function designRow(raw, mean, sd) {
+  const x = raw.map((v, j) => (j < N_STAGE ? v : (v - mean[j]) / sd[j]));
+  for (let j = 0; j < N_STAGE; j += 1) x.push(raw[j] * x[DAYS_COL]);
+  return x;
+}
 
 const sigmoid = (z) => 1 / (1 + Math.exp(-z));
 
@@ -62,18 +82,18 @@ export function fitMoveOnModel(stints, { iterations = 600, rate = 0.3, l2 = 0.01
   if (rows.length < MIN_TRAINING) return null;
   const pos = rows.reduce((n, r) => n + r.y, 0);
   if (pos === 0 || pos === rows.length) return null;
-  const k = rows[0].x.length;
   // Standardise the non-indicator columns (the stage flags stay 0/1).
-  const mean = new Array(k).fill(0);
-  const sd = new Array(k).fill(1);
-  for (let j = N_STAGE; j < k; j += 1) {
+  const mean = new Array(N_BASE).fill(0);
+  const sd = new Array(N_BASE).fill(1);
+  for (let j = N_STAGE; j < N_BASE; j += 1) {
     const col = rows.map(r => r.x[j]);
     const m = col.reduce((a, b) => a + b, 0) / col.length;
     const v = col.reduce((a, b) => a + (b - m) ** 2, 0) / col.length;
     mean[j] = m;
     sd[j] = Math.sqrt(v) || 1;
   }
-  const z = rows.map(r => ({ x: r.x.map((v, j) => (j < N_STAGE ? v : (v - mean[j]) / sd[j])), y: r.y }));
+  const z = rows.map(r => ({ x: designRow(r.x, mean, sd), y: r.y }));
+  const k = z[0].x.length;
   const w = new Array(k).fill(0);
   let b = Math.log(pos / (rows.length - pos));
   const n = z.length;
@@ -96,12 +116,9 @@ export function fitMoveOnModel(stints, { iterations = 600, rate = 0.3, l2 = 0.01
 /** The model's chance (0..1) of moving on from a state. */
 export function moveOnChance(model, state) {
   if (!model) return null;
-  const x = featuresOf(state);
+  const x = designRow(featuresOf(state), model.mean, model.sd);
   let s = model.b;
-  for (let j = 0; j < x.length; j += 1) {
-    const v = j < N_STAGE ? x[j] : (x[j] - model.mean[j]) / model.sd[j];
-    s += model.w[j] * v;
-  }
+  for (let j = 0; j < x.length; j += 1) s += model.w[j] * x[j];
   return sigmoid(s);
 }
 
