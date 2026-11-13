@@ -480,6 +480,13 @@ export function DataTable({
   // dragged column keeps its share. Off by default, since most tables here
   // are wider than any screen on purpose.
   fitWidth = false,
+  // Rows left off the table until a column filter is in use, then searched
+  // with the rest: Opps keeps its history (opps with no Call In) out of the
+  // way like this, so the page loads light, yet typing an account (or
+  // ticking a value) in any column's filter still finds its old opps. Their
+  // values are in every column's pick list too, so a historical value can
+  // be picked without knowing it's there.
+  searchOnlyRows,
   // Fires with the rows currently passing the in-table column filters,
   // so a parent can sync its own "select all visible" / "rows on
   // screen" UI against the same set the user sees.
@@ -872,11 +879,18 @@ export function DataTable({
   );
   // Rows passing every column filter except `skipKey`'s: what that
   // column's pick list offers, so it only shows values that are on screen.
-  const rowsPassing = useCallback((skipKey) => {
+  const allRows = useMemo(
+    () => (searchOnlyRows?.length ? [...rows, ...searchOnlyRows] : rows),
+    [rows, searchOnlyRows],
+  );
+  // `pool` is where the rows come from: the table's rows, or with the
+  // search-only ones as well (see searchOnlyRows), which take part only
+  // while some column filter is active.
+  const rowsPassing = useCallback((skipKey, pool = activeColFilters.length ? allRows : rows) => {
     const active = skipKey == null ? activeColFilters : activeColFilters.filter(([k]) => k !== skipKey);
-    if (active.length === 0) return rows;
-    return rows.filter(row => active.every(([key, raw]) => pickFilterMatches(filterValueOf(row, key), raw)));
-  }, [rows, activeColFilters, filterValueOf]);
+    if (active.length === 0) return pool;
+    return pool.filter(row => active.every(([key, raw]) => pickFilterMatches(filterValueOf(row, key), raw)));
+  }, [rows, allRows, activeColFilters, filterValueOf]);
   const filteredRows = useMemo(() => rowsPassing(null), [rowsPassing]);
 
   // Notify the consumer whenever the filtered-row set changes so it can
@@ -893,10 +907,10 @@ export function DataTable({
   const filterOptions = useMemo(() => {
     const cache = new Map();
     return (key) => {
-      if (!cache.has(key)) cache.set(key, pickListOptions(rowsPassing(key).map(row => filterValueOf(row, key))));
+      if (!cache.has(key)) cache.set(key, pickListOptions(rowsPassing(key, allRows).map(row => filterValueOf(row, key))));
       return cache.get(key);
     };
-  }, [rowsPassing, filterValueOf]);
+  }, [rowsPassing, allRows, filterValueOf]);
 
   const baseSortedRows = useMemo(() => {
     if (externalSortConfig || !internalSort.key) return filteredRows;
@@ -1333,7 +1347,7 @@ export function DataTable({
             the bug is upstream of the table; if it shows '42 rows'
             but the body is blank, the bug is in the body render. */}
         <span
-          title={`${sortedRows.length} of ${rows.length} rows rendered`}
+          title={`${sortedRows.length} of ${rows.length} rows rendered${searchOnlyRows?.length ? `, plus ${searchOnlyRows.length} more a column filter searches` : ''}`}
           style={{ marginLeft: 'auto', padding: '0.25rem 0.5rem', borderRadius: 4, background: sortedRows.length === 0 ? '#FEF3C7' : '#F1F5F9', color: sortedRows.length === 0 ? '#92400E' : '#475569', fontSize: '0.65rem', fontWeight: 600 }}
         >
           {sortedRows.length} row{sortedRows.length === 1 ? '' : 's'}
@@ -1367,7 +1381,7 @@ export function DataTable({
                       key={col.key}
                       style={{ width: getWidth(col), position: 'relative', ...stickyStyle(col) }}
                       onClick={() => handleSort(col.key)}
-                      className={col.sticky ? styles.stickyCol : undefined}
+                      className={col.sticky ? `${styles.headerCell} ${styles.stickyCol}` : styles.headerCell}
                       title={headerTitle}
                     >
                       {col.renderHeader

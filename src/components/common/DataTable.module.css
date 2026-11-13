@@ -180,6 +180,14 @@
   user-select: none;
 }
 
+/* A header label is clipped to its column, with an ellipsis, rather than
+   spilling into the next one (or past the table's right edge on the last
+   column). The full name is the header's hover tooltip. */
+.table th.headerCell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .table th:hover {
   color: var(--color-accent);
 }
