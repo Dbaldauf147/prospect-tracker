@@ -522,7 +522,7 @@ function RosterTable({
               <button
                 onClick={e => { e.stopPropagation(); onHideContact(c); }}
                 disabled={hiding}
-                title="Take the Hide tag off this contact (writes to HubSpot)"
+                title="Take the Hide tag off this contact"
                 style={{ background: 'none', border: 'none', color: '#059669', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', padding: '0 4px', lineHeight: 1, fontFamily: 'inherit' }}
               >{hiding ? '...' : 'Unhide'}</button>
             ) : (

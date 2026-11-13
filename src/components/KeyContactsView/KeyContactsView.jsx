@@ -1191,7 +1191,7 @@ function KeyContactsViewInner({
 
   async function handleMassHide() {
     if (massSelected.size === 0) return;
-    if (!window.confirm(`Hide ${massSelected.size} selected contact${massSelected.size === 1 ? '' : 's'}? This adds the "Hide" tag in HubSpot so they stop appearing here.`)) return;
+    if (!window.confirm(`Hide ${massSelected.size} selected contact${massSelected.size === 1 ? '' : 's'}? This adds the "Hide" tag so they stop appearing here.`)) return;
     setMassProcessing(true);
     setMassStatus(null);
     const { updated, errors, errorMessage } = await applyHideTag([...massSelected]);
@@ -4283,7 +4283,7 @@ function KeyContactsViewInner({
               type="button"
               onClick={handleMassHide}
               disabled={massProcessing || massSelected.size === 0}
-              title="Add the Hide tag in HubSpot so these contacts stop appearing on this page"
+              title="Add the Hide tag so these contacts stop appearing on this page"
               style={{
                 padding: '0.3rem 0.75rem',
                 fontSize: '0.72rem',

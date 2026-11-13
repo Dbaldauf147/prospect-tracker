@@ -14,7 +14,15 @@
 //     whole exercise exists to undo.
 //   * attempt "Met In Person", which is not in HubSpot's enumeration and is
 //     stripped from every write anyway — the call would just be refused.
-import { handlerForTests as handler } from '../api/hubspot.js';
+import { handlerForTests as handler, setTagDbForTests } from '../api/hubspot.js';
+import { loadContactTags, saveContactTags } from '../api/_lib/contactTagStore.js';
+import { fakeDb } from './_fakeTagDb.mjs';
+
+// Tags live in the app's store now (api/_lib/contactTagStore.js), so a
+// restore writes there and never to HubSpot. Each block gets a fresh store.
+let db = null;
+const freshStore = () => { db = fakeDb(); setTagDbForTests(db); return db; };
+const stored = () => loadContactTags(db, 'test-user');
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -38,6 +46,7 @@ function fakeRes() {
 // HubSpot stand-in: `held` is what each contact currently carries; ids absent
 // from it are contacts HubSpot has no record of. Records every write.
 function stubHubSpot(held) {
+  freshStore();
   const writes = [];
   globalThis.fetch = async (url, opts) => {
     const body = JSON.parse(opts.body);
@@ -84,9 +93,10 @@ const call = async (body) => {
     dryRun: false,
     restores: [{ id: '101', tags: ['Procurement'] }, { id: '102', tags: ['Dan Key Target'] }],
   });
-  eq(writes, [{ id: '101', tags: 'ESG;Procurement' }, { id: '102', tags: 'Real Estate;Dan Key Target' }],
-    'the lost tags are added to what each contact holds now');
-  eq(res.body.written, 2, 'and the count is what HubSpot took');
+  eq(await stored(), { 101: 'ESG;Procurement', 102: 'Real Estate;Dan Key Target' },
+    'the lost tags are added to what each contact holds now, in the app store');
+  eq(writes.length, 0, 'and nothing is written to HubSpot');
+  eq(res.body.written, 2, 'and the count is the contacts changed');
 }
 
 // --- the audit's reading is stale, and that is fine ------------------------
@@ -94,22 +104,31 @@ const call = async (body) => {
   // Put back by hand since the audit: nothing to do, and certainly not twice.
   const writes = stubHubSpot({ 101: 'ESG;Procurement' });
   const res = await call({ dryRun: false, restores: [{ id: '101', tags: ['Procurement'] }] });
-  eq(writes.length, 0, 'a tag already back is not written again');
+  eq([writes.length, await stored()], [0, {}], 'a tag already back is not written again');
   eq(res.body.plans[0].action, 'unchanged', 'it is reported as needing nothing');
 }
 {
   // Tagged with something else since the audit: the restore must not cost it.
   const writes = stubHubSpot({ 101: 'ESG;Climate Risk' });
   await call({ dryRun: false, restores: [{ id: '101', tags: ['Procurement'] }] });
-  eq(writes, [{ id: '101', tags: 'ESG;Climate Risk;Procurement' }],
+  eq([writes.length, await stored()], [0, { 101: 'ESG;Climate Risk;Procurement' }],
     'a tag added since the audit survives the restore');
+}
+{
+  // The app's own copy is what "now" means once it has one: HubSpot's stale
+  // value for the same contact is ignored.
+  const writes = stubHubSpot({ 101: 'ESG' });
+  await saveContactTags(db, 'test-user', [{ id: '101', tags: 'ESG;Utilities' }], { source: 'seed' });
+  await call({ dryRun: false, restores: [{ id: '101', tags: ['Procurement'] }] });
+  eq([writes.length, await stored()], [0, { 101: 'ESG;Utilities;Procurement' }],
+    'the restore builds on the stored tags, not HubSpot');
 }
 
 // --- a contact HubSpot cannot answer for ----------------------------------
 {
   const writes = stubHubSpot({ 101: 'ESG' });   // 999 is not in HubSpot
   const res = await call({ dryRun: false, restores: [{ id: '999', tags: ['Procurement'] }] });
-  eq(writes.length, 0, 'a contact whose tags cannot be read is never written');
+  eq([writes.length, await stored()], [0, {}], 'a contact whose tags cannot be read is never written');
   eq([res.body.plans[0].action, res.body.skipped], ['skip', 1], 'it is skipped, and said out loud');
 }
 
@@ -118,11 +137,11 @@ const call = async (body) => {
   const writes = stubHubSpot({ 101: 'ESG' });
   const res = await call({ dryRun: false, restores: [{ id: '101', tags: ['Met In Person'] }] });
   eq(res.statusCode, 400, 'a restore of nothing but Met In Person has nothing to do');
-  eq(writes.length, 0, 'and is not attempted, since HubSpot would refuse the value');
+  eq(writes.length, 0, 'and is not attempted');
 
-  const writes2 = stubHubSpot({ 101: 'ESG' });
+  stubHubSpot({ 101: 'ESG' });
   await call({ dryRun: false, restores: [{ id: '101', tags: ['Met In Person', 'Procurement'] }] });
-  eq(writes2, [{ id: '101', tags: 'ESG;Procurement' }],
+  eq(await stored(), { 101: 'ESG;Procurement' },
     'alongside a real tag, it is dropped and the rest goes through');
 }
 
@@ -136,6 +155,7 @@ const call = async (body) => {
 {
   // The read failing means nothing is known, so nothing is written — the
   // opposite of the bug this restore exists to undo.
+  freshStore();
   globalThis.fetch = async () => ({
     ok: false, status: 429, headers: { get: () => null },
     json: async () => ({ message: 'rate limited' }),

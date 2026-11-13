@@ -5095,7 +5095,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>{title}</div>
                   <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
-                    {existing.length} already in HubSpot{updateRows.length ? ` (${updateRows.length} updated by this batch)` : ''}, {batchRows.length} new in this batch. Batch rows for people already in HubSpot only update them, so they are listed with the HubSpot contacts. Tick contacts in either list to add or remove tags. Tags on contacts already in HubSpot are saved straight to HubSpot; tags on batch rows go with the row when it is added. Removing batch rows takes them out of the grid only. Contacts already in HubSpot can be removed from this company (they stay in HubSpot) or deleted from HubSpot.
+                    {existing.length} already in HubSpot{updateRows.length ? ` (${updateRows.length} updated by this batch)` : ''}, {batchRows.length} new in this batch. Batch rows for people already in HubSpot only update them, so they are listed with the HubSpot contacts. Tick contacts in either list to add or remove tags. Tags on contacts already in HubSpot are saved right away (in the app, not in HubSpot); tags on batch rows go with the row when it is added. Removing batch rows takes them out of the grid only. Contacts already in HubSpot can be removed from this company (they stay in HubSpot) or deleted from HubSpot.
                   </div>
                 </div>
                 {card && onSelectProspect && (

@@ -12,7 +12,11 @@
 //     owner's records, delete and merge are refused without a request, and
 //     an edit to someone else's contact is refused without a write.
 import { hubspotScope, clearHubspotScopeCache, HubSpotScopeError } from '../api/_lib/hubspotScope.js';
-import { handlerForTests as handler } from '../api/hubspot.js';
+import { handlerForTests as realHandler, setTagDbForTests } from '../api/hubspot.js';
+import { fakeDb } from './_fakeTagDb.mjs';
+// Tags are read from the app's store first (api/_lib/contactTagStore.js);
+// each call gets an empty one, so these tests see HubSpot's values as before.
+const handler = (req, res) => { setTagDbForTests(fakeDb()); return realHandler(req, res); };
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -234,6 +238,32 @@ function setEnv(vars) {
   const res = fakeRes();
   await handler({ query: { action: 'delete-contact' }, method: 'POST', body: { contactId: '5' } }, res);
   eq([res.statusCode, calls.map(c => c.method)], [200, ['DELETE']], 'no settings: delete behaves as it always has, with no extra request');
+}
+
+// ── Tags stay in the app: never sent to HubSpot ──────────────────────────
+{
+  setEnv({ HUBSPOT_PORTAL_ID: '9001', HUBSPOT_OWNER_EMAIL: 'daniel.baldauf@se.com' });
+  const db = fakeDb();
+  setTagDbForTests(db);
+  const { loadContactTags } = await import('../api/_lib/contactTagStore.js');
+  let calls = stubPortal({ contactOwners: { 5: '77' } });
+  let res = fakeRes();
+  await realHandler({ query: { action: 'update-contact' }, method: 'POST', body: { contactId: '5', properties: { dans_tags: 'ESG;Procurement' } } }, res);
+  eq([res.statusCode, res.body.contact, calls.filter(c => c.method === 'PATCH').length],
+    [200, { id: '5', dans_tags: 'ESG;Procurement' }, 0], 'a tag-only edit is saved without calling HubSpot');
+  eq(await loadContactTags(db, 'test-user'), { 5: 'ESG;Procurement' }, 'and lands in the app store');
+
+  calls = stubPortal({ contactOwners: { 5: '77' } });
+  res = fakeRes();
+  await realHandler({ query: { action: 'update-contact' }, method: 'POST', body: { contactId: '5', properties: { jobtitle: 'CEO', dans_tags: 'ESG' } } }, res);
+  const patch = calls.find(c => c.method === 'PATCH');
+  eq([patch.body.properties, res.body.contact.dans_tags], [{ jobtitle: 'CEO' }, 'ESG'], 'with other fields, HubSpot gets them and not the tags');
+
+  calls = stubPortal({ contactOwners: { 5: '77' } });
+  res = fakeRes();
+  await realHandler({ query: { action: 'contacts' }, method: 'GET' }, res);
+  eq(res.body.contacts.find(c => c.id === '5').dans_tags, 'ESG', 'the contact sync shows the stored tags');
+  setTagDbForTests(null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

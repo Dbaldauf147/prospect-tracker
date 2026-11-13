@@ -10,7 +10,11 @@
 //     and going over is a 400 that returns nothing, not a truncated answer.
 //   * versions come back newest-first, because the audit walks them in that
 //     order to find the write that took the tags.
-import { handlerForTests as handler, TAG_HISTORY_BATCH, fetchRetryingRateLimit } from '../api/hubspot.js';
+import { handlerForTests as realHandler, setTagDbForTests, TAG_HISTORY_BATCH, fetchRetryingRateLimit } from '../api/hubspot.js';
+import { fakeDb } from './_fakeTagDb.mjs';
+// Tags are read from the app's store first (api/_lib/contactTagStore.js);
+// each call gets an empty one, so these tests see HubSpot's values as before.
+const handler = (req, res) => { setTagDbForTests(fakeDb()); return realHandler(req, res); };
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
