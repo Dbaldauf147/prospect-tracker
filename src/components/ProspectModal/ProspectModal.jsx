@@ -3799,7 +3799,7 @@ const FRAMEWORK_SOURCE_BADGES = {
   auto:   { label: 'Auto',   bg: '#E0E7FF', text: '#3730A3', title: 'Mapped automatically from a confirmed Lists-page mapping' },
   manual: { label: 'Manual', bg: '#F1F5F9', text: '#475569', title: 'Manually added in this company popup' },
   claude: { label: 'Claude', bg: '#DCFCE7', text: '#15803D', title: 'Added from Claude sustainability research' },
-  dan:    { label: 'Dan',    bg: '#FEF3C7', text: '#92400E', title: 'Flagged by Dan on Sites > Corporate Compliance (SB 253 or SB 261 answered Applies? = Yes), not from the Lists page' },
+  dan:    { label: 'Dan',    bg: '#FEF3C7', text: '#92400E', title: 'From Sites > Corporate Compliance: SB 253 or SB 261 shows Applies? = Yes there (picked or worked out from research), not from the Lists page' },
 };
 
 // `sourceOf(value)` is optional — when supplied (the Frameworks field), each
@@ -8768,8 +8768,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // with a Dan badge; managed on that card, not in this popup.
   const complianceFrameworkFlags = useMemo(() => {
     const aliases = Array.isArray(fields.aliases) ? fields.aliases : String(fields.aliases || '').split(/[,;\n]/);
-    return complianceFlaggedFrameworks([fields.company, fields.goesBy, ...aliases], settings?.corporateComplianceScreening);
-  }, [fields.company, fields.goesBy, fields.aliases, settings?.corporateComplianceScreening]);
+    return complianceFlaggedFrameworks([fields.company, fields.goesBy, ...aliases], settings?.corporateComplianceScreening, settings?.corporateComplianceShown);
+  }, [fields.company, fields.goesBy, fields.aliases, settings?.corporateComplianceScreening, settings?.corporateComplianceShown]);
   const effectiveFrameworks = useMemo(() => {
     const out = new Set(fields.frameworks || []);
     for (const f of companyFrameworkFlags) out.add(f);

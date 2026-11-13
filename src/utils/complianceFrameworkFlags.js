@@ -4,9 +4,10 @@
 // card is one California's climate disclosure laws catch, whether or not
 // it turns up on the CA SB list on the Lists page.
 //
-// Only a saved answer counts, not the card's auto-derived verdict: the
-// point is "Dan flagged it", and a dashed derived Yes is the page's guess.
-// Answers live under settings.corporateComplianceScreening, keyed by the
+// What counts is what the card shows: a saved answer
+// (settings.corporateComplianceScreening) or, failing that, the dashed Yes
+// the card derived from revenue and California sites, which the card
+// publishes to settings.corporateComplianceShown. Both are keyed by the
 // company's screening key, so any of the company's names (its own, the
 // name it goes by, its aliases) can carry the answer.
 import { companyScreeningKey } from '../data/corporateComplianceScreening.js';
@@ -15,15 +16,18 @@ export const COMPLIANCE_FRAMEWORK_RULES = [
   { label: 'CA SB', answerKeys: ['california__sb-253', 'california__sb-261'] },
 ];
 
-export function complianceFlaggedFrameworks(names, screening) {
+export function complianceFlaggedFrameworks(names, screening, shown) {
   const out = new Set();
-  if (!screening || typeof screening !== 'object') return out;
+  const saved = screening && typeof screening === 'object' ? screening : {};
+  const derived = shown && typeof shown === 'object' ? shown : {};
   const keys = new Set((names || []).map(n => companyScreeningKey(n)).filter(Boolean));
   for (const key of keys) {
-    const answers = screening[key];
-    if (!answers || typeof answers !== 'object') continue;
+    const answers = saved[key] && typeof saved[key] === 'object' ? saved[key] : {};
+    const fallback = derived[key] && typeof derived[key] === 'object' ? derived[key] : {};
     for (const rule of COMPLIANCE_FRAMEWORK_RULES) {
-      if (rule.answerKeys.some(k => answers[k] === 'Yes')) out.add(rule.label);
+      // A saved answer overrides the derived one, so a hand-picked No
+      // beats a derived Yes.
+      if (rule.answerKeys.some(k => (answers[k] || fallback[k]) === 'Yes')) out.add(rule.label);
     }
   }
   return out;
