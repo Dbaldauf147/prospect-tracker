@@ -95,7 +95,7 @@ export function serviceBucketContext(settings) {
 }
 
 export function companyClosedBuckets(record, ctx, buckets) {
-  if (!ctx) return new Set();
+  if (!ctx) return new Set((buckets || []).filter(b => record?.dmSearchSteps?.[b.key]?.na).map(b => b.key));
   const svc = record?.servicesExplored || {};
   const manual = (n) => { const v = String(svc[n] ?? '').trim(); return v && v !== '-' ? v : ''; };
   const sold = ctx.names.filter(n => isSoldStatus(manual(n)));
@@ -103,5 +103,11 @@ export function companyClosedBuckets(record, ctx, buckets) {
     ? collectAutoNa(sold, ctx.overrides, { names: ctx.names, canonical: n => ctx.byLower.get(String(n || '').trim().toLowerCase()) || n })
     : new Map();
   const statusOf = (n) => manual(n) || (autoNa.get(n) ? 'N/A' : '');
-  return closedBucketKeys({ buckets, serviceNames: ctx.names, overrides: ctx.overrides, statusOf });
+  const closed = closedBucketKeys({ buckets, serviceNames: ctx.names, overrides: ctx.overrides, statusOf });
+  // A category marked N/A by hand on the company card's By Category heading
+  // (dmSearchSteps[bucket].na) is closed out too.
+  for (const bucket of buckets || []) {
+    if (record?.dmSearchSteps?.[bucket.key]?.na) closed.add(bucket.key);
+  }
+  return closed;
 }
