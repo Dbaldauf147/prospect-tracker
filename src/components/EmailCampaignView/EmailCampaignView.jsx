@@ -1,6 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { useBadEmails } from '../../hooks/useBadEmails';
 import { badEmailInfo, badEmailTitle } from '../../utils/badEmails';
+import { scanForBounces, bounceScanDue, CAMPAIGN_SCAN_EVERY_MS } from '../../utils/bounceScan';
+import { hasOutlookConnection } from '../../utils/hubspotExportMailSync';
 import { createPortal } from 'react-dom';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
@@ -139,6 +141,8 @@ const STATUS_TONE = {
   Replied: { background: '#DCFCE7', color: '#166534' },
   Bounced: { background: '#FEE2E2', color: '#991B1B' },
   'Out of Office': { background: '#FEF3C7', color: '#92400E' },
+  // An address a delivery-failure notice in Outlook named (utils/badEmails).
+  'Bad Email': { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
   'No Reply': { background: '#F3F4F6', color: '#6B7280' },
   'Not Sent': { background: '#FEF3C7', color: '#92400E' },
 };
@@ -293,6 +297,17 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   const [results, setResults] = useState(null);
   // The bad-email flags from the bounce scan (utils/badEmails.js).
   const { map: badEmailMap } = useBadEmails();
+  // This page runs the Outlook bounce scan itself, on opening and on each
+  // refresh (no more than every ten minutes), rather than waiting on the
+  // background watcher's two-hourly round: the campaign is where a bounce
+  // matters, and a delivery-failure notice never carries the campaign's
+  // subject, so HubSpot's matching never brings it in.
+  const scanBouncesSoon = useCallback(async () => {
+    if (!updateSettings || !bounceScanDue(Date.now(), CAMPAIGN_SCAN_EVERY_MS)) return;
+    if (!(await hasOutlookConnection())) return;
+    await scanForBounces(updateSettings);
+  }, [updateSettings]);
+  useEffect(() => { scanBouncesSoon(); }, [scanBouncesSoon]);
   const [savedCampaigns, setSavedCampaigns] = useState([]);
   const [campaignsLoaded, setCampaignsLoaded] = useState(false);
   const [viewingSaved, setViewingSaved] = useState(null); // index of saved campaign being viewed
@@ -589,6 +604,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   async function refreshAllCampaigns() {
     if (refreshingAll || savedCampaigns.length === 0) return;
     setRefreshingAll(true);
+    scanBouncesSoon();
     setError('');
     const current = savedCampaigns;
     const outcomes = [];
@@ -617,6 +633,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
 
   async function handleSearch() {
     if (!subject.trim()) return;
+    scanBouncesSoon();
     setLoading(true);
     setError('');
     setResults(null);
@@ -1680,6 +1697,11 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     () => outreachCounts(displayResults?.contacts),
     [displayResults?.contacts],
   );
+  // Rows whose address the Outlook bounce scan flagged (utils/badEmails).
+  const badEmailCount = useMemo(
+    () => (displayResults?.contacts || []).filter(c => String(c?.email || '').split(';').some(a => badEmailInfo(badEmailMap, a.trim()))).length,
+    [displayResults?.contacts, badEmailMap],
+  );
 
   // What the percentages are measured over: the same roster with the held
   // contacts taken out of both sides. Live, like holdStats, so a hold that
@@ -1799,7 +1821,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
       case 'sentDate': return c?.sentDate ? fmtDate(c.sentDate) : '';
       case 'followUp': return followUpLabel(c);
       case 'delivery': return DELIVERY_LABEL[deliveryFor(c)] || '';
-      case 'status': return contactStatusLabel(c);
+      case 'status': return statusLabelOf(c);
       case 'outreach': return OUTREACH_FILTER_LABEL[contactOutreach(c)] || '';
       case 'tracking': {
         const t = lookupTracking(c?.email);
@@ -2054,6 +2076,12 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   function withBadEmail(c) {
     return c && !c.bounced && badEmailOf(c) ? { ...c, bounced: true } : c;
   }
+  // Status as this table reads it: "Bad Email" for an address the Outlook
+  // scan found a bounce for (and no reply since), else the campaign's own.
+  function statusLabelOf(c) {
+    if (c && !c.replied && !c.bounced && badEmailOf(c)) return 'Bad Email';
+    return contactStatusLabel(c);
+  }
 
   function renderContactCell(key, c, i, isDup) {
     switch (key) {
@@ -2157,9 +2185,12 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
         // The ladder itself lives in campaignExport, because the CSV prints
         // the same words and the two must not drift; the badge here only
         // decides how each of them looks.
-        const label = contactStatusLabel(withBadEmail(c));
+        const label = statusLabelOf(c);
         const bad = badEmailOf(c);
         const STATUS_TITLE = {
+          'Bad Email': bad
+            ? `${badEmailTitle(bad.info)} - a delivery-failure notice for ${bad.address} is in your Outlook inbox. Fix the address on the contact popup (or Mark fixed there) before the next send.`
+            : '',
           Bounced: bad && !c.bounced
             ? `${badEmailTitle(bad.info)} - a delivery-failure notice for ${bad.address} is in your Outlook inbox. Fix or remove it before the next send.`
             : 'The mail server rejected this address - nobody saw the email. Fix or remove it before the next send.',
@@ -2573,6 +2604,15 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                     >{pulledIn}</strong> pulled in
                   </>
                 )}
+                {badEmailCount > 0 && (
+                  <>
+                    <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                    <strong
+                      style={{ color: '#B91C1C' }}
+                      title="Addresses on this campaign that a delivery-failure notice in your Outlook inbox named. Their Status reads Bad Email."
+                    >{badEmailCount}</strong> bad email{badEmailCount === 1 ? '' : 's'}
+                  </>
+                )}
                 {holdStats.onHold > 0 && (
                   <>
                     <span style={{ color: 'var(--color-text-muted)' }}> · </span>
@@ -2755,6 +2795,13 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                   })()}
                   style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 600, background: '#F1F5F9', color: '#475569' }}
                 >{displayResults.autoRepliesSuppressed} auto-reply{displayResults.autoRepliesSuppressed === 1 ? '' : 's'} suppressed</span>
+              )}
+              {badEmailCount > 0 && (
+                <span
+                  data-bad-email-count
+                  title="Addresses on this campaign that a delivery-failure notice in your Outlook inbox named (checked when this page opens and on refresh). Their Status reads Bad Email; fix the address on the contact popup."
+                  style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#B91C1C' }}
+                >{badEmailCount} bad email{badEmailCount === 1 ? '' : 's'}</span>
               )}
               {/* The event this campaign invites people to. Its own line under
                   the subjects: the roster's Event Status column is an RSVP to

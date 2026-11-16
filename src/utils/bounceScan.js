@@ -11,10 +11,14 @@ const LAST_KEY = 'bounceScanLastAt';
 const EVERY_MS = 2 * 60 * 60 * 1000;
 const EXPIRY_SKEW_MS = 2 * 60 * 1000;
 
-export function bounceScanDue(now = Date.now()) {
+export function bounceScanDue(now = Date.now(), everyMs = EVERY_MS) {
   const last = Number(userLsGet(LAST_KEY));
-  return !Number.isFinite(last) || last <= 0 || now - last >= EVERY_MS;
+  return !Number.isFinite(last) || last <= 0 || now - last >= everyMs;
 }
+
+// The Email Campaigns page asks sooner than the background watcher: on
+// opening and on every refresh, as long as the last scan is ten minutes old.
+export const CAMPAIGN_SCAN_EVERY_MS = 10 * 60 * 1000;
 
 /** One scan. Resolves to { ok, found, error }; never throws. */
 export async function scanForBounces(updateSettings) {
