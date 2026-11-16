@@ -53,6 +53,7 @@ import { addTargetCompany, removeTargetCompany, targetCompanyStatus, campaignTar
 import { buildCampaignTierLookup, tierRank } from '../../utils/campaignTier';
 import { buildScheduledCampaign, cannotCreateReason } from '../../utils/campaignSchedules';
 import { CampaignSchedulesPanel } from './CampaignSchedulesPanel';
+import { CampaignPauseButton } from './CampaignPauseButton';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { CampaignLinkedDrafts } from './CampaignLinkedDrafts';
 import { subscribeDraftHistory } from '../../utils/emailDraftHistoryStore';
@@ -1342,17 +1343,18 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, category: next } : x)));
   }
 
-  // Park a campaign for CAMPAIGN_PAUSE_DAYS days. Stored as the moment the
+  // Park a campaign for `days` days (the picker's X days or X weeks,
+  // CAMPAIGN_PAUSE_DAYS when none is given). Stored as the moment the
   // pause lifts rather than a flag, so it un-pauses itself — there's nothing
   // to remember to switch back on, and a campaign can't sit paused for a
   // month because nobody came back to it. The Active/Inactive setting
   // underneath is untouched and is what the campaign returns to.
-  function pauseCampaign(index, e) {
+  function pauseCampaign(index, e, days = CAMPAIGN_PAUSE_DAYS) {
     if (e) e.stopPropagation();
     const c = savedCampaigns[index];
     if (!c) return;
     saveCampaigns(savedCampaigns.map((x, i) => (
-      i === index ? { ...x, pausedUntil: campaignPauseUntil() } : x
+      i === index ? { ...x, pausedUntil: campaignPauseUntil(Date.now(), days) } : x
     )));
   }
 
@@ -3452,17 +3454,10 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                             click on. So this button only exists while the
                             campaign is running. */}
                         {!paused && (
-                          <button
-                            onClick={e => pauseCampaign(i, e)}
-                            title={`Pause this campaign for ${CAMPAIGN_PAUSE_DAYS} days - it goes back to ${active ? 'Active' : 'Inactive'} on its own`}
-                            aria-label={`Pause for ${CAMPAIGN_PAUSE_DAYS} days`}
-                            style={{
-                              padding: '2px 6px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700,
-                              fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.5,
-                              border: '1px solid var(--color-border)', background: 'var(--color-surface)',
-                              color: 'var(--color-text-secondary)',
-                            }}
-                          >Pause {CAMPAIGN_PAUSE_DAYS}d</button>
+                          <CampaignPauseButton
+                            onPause={days => pauseCampaign(i, null, days)}
+                            returnsTo={active ? 'Active' : 'Inactive'}
+                          />
                         )}
                       </div>
                       {paused && (

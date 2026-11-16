@@ -27,18 +27,35 @@ export function isCampaignFresh(c, nowMs = Date.now()) {
   return (nowMs - Math.max(...times)) <= ACTIVE_WINDOW_MS;
 }
 
-// How long "Pause" parks a campaign for. Two days: long enough to cover a
-// wait on someone else — a list to be checked, a colleague to come back —
-// without being long enough to forget the campaign exists.
+// How long "Pause" parks a campaign for unless the user picks another
+// length. Two days: long enough to cover a wait on someone else, a list to
+// be checked, a colleague to come back, without being long enough to forget
+// the campaign exists.
 export const CAMPAIGN_PAUSE_DAYS = 2;
-const PAUSE_MS = CAMPAIGN_PAUSE_DAYS * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// The longest pause the picker allows. A pause is meant to lift on its own;
+// past a year it is really "inactive", which the status pill already is.
+export const CAMPAIGN_PAUSE_MAX_DAYS = 365;
 
 /**
- * When a pause started now should lift, as an ISO string to store on the
- * campaign's `pausedUntil`.
+ * A pause length the user typed, in days: `amount` of `unit` ('days' or
+ * 'weeks'), rounded to whole days. Null when it isn't a usable length (not
+ * a number, under one day, over CAMPAIGN_PAUSE_MAX_DAYS).
  */
-export function campaignPauseUntil(nowMs = Date.now()) {
-  return new Date(nowMs + PAUSE_MS).toISOString();
+export function campaignPauseDays(amount, unit = 'days') {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const days = Math.round(n * (unit === 'weeks' ? 7 : 1));
+  if (days < 1 || days > CAMPAIGN_PAUSE_MAX_DAYS) return null;
+  return days;
+}
+
+/**
+ * When a pause of `days` days started now should lift, as an ISO string to
+ * store on the campaign's `pausedUntil`.
+ */
+export function campaignPauseUntil(nowMs = Date.now(), days = CAMPAIGN_PAUSE_DAYS) {
+  return new Date(nowMs + days * DAY_MS).toISOString();
 }
 
 /**
