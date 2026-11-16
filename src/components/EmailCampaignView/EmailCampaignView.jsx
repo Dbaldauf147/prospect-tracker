@@ -59,6 +59,8 @@ import { CampaignSchedulesPanel } from './CampaignSchedulesPanel';
 import { CampaignPauseButton } from './CampaignPauseButton';
 import { CampaignAudienceTicks } from './CampaignAudienceTicks';
 import { BounceForwardNote } from './BounceForwardNote';
+import { FailedEmailsPanel } from './FailedEmailsPanel';
+import { failedCampaignEmailRows, failedEmailCount } from '../../utils/failedCampaignEmails';
 import { withAudience } from '../../utils/campaignAudience';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { CampaignLinkedDrafts } from './CampaignLinkedDrafts';
@@ -160,6 +162,7 @@ const MIN_COL_WIDTH = 60;
 // table rather than to the numbers they've already read. Never hides the
 // roster: the point of folding the cards away is to reach it sooner.
 const DETAILS_COLLAPSED_LS = 'email-campaign:details-collapsed';
+const SUBTAB_LS = 'email-campaign:subtab';
 
 const COLS_LS = {
   hidden: 'email-campaign:contact-cols-hidden',
@@ -308,6 +311,10 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   }, [updateSettings]);
   useEffect(() => { scanBouncesSoon(); }, [scanBouncesSoon]);
   const [savedCampaigns, setSavedCampaigns] = useState([]);
+  // Sub-tab: the campaigns themselves, or Failed Emails (every campaign
+  // contact whose email bounced, FailedEmailsPanel). Remembered per user.
+  const [subTab, setSubTabState] = useState(() => (userLsGet(SUBTAB_LS) === 'failed' ? 'failed' : 'campaigns'));
+  const setSubTab = (t) => { setSubTabState(t); try { userLsSet(SUBTAB_LS, t); } catch { /* a convenience */ } };
   const [campaignsLoaded, setCampaignsLoaded] = useState(false);
   const [viewingSaved, setViewingSaved] = useState(null); // index of saved campaign being viewed
   const [saving, setSaving] = useState(false);
@@ -1696,6 +1703,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     () => outreachCounts(displayResults?.contacts),
     [displayResults?.contacts],
   );
+  // The Failed Emails sub-tab: every failed send across the saved campaigns.
+  const failedRows = useMemo(() => failedCampaignEmailRows(savedCampaigns, badEmailMap), [savedCampaigns, badEmailMap]);
+  const failedBadge = useMemo(() => failedEmailCount(failedRows), [failedRows]);
   // Rows whose address a forwarded bounce notice flagged (utils/badEmails).
   const badEmailCount = useMemo(
     () => (displayResults?.contacts || []).filter(c => String(c?.email || '').split(';').some(a => badEmailInfo(badEmailMap, a.trim()))).length,
@@ -2306,8 +2316,44 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     // the search box and the subject line from stretching across an
     // ultrawide monitor, so it stays, just wide enough for the table.
     <div style={{ padding: '1.5rem', maxWidth: '1600px' }}>
-      <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)', marginTop: 0, marginBottom: '1rem' }}>Email Campaign Tracker</h2>
+      <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)', marginTop: 0, marginBottom: '0.6rem' }}>Email Campaign Tracker</h2>
 
+      {/* Sub-tabs: the campaigns, or the sends that failed across all of them. */}
+      <div data-campaign-subtabs style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--color-border)', marginBottom: '1rem' }}>
+        {[['campaigns', 'Campaigns'], ['failed', 'Failed Emails']].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            data-subtab={key}
+            onClick={() => setSubTab(key)}
+            style={{
+              background: 'none', border: 'none', padding: '0.4rem 0.8rem', fontFamily: 'inherit', fontSize: '0.8rem',
+              fontWeight: subTab === key ? 700 : 500,
+              color: subTab === key ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+              borderBottom: subTab === key ? '2px solid var(--color-accent)' : '2px solid transparent',
+              cursor: 'pointer', marginBottom: -1, display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            {label}
+            {key === 'failed' && failedBadge > 0 && (
+              <span style={{ padding: '0 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C' }} title={`${failedBadge} address${failedBadge === 1 ? '' : 'es'} on your campaigns still flagged as a bad email`}>{failedBadge}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {subTab === 'failed' && (
+        <FailedEmailsPanel
+          rows={failedRows}
+          companyFor={companyFor}
+          onOpenContact={openContactByEmail}
+          onOpenCampaign={(i) => { setSubTab('campaigns'); viewCampaign(i); }}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      )}
+
+      {subTab === 'campaigns' && (<>
       {/* Search */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
         <input
@@ -3627,6 +3673,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
           onSeedUsed={clearScheduleSeed}
         />
       )}
+      </>)}
 
       {editingContact && createPortal(
         <ContactEditModal
