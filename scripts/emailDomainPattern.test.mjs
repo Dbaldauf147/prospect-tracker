@@ -9,7 +9,7 @@
 // a free-mail-only account - and that the pattern keys it writes are the
 // same strings buildEmailFromPattern reads back.
 import {
-  EMAIL_PATTERN_RULES, estimateEmailDomain, estimateEmailDomainCandidates,
+  EMAIL_PATTERN_RULES, estimateEmailDomain, estimateEmailDomainCandidates, domainTierEntries,
   detectLocalPattern, buildEmailFromPattern, domainOf,
 } from '../src/utils/emailDomainPattern.js';
 
@@ -192,6 +192,25 @@ check('and the rest follow by votes, a tie going to the busier domain',
     ['firstname_lastname@ahr.com', 1],
     ['firstinitiallastname@ahr.com', 1],
   ]);
+
+// --- tiers by contact count, one per domain ---------------------------
+{
+  const est = estimateEmailDomainCandidates([
+    ...split,
+    c('dan.lee@invh.com', 'Dan', 'Lee'),
+    c('free@gmail.com', 'Free', 'Mail'),
+  ]);
+  check('one tier per domain, busiest first, each with its own most-used format',
+    domainTierEntries(est).map(o => [o.entry, o.domainCount]),
+    [['firstname.lastname@ahr.com', 5], ['firstname.lastname@parentco.com', 3], ['firstname.lastname@invh.com', 1]]);
+  check('a recorded entry keeps its domain\'s slot, and one no contact uses goes last',
+    domainTierEntries(est, ['jsmith@parentco.com', 'firstname@old.com']).map(o => o.entry),
+    ['firstname.lastname@ahr.com', 'jsmith@parentco.com', 'firstname.lastname@invh.com', 'firstname@old.com']);
+  const noPattern = estimateEmailDomainCandidates([c('info@solo.com', 'Front', 'Desk'), c('a.b@big.com', 'A', 'B'), c('c.d@big.com', 'C', 'D')]);
+  check('a domain with no shared convention is listed bare',
+    domainTierEntries(noPattern).map(o => o.entry), ['firstname.lastname@big.com', 'solo.com']);
+  check('nothing to tier', domainTierEntries(estimateEmailDomainCandidates([])), []);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

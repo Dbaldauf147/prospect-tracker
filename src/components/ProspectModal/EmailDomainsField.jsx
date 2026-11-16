@@ -13,8 +13,15 @@
 //
 // Moved out of ProspectModal so it can be rendered on its own; the card
 // passes the field's value, its setter, and the estimate.
+//
+// When the contacts are spread over more than one work domain, the tiers
+// follow the domains instead: one per domain, the domain with the most
+// contacts first (domainTierEntries). With nothing recorded that is the
+// estimate shown; with something recorded, "Tier by contacts" rebuilds the
+// field that way, keeping each domain's recorded format.
 import { useState } from 'react';
 import { PopupListField } from './PopupListField';
+import { domainTierEntries } from '../../utils/emailDomainPattern';
 
 export function EmailDomainsField({ value, onChange, options }) {
   // The picker. `domainPicks` is the field as it would be saved: an ordered
@@ -50,7 +57,14 @@ export function EmailDomainsField({ value, onChange, options }) {
   // estimate: every format they support, the one most of them
   // are written in first. Shown, not saved - opening a company
   // never quietly rewrites it - until Save these is clicked.
-  const estimated = domains.length === 0 ? opts.candidates : [];
+  // Contacts on two or more work domains: tier by domain, busiest first.
+  const multiDomain = (opts.domains || []).length >= 2;
+  const domainTiers = multiDomain ? domainTierEntries(opts, domains) : [];
+  const countByDomain = new Map((opts.domains || []).map(d => [d.domain, d.count]));
+  const domainOfEntry = (e) => { const s = lower(e).trim(); const at = s.lastIndexOf('@'); return at >= 0 ? s.slice(at + 1) : s; };
+  const tieredDiffers = multiDomain && domains.length > 0
+    && domainTiers.map(o => lower(o.entry)).join('\n') !== domains.map(lower).join('\n');
+  const estimated = domains.length === 0 ? (multiDomain ? domainTiers : opts.candidates) : [];
   const tierBadge = { fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.03em' };
   const arrowBtn = { background: 'none', border: 'none', fontSize: '0.62rem', cursor: 'pointer', padding: '0 1px', lineHeight: 1 };
 
@@ -112,7 +126,15 @@ export function EmailDomainsField({ value, onChange, options }) {
   // the tier picker all live in the popup it opens.
   const summaryItems = domains.length > 0 ? domains : estimated.map(o => o.entry);
   const summaryTone = domains.length > 0 ? 'default' : estimated.length > 0 ? 'estimated' : 'missing';
-  const summaryBadge = summaryTone === 'default' ? null : (
+  // Recorded, but the contacts use domains the tiers don't follow: say so on
+  // the closed field, since the fix ("Tier by contacts") is inside it.
+  const summaryBadge = summaryTone === 'default' ? (tieredDiffers ? (
+    <span
+      data-domains-badge
+      title={`Contacts here use ${opts.domains.length} email domains: ${opts.domains.map(d => `${d.domain} (${plural(d.count, 'contact')})`).join(', ')}. Open to tier them by contact count.`}
+      style={{ flexShrink: 0, padding: '0 0.45rem', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, background: '#EFF6FF', border: '1px solid #93C5FD', color: '#1D4ED8' }}
+    >{opts.domains.length} domains</span>
+  ) : null) : (
     <span style={{ flexShrink: 0, padding: '0 0.45rem', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, ...(summaryTone === 'missing'
       ? { background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#B91C1C' }
       : { background: '#FFFBEB', border: '1px solid #FCD34D', color: '#B45309' }) }}
@@ -148,12 +170,14 @@ export function EmailDomainsField({ value, onChange, options }) {
         {estimated.map((o, i) => (
           <span
             key={o.entry}
-            title={`${o.votes} of the ${plural(o.domainCount, 'contact')} at ${o.domain} ${o.votes === 1 ? 'is' : 'are'} written this way.`}
+            title={multiDomain
+              ? `${plural(o.domainCount, 'contact')} at ${o.domain}${o.votes ? `, ${o.votes} written this way` : ', no shared naming convention, so no address is built from it'}.`
+              : `${o.votes} of the ${plural(o.domainCount, 'contact')} at ${o.domain} ${o.votes === 1 ? 'is' : 'are'} written this way.`}
             style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.15rem 0.5rem', background: '#fff', border: '1px dashed #93C5FD', borderRadius: '999px', fontSize: '0.72rem', color: '#1E40AF' }}
           >
             {estimated.length > 1 && <span style={{ ...tierBadge, color: '#2563EB' }}>{tier(i)}</span>}
             {o.entry}
-            <span style={{ fontSize: '0.62rem', color: '#64748B' }}>({o.votes})</span>
+            <span style={{ fontSize: '0.62rem', color: '#64748B' }}>({multiDomain ? o.domainCount : o.votes})</span>
           </span>
         ))}
         {domains.map((d, i) => (
@@ -166,6 +190,9 @@ export function EmailDomainsField({ value, onChange, options }) {
               <span style={{ ...tierBadge, color: '#2563EB' }}>{tier(i)}</span>
             )}
             {d}
+            {multiDomain && countByDomain.has(domainOfEntry(d)) && (
+              <span title={`${plural(countByDomain.get(domainOfEntry(d)), 'contact')} at ${domainOfEntry(d)}`} style={{ fontSize: '0.62rem', color: '#64748B' }}>({countByDomain.get(domainOfEntry(d))})</span>
+            )}
             {domains.length > 1 && i > 0 && (
               <button type="button" title="Move up a tier" onClick={() => onChange(move(domains, i, -1).join('\n'))} style={{ ...arrowBtn, color: '#60A5FA' }}>&#9664;</button>
             )}
@@ -239,12 +266,28 @@ export function EmailDomainsField({ value, onChange, options }) {
               ? `Estimate from ${plural(opts.total, 'contact')}...`
               : 'Estimate from contacts...'}
         </button>
+        {tieredDiffers && (
+          <button
+            type="button"
+            data-tier-by-contacts
+            onClick={() => onChange(domainTiers.map(o => o.entry).join('\n'))}
+            title={`Rebuild the tiers one per domain, the one with the most contacts first: ${domainTiers.map((o, i) => `${tier(i)} ${o.entry} (${plural(o.domainCount, 'contact')})`).join(', ')}. A domain's recorded format is kept.`}
+            style={{ padding: '0.2rem 0.5rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#EFF6FF', color: '#1D4ED8', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+          >Tier by contacts ({opts.domains.length} domains)</button>
+        )}
         {estimated.length > 0 && !domainPickerOpen && (
           <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
-            Estimated from {plural(opts.total, 'contact')}, most-used format first.
+            {multiDomain
+              ? `Contacts use ${opts.domains.length} domains: one tier each, the one with the most contacts first.`
+              : `Estimated from ${plural(opts.total, 'contact')}, most-used format first.`}
           </span>
         )}
-        {!domainPickerOpen && estimated.length === 0 && newCandidates.length > 0 && (
+        {tieredDiffers && !domainPickerOpen && (
+          <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Contacts: {(opts.domains || []).map(d => `${d.domain} ${d.count}`).join(', ')}
+          </span>
+        )}
+        {!domainPickerOpen && estimated.length === 0 && newCandidates.length > 0 && !tieredDiffers && (
           <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {newCandidates[0].entry}
             {newCandidates.length > 1 ? ` and ${newCandidates.length - 1} other option${newCandidates.length === 2 ? '' : 's'}` : ''}
