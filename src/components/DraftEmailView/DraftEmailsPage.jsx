@@ -67,7 +67,8 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
     >{label}</button>
   );
   return (
-    <div>
+    // Padded so the tabs and each tab's content sit off the sidebar's edge.
+    <div style={{ padding: '0.25rem 1.25rem 0.75rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', marginBottom: '0.75rem' }}>
         {tabBtn('drafts', 'Drafts')}
         {tabBtn('drafthistory', 'Draft History')}

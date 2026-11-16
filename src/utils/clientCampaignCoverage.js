@@ -19,6 +19,7 @@ import { matchesCdm } from './cdmMatch.js';
 import { contactStatusLabel } from './campaignExport.js';
 import { withoutInternalRows, rowAddresses } from './campaignRoster.js';
 import { campaignOutreachLabel } from './campaignOutreach.js';
+import { SERVICE_BUCKETS, serviceStatusBucket } from './serviceStatusColors.js';
 
 const nameKey = (s) => String(s || '').trim().toLowerCase();
 
@@ -109,6 +110,35 @@ export function clientCampaignRows({ prospects, cdmName, campaign, untrackedMap 
       sent: list.filter(x => x.status !== 'Not Sent').length,
       replied: list.filter(x => x.status === 'Replied').length,
       lastSent: sentDates.at(-1) || '',
+    };
+  });
+}
+
+/**
+ * The campaign's services, each with the current clients split by where
+ * that service stands at them (utils/serviceStatusColors SERVICE_BUCKETS:
+ * Sold, In progress, Not sold, N/A, Not explored). Every bucket is listed,
+ * empty ones too, so "nobody is N/A" reads as an answer.
+ *
+ * `statusOf(client, service)` is the status the company popup would show
+ * (serviceCoverage.effectiveServiceStatus). Clients A to Z in each bucket.
+ *   [{ service, buckets: [{ key, label, color, bg, clients: [{ row, status }] }] }]
+ */
+export function clientServiceBuckets({ rows, services, statusOf }) {
+  const buckets = SERVICE_BUCKETS.map(({ key, label, color, bg }) => ({ key, label, color, bg }));
+  return (services || []).map(service => {
+    const by = new Map(buckets.map(b => [b.key, []]));
+    for (const row of rows || []) {
+      const status = String((row.client && statusOf(row.client, service)) || '').trim();
+      const key = serviceStatusBucket(status);
+      (by.get(key) || by.get('none'))?.push({ row, status });
+    }
+    return {
+      service,
+      buckets: buckets.map(b => ({
+        ...b,
+        clients: by.get(b.key).sort((x, y) => x.row.company.localeCompare(y.row.company)),
+      })),
     };
   });
 }
