@@ -238,6 +238,7 @@ import { useNotesSummaries, useScopeSummaries } from '../../hooks/useNotesSummar
 import NotesSummaryCell from '../NotesSummaryCell';
 import styles from './OppsView2.module.css';
 import { recipientMapSaver } from '../../utils/recipientMaps';
+import { jobDescriptionUpdate } from '../../utils/contactJobDescription';
 
 // Second Opps tab — user-entered opps stored in Firestore
 // (`opps2Data/{uid}`) with an IndexedDB cache (`opps2-cache`, key
@@ -19520,6 +19521,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             if (v) next[cid] = v; else delete next[cid];
             updateSettings({ contactSentiment: next });
           }}
+          contactJobDescriptions={settings?.contactJobDescriptions || {}}
+          onSaveJobDescription={(cid, v) => updateSettings?.(jobDescriptionUpdate(cid, v))}
           contactLeadSource={settings?.contactLeadSource || {}}
           onSaveLeadSource={(cid, v) => {
             if (cid == null) return;

@@ -45,6 +45,7 @@ import { recordDraftHistory } from '../../utils/emailDraftHistoryStore';
 import { suggestCampaignFor, DRAFT_AUTOSAVE_KEY } from '../../utils/emailDraftHistory';
 import { listTrackableLinks, untrackedKeySet, toggleUntracked } from '../../utils/untrackedLinks.js';
 import { linkLabel } from '../../utils/emailLinks.js';
+import { jobDescriptionUpdate } from '../../utils/contactJobDescription';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
 // page-break line (inserted from the Insert menu). Quill drops any tag that
@@ -3557,6 +3558,8 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             if (v) next[cid] = v; else delete next[cid];
             updateSettings({ contactSentiment: next });
           }}
+          contactJobDescriptions={settings?.contactJobDescriptions || {}}
+          onSaveJobDescription={(cid, v) => updateSettings?.(jobDescriptionUpdate(cid, v))}
           contactLeadSource={settings?.contactLeadSource || {}}
           onSaveLeadSource={(cid, v) => {
             if (cid == null) return;

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { companyOverrideUpdate } from '../utils/contactCompanyOverride';
 import { metInPersonUpdate } from '../utils/metInPerson';
 import { contactConnectedUpdate } from '../utils/contactConnected';
+import { jobDescriptionUpdate } from '../utils/contactJobDescription';
 import { recipientMapSaver } from '../utils/recipientMaps';
 import { toggleContactInEvents, addContactToNewEvent } from '../utils/eventsStore';
 
@@ -104,6 +105,9 @@ export function useContactEditSettings({ settings, updateSettings }) {
       // Where the contact came from. See utils/contactLeadSource.js.
       contactLeadSource: settings?.contactLeadSource || {},
       onSaveLeadSource: (cid, v) => saveMap('contactLeadSource', cid, v),
+      // A pasted job description, or N/A. See utils/contactJobDescription.js.
+      contactJobDescriptions: settings?.contactJobDescriptions || {},
+      onSaveJobDescription: (cid, v) => updateSettings?.(jobDescriptionUpdate(cid, v)),
       contactTagReview: settings?.contactTagReview || {},
       onSaveTagReview: (cid, map) => {
         if (cid == null) return;
