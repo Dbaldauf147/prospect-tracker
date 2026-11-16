@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { contactConnectedUpdate } from '../../utils/contactConnected';
 import { toggleContactInEvents, addContactToNewEvent } from '../../utils/eventsStore';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
@@ -3449,7 +3450,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
           contactConnected={settings?.contactConnected || {}}
           onSaveConnected={(cid, on) => {
             if (!updateSettings) return;
-            updateSettings({ contactConnected: { ...(settings?.contactConnected || {}), [cid]: !!on } });
+            updateSettings(contactConnectedUpdate(cid, on));
           }}
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={(cid, invited) => {

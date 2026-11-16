@@ -31,6 +31,7 @@ import { companyOverrideUpdate, companyOverridesUpdate, contactLocalFieldsUpdate
 import { findSuspectPins, pinRecoveryRows } from '../../utils/companyPinReview';
 import { settingsBackupSources } from '../../utils/settingsBackupSources';
 import { CompanyPinReview } from './CompanyPinReview';
+import { contactConnectedUpdate, connectedState, buildOppContactIndex } from '../../utils/contactConnected';
 import { primarySubject } from '../../utils/campaignSubjects';
 import { SNOOZE_MONTH_OPTIONS, snoozeUntilIso, activeSnoozeMs } from '../../utils/changedJobs';
 import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
@@ -1972,11 +1973,15 @@ function KeyContactsViewInner({
   // the All Contacts table.
   const contactEvents = settings?.contactEvents || {};
   const contactConnected = settings?.contactConnected || {};
-  const isConnected = (c) => !!contactConnected[String(c?.id ?? '')];
+  // Ticked, or named on an opp (utils/contactConnected.js). oppContactIndex
+  // is declared further down with the opps; every call to these comes after
+  // it in the render.
+  const connectedOf = (c) => connectedState(c, contactConnected, oppContactIndex);
+  const isConnected = (c) => connectedOf(c).on;
   const toggleConnected = (c) => {
     const cid = String(c?.id ?? '');
     if (!cid || !updateSettings) return;
-    updateSettings({ contactConnected: { ...contactConnected, [cid]: !contactConnected[cid] } });
+    updateSettings(contactConnectedUpdate(cid, !contactConnected[cid]));
   };
   const handleSaveContactEvents = useCallback((cid, val) => {
     const cur = settings?.contactEvents || {};
@@ -2986,6 +2991,7 @@ function KeyContactsViewInner({
   }
 
   const oppsRecords = useOppsRecords(user?.uid);
+  const oppContactIndex = useMemo(() => buildOppContactIndex(oppsRecords), [oppsRecords]);
 
   const FREE_MAIL = useMemo(() => new Set([
     'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
@@ -3590,7 +3596,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, campaignReplies, contactEvents, contactConnected, categorizeContact, contactCampaign, campaignSends60, tagScoreFor, contactStrength]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, campaignReplies, contactEvents, contactConnected, oppContactIndex, categorizeContact, contactCampaign, campaignSends60, tagScoreFor, contactStrength]);
 
   // Combined "To Also" + "CC" recipients edited in the contact popup,
   // keyed by lowercased primary email so the All Contacts "To / CC"
@@ -5231,18 +5237,25 @@ function KeyContactsViewInner({
                         : <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>}
                     </div>
                     ),
-                    connected: (
-                    <div style={{ padding: '0.3rem 0.6rem', display: 'flex', alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    connected: (() => {
+                    const cs = connectedOf(c);
+                    return (
+                    <div style={{ padding: '0.3rem 0.6rem', display: 'flex', alignItems: 'center', gap: 4 }} onClick={e => e.stopPropagation()}>
                       <input
                         type="checkbox"
-                        checked={isConnected(c)}
+                        checked={cs.on}
+                        disabled={!!cs.opp}
                         onChange={() => toggleConnected(c)}
                         aria-label={`Connected with ${c.name || 'this contact'}`}
-                        title="Connected? Same tick as on the contact popup"
-                        style={{ accentColor: '#16A34A', width: 15, height: 15, cursor: 'pointer', margin: 0 }}
+                        title={cs.opp
+                          ? `Connected: named on the ${String(cs.opp.Account || '').trim() || 'an'} opp on your Opps page`
+                          : 'Connected? Same tick as on the contact popup'}
+                        style={{ accentColor: '#16A34A', width: 15, height: 15, cursor: cs.opp ? 'default' : 'pointer', margin: 0 }}
                       />
+                      {cs.opp && <span style={{ fontSize: '0.58rem', fontWeight: 700, color: '#166534' }}>Opps</span>}
                     </div>
-                    ),
+                    );
+                    })(),
                     events: (
                     <InlineCell
                       value={contactEvents[String(c.id || '')] || ''}
@@ -6051,7 +6064,7 @@ function KeyContactsViewInner({
             contactMetInPerson={settings?.contactMetInPerson || {}}
             onSaveMetInPerson={(contactId, met) => updateSettings(metInPersonUpdate(contactId, met))}
             contactConnected={contactConnected}
-            onSaveConnected={(contactId, on) => updateSettings({ contactConnected: { ...(settings?.contactConnected || {}), [contactId]: !!on } })}
+            onSaveConnected={(contactId, on) => updateSettings(contactConnectedUpdate(contactId, on))}
             contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
             onSaveInvitedToLouisville={(contactId, invited) => {
               const current = settings?.contactInvitedToLouisville || {};

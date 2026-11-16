@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import { contactConnectedUpdate } from '../../utils/contactConnected';
 import { toggleContactInEvents, addContactToNewEvent } from '../../utils/eventsStore';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
@@ -2910,7 +2911,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
           contactConnected={settings?.contactConnected || {}}
           onSaveConnected={(cid, on) => {
             if (!updateSettings) return;
-            updateSettings({ contactConnected: { ...(settings?.contactConnected || {}), [cid]: !!on } });
+            updateSettings(contactConnectedUpdate(cid, on));
           }}
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={(cid, invited) => {
