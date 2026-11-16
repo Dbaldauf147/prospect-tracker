@@ -1,8 +1,8 @@
 // The saved email campaigns, as a table under the Prospecting ladder's
 // "Reach out to contacts with market updates" step: the same figures the
 // Email Campaigns > Saved Campaigns table shows (one function for % Sent,
-// the stored response rate, the status rule), plus the Sent To ticks, which
-// can be ticked from here too. A campaign's name opens Email Campaigns.
+// the stored response rate, the status rule), plus the Sent To ticks (one column
+// each for Clients, Key Contacts, Prospects), which can be ticked from here too. A campaign's name opens Email Campaigns.
 import { useMemo } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useAuth } from '../../contexts/AuthContext';
@@ -13,7 +13,6 @@ import { campaignCategory } from '../../utils/campaignCategory';
 import { CAMPAIGN_AUDIENCES, campaignAudience, campaignIdentity } from '../../utils/campaignAudience';
 import { saveCampaignAudience } from '../../utils/campaignAudienceStore';
 import { fmtDate } from '../../utils/dealsFormat';
-import { CampaignAudienceTicks } from '../EmailCampaignView/CampaignAudienceTicks';
 
 const statusOf = (c) => (isCampaignPaused(c) ? 'Paused' : isCampaignActive(c) ? 'Active' : 'Inactive');
 const STATUS_STYLE = {
@@ -73,18 +72,31 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
       getFilterValue: (r) => campaignCategory(r.campaign) || '',
       render: (r) => campaignCategory(r.campaign) || <span style={{ color: '#CBD5E1' }}>-</span>,
     },
-    {
-      key: 'sentTo', label: 'Sent To', defaultWidth: 130,
-      getFilterValue: (r) => {
-        const on = campaignAudience(r.campaign);
-        return CAMPAIGN_AUDIENCES.filter(a => on[a.key]).map(a => a.label).join(', ');
+    // Sent To, one column per audience (Clients, Key Contacts, Prospects):
+    // a single tick box each, so every audience can be filtered, sorted,
+    // hidden and reordered on its own.
+    ...CAMPAIGN_AUDIENCES.map(a => ({
+      key: `sentTo_${a.key}`, label: a.label, defaultWidth: a.key === 'keyContacts' ? 130 : 105,
+      headerTitle: `Sent to ${a.label}: tick if this campaign went to ${a.label}`,
+      getFilterValue: (r) => (campaignAudience(r.campaign)[a.key] ? 'Yes' : 'No'),
+      getSortValue: (r) => (campaignAudience(r.campaign)[a.key] ? 1 : 0),
+      render: (r) => {
+        const on = !!campaignAudience(r.campaign)[a.key];
+        return (
+          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'center' }}>
+            <input
+              type="checkbox"
+              checked={on}
+              disabled={!user?.uid}
+              onChange={(e) => toggle(r.campaign, a.key, e.target.checked)}
+              aria-label={`Sent to ${a.label}`}
+              title={`Sent to ${a.label}`}
+              style={{ margin: 0, width: 15, height: 15, accentColor: '#16A34A', cursor: user?.uid ? 'pointer' : 'default' }}
+            />
+          </div>
+        );
       },
-      render: (r) => (
-        <div onClick={(e) => e.stopPropagation()}>
-          <CampaignAudienceTicks campaign={r.campaign} disabled={!user?.uid} onToggle={(key, on) => toggle(r.campaign, key, on)} />
-        </div>
-      ),
-    },
+    })),
     {
       key: 'pctSent', label: '% Sent', defaultWidth: 90,
       getFilterValue: (r) => `${r.stats.pct}%`,
