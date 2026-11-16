@@ -34,7 +34,7 @@
 export const TAG_OPTIONS = [
   'ESG', 'Procurement', 'Utilities', 'Climate Risk', 'Private Equity', 'Real Estate', 'Capital Planning',
   'Dan Key Target', 'Decision Maker',
-  'Primary Point of Contact', 'Test', 'NAM Only', 'EU', 'Hide', 'Left',
+  'Primary Point of Contact', 'NAM Only', 'EU', 'Hide', 'Left',
 ];
 
 // Tags the app no longer offers or tracks. Contacts in HubSpot may still
@@ -44,6 +44,9 @@ export const TAG_OPTIONS = [
 // one in its dans_tags string is left alone; it is just not offered again.
 export const RETIRED_TAGS = new Set([
   'Efficiency / Renewables',
+  // Removed from every contact on 2026-11-16 (api/_lib/contactTagStore.js
+  // REMOVED_TAGS strips it from every read and write).
+  'Test',
 ].map(t => tagKey(t)));
 
 // Case- and spacing-insensitive identity for a tag. HubSpot validates a
