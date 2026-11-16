@@ -242,9 +242,10 @@ export async function openGmailLabel({ user, pass, label }) {
           fromName: addr.name || '',
           date: (parsed.date || msg.envelope?.date || new Date(0)).getTime(),
           html: parsed.html || parsed.textAsHtml || '',
+          text: parsed.text || '',
           subject: parsed.subject || '',
           messageId: parsed.messageId || String(msg.uid || ''),
-          attachments: (parsed.attachments || []).map(a => ({ filename: a.filename || '', content: a.content })),
+          attachments: (parsed.attachments || []).map(a => ({ filename: a.filename || '', content: a.content, contentType: a.contentType || '' })),
         };
       }
     },

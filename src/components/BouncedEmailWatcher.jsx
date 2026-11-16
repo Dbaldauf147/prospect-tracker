@@ -1,10 +1,9 @@
-// While the app is open, checks the Outlook inbox every couple of hours for
-// delivery-failure notices and flags each address that bounced as a bad
-// email (utils/bounceScan.js, utils/badEmails.js). Renders nothing; the
+// While the app is open, checks every couple of hours for the bounce notices
+// Dan has forwarded to the app's mailbox and flags each address that bounced
+// as a bad email (utils/bounceScan.js, utils/badEmails.js). Renders nothing; the
 // contact popup and the email campaigns show the flags.
 import { useEffect, useMemo, useRef } from 'react';
 import { scanForBounces, bounceScanDue } from '../utils/bounceScan';
-import { hasOutlookConnection } from '../utils/hubspotExportMailSync';
 import { publishBadEmails, clearBadEmailUpdate } from '../utils/badEmails';
 
 const POLL_MS = 30 * 60 * 1000;
@@ -18,7 +17,7 @@ export function BouncedEmailWatcher({ badEmails, updateSettings }) {
   useEffect(() => {
     let running = false;
     const tick = async () => {
-      if (running || !bounceScanDue() || !(await hasOutlookConnection())) return;
+      if (running || !bounceScanDue()) return;
       running = true;
       try { await scanForBounces((fn) => saveRef.current?.(fn)); } finally { running = false; }
     };

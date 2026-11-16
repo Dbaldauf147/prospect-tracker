@@ -1,5 +1,6 @@
-// Bad email addresses: ones a delivery-failure notice came back for
-// (api/outlook-bounces.js, read by BouncedEmailWatcher). Stored per user as
+// Bad email addresses: ones a delivery-failure notice came back for, from
+// the notices Dan forwards to the app's mailbox (api/bounce-inbox.js, read
+// by BouncedEmailWatcher). Stored per user as
 // settings.badEmails = { [lowercased address]: { at, subject, reason,
 // clearedAt? } }.
 //
