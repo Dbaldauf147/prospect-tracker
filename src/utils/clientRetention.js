@@ -11,6 +11,15 @@
 // opps on one company, under any spelling, make one row. A Sold account the
 // Table View has no company for still counts as sold - nothing says it left
 // - and is flagged so it can be added.
+//
+// Two marks Dan sets by hand on the page, kept in settings.clientRetentionMarks
+// ({ [row id]: mark }, row ids as below):
+//   'other'    sold by someone else: not Dan's sale, so out of the page and
+//              out of the rate entirely (listed separately, to undo);
+//   'expired'  scope expired: its own column, left out of the rate - neither
+//              kept nor lost.
+// A mark wins over the status, so an Old Client marked expired sits under
+// Scope expired, not They left us.
 import { companyDedupeKey } from './companyKey.js';
 import { recordCompanyKeys } from './companyAliases.js';
 import { parseMoney } from './oppsMetrics.js';
@@ -19,6 +28,9 @@ const norm = (s) => String(s ?? '').trim().toLowerCase();
 
 export const isSoldOpp = (r) => String(r?.Stage ?? '').trim() === 'Sold';
 export const isOldClientStatus = (status) => norm(status) === 'old client';
+
+export const RETENTION_MARKS = ['other', 'expired'];
+export const RETENTION_MARKS_KEY = 'clientRetentionMarks';
 
 function dateMs(text) {
   const t = Date.parse(String(text ?? '').trim());
@@ -34,12 +46,13 @@ function pickProspect(current, candidate) {
 }
 
 /**
- * { retained, left, rate, total } where retained / left are rows of
+ * { retained, left, expired, other, rate, total } where each list holds rows of
  * { id, company, prospectId, status, cdm, soldOpps, soldAmount, lastSold,
  *   lastSoldMs, accounts, inTableView }, biggest sold amount first.
- * `rate` is retained / total as a fraction, or null with no sold companies.
+ * `total` is retained + left, and `rate` is retained / total as a fraction,
+ * or null when both are empty. `marks` is settings.clientRetentionMarks.
  */
-export function clientRetention(oppRecords, prospects) {
+export function clientRetention(oppRecords, prospects, marks = {}) {
   const byKey = new Map();
   for (const p of prospects || []) {
     if (!p?.id) continue;
@@ -80,11 +93,23 @@ export function clientRetention(oppRecords, prospects) {
   }
 
   const order = (a, b) => (b.soldAmount - a.soldAmount) || a.company.localeCompare(b.company);
-  const all = [...rows.values()].map(r => ({ ...r, soldAmount: Math.round(r.soldAmount) }));
-  const left = all.filter(r => isOldClientStatus(r.status)).sort(order);
-  const retained = all.filter(r => !isOldClientStatus(r.status)).sort(order);
-  const total = all.length;
-  return { retained, left, total, rate: total ? retained.length / total : null };
+  const markOf = (id) => (RETENTION_MARKS.includes(marks?.[id]) ? marks[id] : '');
+  const all = [...rows.values()].map(r => ({ ...r, soldAmount: Math.round(r.soldAmount), mark: markOf(r.id) }));
+  const other = all.filter(r => r.mark === 'other').sort(order);
+  const expired = all.filter(r => r.mark === 'expired').sort(order);
+  const open = all.filter(r => !r.mark);
+  const left = open.filter(r => isOldClientStatus(r.status)).sort(order);
+  const retained = open.filter(r => !isOldClientStatus(r.status)).sort(order);
+  const total = retained.length + left.length;
+  return { retained, left, expired, other, total, rate: total ? retained.length / total : null };
+}
+
+/** The marks map with `id` set to `mark`, or cleared when `mark` is ''. */
+export function withRetentionMark(marks, id, mark) {
+  const next = { ...(marks || {}) };
+  if (RETENTION_MARKS.includes(mark)) next[id] = mark;
+  else delete next[id];
+  return next;
 }
 
 /** The rate as a whole-number percent label, '-' with nothing sold. */

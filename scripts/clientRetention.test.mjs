@@ -1,6 +1,6 @@
 // Clients > Retention (utils/clientRetention). Plain Node. Run:
 //   node scripts/clientRetention.test.mjs
-import { clientRetention, retentionPercent } from '../src/utils/clientRetention.js';
+import { clientRetention, retentionPercent, withRetentionMark } from '../src/utils/clientRetention.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -49,7 +49,23 @@ const dup = clientRetention([{ Account: 'Hines', Stage: 'Sold' }],
   [{ id: 'h1', company: 'Hines', status: 'Qualifying' }, { id: 'h2', company: 'Hines Inc.', status: 'Old Client' }]);
 eq([dup.left.length, dup.left[0]?.prospectId], [1, 'h2'], 'a duplicate prefers the client record');
 
-eq(clientRetention([], prospects), { retained: [], left: [], total: 0, rate: null }, 'nothing sold');
+eq(clientRetention([], prospects), { retained: [], left: [], expired: [], other: [], total: 0, rate: null }, 'nothing sold');
+
+// Marks: sold by someone else leaves the page and the rate; scope expired is
+// its own column, also out of the rate. A mark beats the Old Client status.
+{
+  const marks = { 'p:bx': 'other', 'p:pro': 'expired', 'a:acmewidgets': 'bogus' };
+  const m = clientRetention(opps, prospects, marks);
+  eq(names(m.retained), ['WSP', 'Acme Widgets'], 'marked: Sold keeps the unmarked; an unknown mark is ignored');
+  eq(names(m.left), [], 'marked: the Old Client marked expired is not under They left us');
+  eq(names(m.expired), ['Prologis'], 'marked: Scope expired column');
+  eq(names(m.other), ['Blackstone'], 'marked: sold by someone else, listed apart');
+  eq([m.total, retentionPercent(m.rate)], [2, '100%'], 'marked: both left out of the rate');
+  eq(m.expired[0].mark, 'expired', 'rows carry their mark');
+}
+eq(withRetentionMark({ a: 'other' }, 'b', 'expired'), { a: 'other', b: 'expired' }, 'set a mark');
+eq(withRetentionMark({ a: 'other', b: 'expired' }, 'a', ''), { b: 'expired' }, 'clear a mark');
+eq(withRetentionMark(undefined, 'a', 'nope'), {}, 'an unknown mark clears');
 eq(retentionPercent(null), '-', 'no rate reads as a dash');
 
 console.log(`\n${passed} passed, ${failed} failed`);
