@@ -280,6 +280,11 @@ const ACCOUNT_COLUMNS = [
   { key: 'listFlags', label: 'Frameworks', defaultWidth: 220, render: null /* set in columns memo */ },
 ];
 
+// Marks a company the "auto-create from open opps" effect made, so its
+// cleanup only ever deletes those and never a company added by hand.
+const AUTO_CREATED_FIELD = 'autoCreatedFrom';
+const AUTO_CREATED_FROM_OPPS = 'open-opps';
+
 // Fuzzy company name matching — returns true if names are "close enough"
 function companiesMatch(a, b) {
   const na = (a || '').toLowerCase().trim();
@@ -2072,15 +2077,23 @@ Fix that now?
       console.log(`Auto-creating ${missing.length} prospects from opps:`, missing.map(m => m.name));
       for (const { key, name } of missing) {
         autoCreateRanRef.current.add(key);
-        onAdd({ company: name, status: 'Inside Sales', tier: '', type: '', geography: '', publicPrivate: '', assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', cdm: cdmName || '' });
+        onAdd({ company: name, status: 'Inside Sales', [AUTO_CREATED_FIELD]: AUTO_CREATED_FROM_OPPS, tier: '', type: '', geography: '', publicPrivate: '', assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', cdm: cdmName || '' });
       }
     }
   }, [openOppsByAccount, prospects.length, cdmName]);
 
-  // Clean up auto-created prospects that no longer have open opps and have no tier
+  // Clean up auto-created prospects that no longer have open opps and have no tier.
+  //
+  // Only records the effect above made (stamped AUTO_CREATED_FIELD). This
+  // used to sweep every tierless company with no notes / website / email
+  // domain, so any company added some other way with only a name and a
+  // status, and no open opp, was deleted the next time My Accounts opened:
+  // the Issues tab's "Create ticked as Hold Off" companies (their opps are
+  // mostly closed) disappeared that way, and the rows came straight back.
   useEffect(() => {
     if (!onDelete || Object.keys(openOppsByAccount).length === 0 || prospects.length === 0) return;
     for (const p of prospects) {
+      if (p[AUTO_CREATED_FIELD] !== AUTO_CREATED_FROM_OPPS) continue;
       // Only clean up accounts with no tier set (auto-created Tier 3 candidates)
       if (p.tier) continue;
       const companyLower = (p.company || '').toLowerCase();
