@@ -80,6 +80,7 @@ import { EQUIPMENT_ESTIMATE_TYPES, portfolioEquipmentEstimate, propertyTypeEquip
 import { companyDedupeKey } from '../../utils/companyKey';
 import { ALIASES_FIELD, mergedCompanyAliases } from '../../utils/companyAliases';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
+import { PROSPECT_ANYWAY_FIELD, NOT_SOLD_STATUS, isProspectAnyway, withProspectAnyway } from '../../utils/serviceProspectAnyway';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import { ServiceDetailPopup } from '../common/ServiceDetailPopup';
@@ -944,7 +945,7 @@ const EMPTY = {
   // read as an answer.
   deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
   rank: '', tier: 'Tier 3', substatus: '',
-  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', hubspotCompanyNames: '', goesBy: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
+  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', hubspotCompanyNames: '', goesBy: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, serviceProspectAnyway: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', bfoCompanyAltNames: '', noBfoCompanyName: false, contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
@@ -4305,15 +4306,6 @@ function SustainabilityResearchPanel({ state, onClear, onUseTargets, onMergeFram
   );
 }
 
-// Compact label for an SME chip: initials for a multi-word name ("Dan
-// Baldauf" -> "DB"), otherwise the first few characters. The full name is
-// on the chip's tooltip.
-function smeInitials(name) {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  return (parts[0] || '').slice(0, 4);
-}
-
 // Divisions — which other tracker companies are divisions (subsidiaries,
 // operating brands, regional entities) of this one. The same mapping the
 // My Accounts "Divisions" column edits, so rolled-up counts there pick up
@@ -5673,8 +5665,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // filter callback (the callback fires during render, so the state
   // must be initialized first or we hit a temporal-dead-zone error).
   const [showHiddenContacts, setShowHiddenContacts] = useState(false);
-  // Which service row has its SME editor open (service key, or null).
-  const [expandedServiceSME, setExpandedServiceSME] = useState(null);
   // The service whose popup (what it covers, who owns it, what it pulls
   // in) is open from the Services tab, by name; null when none is.
   const [serviceDetailName, setServiceDetailName] = useState(null);
@@ -7720,6 +7710,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       numberOfMeters: fields.numberOfMeters,
       equipmentCount: fields.equipmentCount,
       annualMwh: fields.annualMwh,
+      serviceProspectAnyway: fields.serviceProspectAnyway,
     };
     return accountPotential({
       client,
@@ -7735,7 +7726,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
   }, [settings, scopeMatchedServices, fields.servicesExplored, fields.numberOfSites,
     fields.sitesWithMandate, fields.numberOfAccounts, fields.numberOfMeters,
-    fields.equipmentCount, fields.annualMwh]);
+    fields.equipmentCount, fields.annualMwh, fields.serviceProspectAnyway]);
   // The one line of it the Scale section shows. The Potential tab shows the
   // rest, off its own run of the same function.
   const biggestDeal = accountPotentialReading?.top || null;
@@ -12703,7 +12694,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       screen rather than scrolling twice as far in 500px. */}
                   <div style={{ marginTop: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '0.4rem', maxHeight: 'max(500px, 60vh)', overflowY: 'auto', padding: '0.15rem' }}>
                   {/* Names already assigned as an SME on this card, offered
-                      as suggestions on every SME box below. */}
+                      as suggestions on the Bulk edit SME box. */}
                   <datalist id="service-sme-names">
                     {[...new Set(Object.values(fields.serviceSMEs || {})
                       .map(v => String(v || '').trim()).filter(Boolean))]
@@ -12855,8 +12846,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             const noteVal = (fields.serviceNotes || {})[noteKey] || '';
                             const hasNote = !!noteVal;
                             const isNoteOpen = expandedServiceNote === noteKey;
-                            const smeVal = (fields.serviceSMEs || {})[item] || '';
-                            const isSMEOpen = expandedServiceSME === item;
+                            const prospectAnyway = effectiveStatus === NOT_SOLD_STATUS && isProspectAnyway(fields, item);
                             const tracked = isCoverageTracked(trackedServices, item);
                             return (
                               <div key={item}>
@@ -12905,26 +12895,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   >
                                     {getDisplayName(item)}
                                   </span>
-                                  {/* SME - the Schneider contact who owns this
-                                      service. The service boxes sit in a
-                                      multi-column grid (~320px a row), so this
-                                      is a compact chip rather than a text box;
-                                      a full input here squeezed the service
-                                      name down to ~45px. Click to edit below. */}
-                                  <button
-                                    type="button"
-                                    onClick={() => setExpandedServiceSME(isSMEOpen ? null : item)}
-                                    title={smeVal ? `SME: ${smeVal}` : 'Add the Schneider SME for this service'}
-                                    style={{
-                                      flexShrink: 0, maxWidth: 52, overflow: 'hidden', textOverflow: 'ellipsis',
-                                      whiteSpace: 'nowrap', fontSize: '0.55rem', fontWeight: 700,
-                                      padding: '1px 3px', borderRadius: '3px', cursor: 'pointer',
-                                      fontFamily: 'inherit', lineHeight: 1.4,
-                                      border: `1px solid ${smeVal ? '#93C5FD' : 'var(--color-border)'}`,
-                                      background: smeVal ? '#EFF6FF' : 'var(--color-surface)',
-                                      color: smeVal ? '#1E40AF' : '#CBD5E1',
-                                    }}
-                                  >{smeVal ? smeInitials(smeVal) : 'SME'}</button>
+                                  {/* Prospect anyway (utils/serviceProspectAnyway):
+                                      only while the service reads Not Sold.
+                                      On, the service counts as still open -
+                                      Biggest Deal and the Prospecting lists
+                                      pick it up - and the status stays Not
+                                      Sold. Sits where the SME chip was; SMEs
+                                      are still set with Bulk edit. */}
+                                  {effectiveStatus === NOT_SOLD_STATUS && (
+                                    <button
+                                      type="button"
+                                      data-prospect-anyway={prospectAnyway ? 'on' : 'off'}
+                                      aria-pressed={prospectAnyway}
+                                      onClick={() => set(PROSPECT_ANYWAY_FIELD, withProspectAnyway(fields[PROSPECT_ANYWAY_FIELD], item, !prospectAnyway))}
+                                      title={prospectAnyway
+                                        ? `Still prospecting for ${getDisplayName(item)}: it counts as open (Biggest Deal, Prospecting) even though it is Not Sold. Click to stop.`
+                                        : `Not Sold, so ${getDisplayName(item)} is left out of Biggest Deal and Prospecting. Click to keep prospecting for it anyway.`}
+                                      style={{
+                                        flexShrink: 0, whiteSpace: 'nowrap', fontSize: '0.55rem', fontWeight: 700,
+                                        padding: '1px 3px', borderRadius: '3px', cursor: 'pointer',
+                                        fontFamily: 'inherit', lineHeight: 1.4,
+                                        border: `1px ${prospectAnyway ? 'solid #16A34A' : 'dashed #94A3B8'}`,
+                                        background: prospectAnyway ? '#DCFCE7' : 'var(--color-surface)',
+                                        color: prospectAnyway ? '#166534' : '#64748B',
+                                      }}
+                                    >{prospectAnyway ? '\u2713 Prospect' : 'Prospect'}</button>
+                                  )}
                                   <select
                                     value={effectiveStatus}
                                     onChange={e => {
@@ -12988,34 +12984,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     >Opp {formatScheduledOppDay(scheduledOpp)}</span>
                                   )}
                                 </div>
-                                {isSMEOpen && (
-                                  <div style={{ padding: '0.15rem 0.35rem 0.25rem 1.2rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                    <span style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--color-text-muted)', flexShrink: 0 }}>SME</span>
-                                    <input
-                                      type="text"
-                                      autoFocus
-                                      list="service-sme-names"
-                                      defaultValue={smeVal}
-                                      placeholder="Schneider contact"
-                                      onBlur={e => {
-                                        const v = e.target.value.trim();
-                                        if (v === smeVal) return;
-                                        const next = { ...(fields.serviceSMEs || {}) };
-                                        if (v) next[item] = v; else delete next[item];
-                                        set('serviceSMEs', next);
-                                      }}
-                                      onKeyDown={e => {
-                                        if (e.key === 'Enter') { e.currentTarget.blur(); setExpandedServiceSME(null); }
-                                        else if (e.key === 'Escape') { e.currentTarget.value = smeVal; setExpandedServiceSME(null); }
-                                      }}
-                                      style={{
-                                        flex: 1, minWidth: 0, fontSize: '0.62rem', padding: '1px 3px',
-                                        border: '1px solid var(--color-accent)', borderRadius: '3px',
-                                        background: '#fff', color: 'var(--color-text)', fontFamily: 'inherit',
-                                      }}
-                                    />
-                                  </div>
-                                )}
                                 {isNoteOpen && (
                                   <div style={{ padding: '0.15rem 0.35rem 0.25rem 1.2rem' }}>
                                     <ScopingNotesEditor

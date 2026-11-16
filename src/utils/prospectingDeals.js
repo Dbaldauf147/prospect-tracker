@@ -29,6 +29,7 @@ export function biggestDealFor(prospect, { serviceRows, pricing, bases, override
     numberOfMeters: prospect.numberOfMeters,
     equipmentCount: prospect.equipmentCount,
     annualMwh: prospect.annualMwh,
+    serviceProspectAnyway: prospect.serviceProspectAnyway,
   };
   const reading = accountPotential({
     client,
@@ -42,9 +43,10 @@ export function biggestDealFor(prospect, { serviceRows, pricing, bases, override
   const top = reading?.top;
   if (!top) return null;
   // Where that service stands today, so the list can show it and set it.
-  // Always an open status (never Sold, Not Sold or N/A): those are answers,
-  // and an answered service is never the biggest deal.
-  const { status, fromOpp } = serviceDecision(client, top.name, oppStages);
+  // An open status (never Sold or N/A): those are answers, and an answered
+  // service is never the biggest deal. Not Sold only when the card marks the
+  // service "Prospect anyway" (utils/serviceProspectAnyway).
+  const { status, fromOpp, prospectAnyway } = serviceDecision(client, top.name, oppStages);
   return {
     name: top.name,
     fee: Number(top.fee) || 0,
@@ -52,6 +54,7 @@ export function biggestDealFor(prospect, { serviceRows, pricing, bases, override
     adds: (top.bundle?.adds || []).filter(a => a.open).map(a => a.name),
     status,
     fromOpp,
+    prospectAnyway: !!prospectAnyway,
   };
 }
 
@@ -69,6 +72,8 @@ export function dealMid(deal) {
 // set) are the only no-status answers. A company with no deal at all has
 // nothing to hide.
 export function dealHasStatus(deal) {
+  // A Not Sold service still to be prospected stays on the list.
+  if (deal?.prospectAnyway) return false;
   const s = String(deal?.status ?? '').trim();
   return s !== '' && s !== '-';
 }

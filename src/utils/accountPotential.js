@@ -46,6 +46,7 @@
 import { autoAddListFor, collectAutoAdds } from './serviceAutoAdd.js';
 import { collectAutoNa, isSoldStatus } from './serviceAutoNa.js';
 import { exploredStatus } from './clientDealSizing.js';
+import { prospectsAnyway } from './serviceProspectAnyway.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
 import { basisFor, estimateScope, pricingFor, pricingLines } from './servicePricing.js';
 
@@ -75,10 +76,15 @@ export function serviceDecision(client, name, oppStages = null) {
   const manual = String((client?.servicesExplored || {})[name] ?? '').trim();
   const status = exploredStatus(client, name, oppStages);
   const statusBucket = serviceStatusBucket(status);
+  // A Not Sold service marked "Prospect anyway" on the card is still open
+  // (utils/serviceProspectAnyway): the status stays Not Sold, but it is not
+  // an answer that takes the service off the table.
+  const prospectAnyway = prospectsAnyway(client, name, status);
   return {
     status,
     statusBucket,
-    decided: CLOSED_BUCKETS.has(statusBucket),
+    decided: CLOSED_BUCKETS.has(statusBucket) && !prospectAnyway,
+    prospectAnyway,
     // Being worked on right now: a status, but not an answer. It stays in
     // the potential, which is the one thing that separates this from a
     // report of what has been closed out.
