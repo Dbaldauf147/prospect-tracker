@@ -1,6 +1,11 @@
 // A company's sustainability targets, logged by hand on the company popup's
 // Targets tab. Stored on the company record as `climateTargets`: an array of
-//   { id, type, yearSet, baseYear, targetYear1, targetYear2, scope1, scope2, scope3 }
+//   { id, type, yearSet, baseYear, targetYear1, targetYear2, scope1, scope2, scope3,
+//     classification, status }
+// `classification` is the target's ambition (SBTi's "1.5°C", "Well-below
+// 2°C", or for a commitment its type, "BA1.5 Option 2"); `status` is free
+// text ("Validated Targets", "Committed"). Both arrive mostly by pasting the
+// SBTi dashboard's table, see parsePastedTargets.
 // `yearSet` is the year the company set (or last refreshed) the target; the
 // refresh it is due for is REFRESH_CYCLE_YEARS after that, worked out here
 // rather than stored so changing the year set moves it too.
@@ -18,7 +23,10 @@ function newId() {
 }
 
 export function blankTarget() {
-  return { id: newId(), type: '', yearSet: '', baseYear: '', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false };
+  return {
+    id: newId(), type: '', yearSet: '', baseYear: '', targetYear1: '', targetYear2: '',
+    scope1: false, scope2: false, scope3: false, classification: '', status: '',
+  };
 }
 
 // Digits only, at most four: the year boxes accept nothing else.
@@ -43,6 +51,8 @@ export function normalizeTargets(raw) {
       scope1: !!r.scope1,
       scope2: !!r.scope2,
       scope3: !!r.scope3,
+      classification: String(r.classification || ''),
+      status: String(r.status || ''),
     }));
 }
 
@@ -75,4 +85,157 @@ export function refreshDue(row, thisYear = new Date().getFullYear()) {
   const status = year < thisYear ? 'overdue' : year === thisYear ? 'due' : 'upcoming';
   const label = status === 'overdue' ? 'Overdue' : status === 'due' ? 'Due this year' : 'Upcoming';
   return { year, status, label };
+}
+
+// ---- Bulk paste ---------------------------------------------------------
+// The Targets tab takes a pasted table, shaped like the SBTi target
+// dashboard's "Targets / Commitments" table:
+//   Action | Commitment Type | Status | Target | Scope | Target Classification
+//   | Base Year | Target Year | Date Published
+// with or without that header row. Copied from a web page it arrives
+// tab-separated; some pages copy as one cell per line instead, which is
+// handled by chunking the lines into rows of the header's width.
+
+// Pasted header -> field. Matched on the header lowercased with everything
+// but letters and digits dropped, so "TARGET  CLASSIFICATION" still matches.
+const PASTE_HEADERS = {
+  action: 'action',
+  commitmenttype: 'commitmentType',
+  status: 'status',
+  target: 'target',
+  targettype: 'target',
+  type: 'target',
+  scope: 'scope',
+  scopes: 'scope',
+  targetclassification: 'classification',
+  classification: 'classification',
+  ambition: 'classification',
+  baseyear: 'baseYear',
+  targetyear: 'targetYear',
+  targetyear1: 'targetYear',
+  targetyear2: 'targetYear2',
+  datepublished: 'datePublished',
+  published: 'datePublished',
+  yearset: 'yearSet',
+};
+// The SBTi table's column order, for a paste without its header row.
+const SBTI_ORDER = ['action', 'commitmentType', 'status', 'target', 'scope', 'classification', 'baseYear', 'targetYear', 'datePublished'];
+
+const headerKey = (cell) => PASTE_HEADERS[String(cell ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')];
+
+// "NA", "N/A", "-", "n.a." and blanks all mean nothing was given.
+function pasteValue(cell) {
+  const v = String(cell ?? '').replace(/\s+/g, ' ').trim();
+  if (!v || /^(n\/?a|n\.a\.?|none|-+|–|—)$/i.test(v)) return '';  // em-dash-ok: a pasted cell holding only a dash means blank
+  return v;
+}
+
+// The first plausible 4-digit year in a cell: "2019", "2024-12-05", "FY2030".
+function pasteYear(cell) {
+  const m = String(cell ?? '').match(/(?:^|\D)((?:19|20)\d{2})(?!\d)/);
+  return m ? m[1] : '';
+}
+
+// SBTi's target names onto the standard Target Type list's spelling, so a
+// pasted "Net-zero" lands as the "Net zero" already on the list.
+const TYPE_ALIASES = {
+  netzero: 'Net zero',
+  nearterm: 'SBTi near-term',
+  longterm: 'SBTi long-term',
+};
+export const COMMITMENT_TYPE = 'SBTi commitment';
+
+function rowType(action, target) {
+  if (/^commit/i.test(action) && !target) return COMMITMENT_TYPE;
+  return TYPE_ALIASES[target.toLowerCase().replace(/[^a-z0-9]/g, '')] || target;
+}
+
+// Split the pasted text into rows of cells, header row (if any) first.
+function pasteGrid(text) {
+  const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+  if (lines.some(l => l.includes('\t'))) {
+    return lines.filter(l => l.trim()).map(l => l.split('\t'));
+  }
+  // One cell per line: the header (if present) sets the width, else the
+  // SBTi table's nine columns.
+  const cells = lines.map(l => l.trim()).filter(Boolean);
+  // The header runs until a cell that isn't a header name, or is one we've
+  // had already (the first row's "Target" under an ACTION header).
+  let width = 0;
+  const seenHeaders = new Set();
+  while (width < cells.length && headerKey(cells[width]) && !seenHeaders.has(headerKey(cells[width]))) {
+    seenHeaders.add(headerKey(cells[width]));
+    width += 1;
+  }
+  if (width < 3) width = SBTI_ORDER.length;
+  const grid = [];
+  for (let i = 0; i < cells.length; i += width) grid.push(cells.slice(i, i + width));
+  return grid;
+}
+
+// Parse a pasted table into target rows (with fresh ids).
+//   { rows, skipped }  skipped counts lines that held nothing usable.
+export function parsePastedTargets(text) {
+  const grid = pasteGrid(text);
+  if (!grid.length) return { rows: [], skipped: 0 };
+  // A header row is one where most of the cells are names we know.
+  const first = grid[0].map(headerKey);
+  const known = first.filter(Boolean).length;
+  const hasHeader = known >= 2 && known >= Math.ceil(grid[0].filter(c => String(c).trim()).length / 2);
+  const fields = hasHeader ? first : SBTI_ORDER;
+  const body = hasHeader ? grid.slice(1) : grid;
+
+  const rows = [];
+  let skipped = 0;
+  for (const cells of body) {
+    const rec = {};
+    fields.forEach((f, i) => { if (f && rec[f] === undefined) rec[f] = cells[i]; });
+    const action = pasteValue(rec.action);
+    const target = pasteValue(rec.target);
+    const type = rowType(action, target);
+    const scope = pasteValue(rec.scope);
+    const commitmentType = pasteValue(rec.commitmentType);
+    const row = {
+      ...blankTarget(),
+      type,
+      yearSet: pasteYear(rec.yearSet) || pasteYear(rec.datePublished),
+      baseYear: pasteYear(rec.baseYear),
+      targetYear1: pasteYear(rec.targetYear),
+      targetYear2: pasteYear(rec.targetYear2),
+      scope1: /1/.test(scope),
+      scope2: /2/.test(scope),
+      scope3: /3/.test(scope),
+      // A commitment has no target classification; its commitment type
+      // ("BA1.5 Option 2") is the ambition it signed up to.
+      classification: pasteValue(rec.classification) || (type === COMMITMENT_TYPE ? commitmentType : ''),
+      status: pasteValue(rec.status),
+    };
+    const anything = row.type || row.baseYear || row.targetYear1 || row.yearSet || row.classification;
+    if (anything) rows.push(row); else skipped += 1;
+  }
+  return { rows, skipped };
+}
+
+// Two rows describe the same target when everything but the id matches.
+function targetKey(r) {
+  return [r.type, r.yearSet, r.baseYear, r.targetYear1, r.targetYear2, scopesLabel(r), r.classification, r.status]
+    .map(v => String(v).trim().toLowerCase()).join('|');
+}
+
+// The list with the pasted rows appended, leaving out any that are already
+// on it (pasting the same table twice adds nothing) or repeated in the paste.
+//   { list, added, duplicates }
+export function mergePastedTargets(existing, pasted) {
+  const list = normalizeTargets(existing);
+  const seen = new Set(list.map(targetKey));
+  let added = 0;
+  let duplicates = 0;
+  for (const r of normalizeTargets(pasted)) {
+    const k = targetKey(r);
+    if (seen.has(k)) { duplicates += 1; continue; }
+    seen.add(k);
+    list.push(r);
+    added += 1;
+  }
+  return { list, added, duplicates };
 }
