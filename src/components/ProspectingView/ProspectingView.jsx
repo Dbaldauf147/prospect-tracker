@@ -1825,6 +1825,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
               key={step.key}
               style={{
                 display: 'flex', alignItems: 'flex-start', gap: '0.75rem',
+                flexWrap: step.key === 'market-updates' ? 'wrap' : undefined,
                 padding: '0.7rem 0.85rem',
                 background: colors.tint,
                 border: `1px solid ${colors.ring}`,
@@ -1916,16 +1917,6 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                   />
                 )}
                 {/* And which writing has been started and not finished. */}
-                {/* The saved campaigns, as the Email Campaigns table shows
-                    them, with the Sent To ticks (Clients / Key Contacts /
-                    Prospects) editable from here. */}
-                {!editing && step.key === 'market-updates' && (
-                  <MarketUpdatesCampaigns
-                    settings={settings}
-                    updateSettings={updateSettings}
-                    onNavigate={onNavigate ? () => onNavigate('campaigns') : null}
-                  />
-                )}
                 {/* Who changed jobs and is still waiting to be dealt with. */}
                 {!editing && step.key === 'changed-jobs' && (
                   <ChangedJobsWarning
@@ -2009,6 +2000,22 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                     <div style={{ width: ACTION_COL, flexShrink: 0 }} />
                   ))}
                 </>
+              )}
+              {/* The saved campaigns, as the Email Campaigns table shows
+                  them, with the Sent To ticks (Clients / Key Contacts /
+                  Prospects) editable from here. On a row of its own under
+                  the step (the card wraps), so it gets the card's full
+                  width instead of the strip left of the status and button
+                  columns, which cut its right-hand columns off. Indented
+                  past the rank badge to line up with the title. */}
+              {!editing && step.key === 'market-updates' && (
+                <div style={{ flex: '0 0 calc(100% - 26px - 0.75rem)', minWidth: 0, marginLeft: 'calc(26px + 0.75rem)', marginTop: '-0.75rem' }}>
+                  <MarketUpdatesCampaigns
+                    settings={settings}
+                    updateSettings={updateSettings}
+                    onNavigate={onNavigate ? () => onNavigate('campaigns') : null}
+                  />
+                </div>
               )}
             </div>
           );
