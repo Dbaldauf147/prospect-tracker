@@ -21,6 +21,8 @@ const prospects = [
 ];
 
 check('clients: mine, Client only, one per company', currentClients(prospects, 'Dan Baldauf').map(p => p.id), ['1', '2', '6']);
+check("clients: Don't Track ticks are left out", currentClients(prospects, 'Dan Baldauf', { 'globex corp': true }).map(p => p.id), ['1', '6']);
+check("rows: a Don't Track client has no row", clientCampaignRows({ prospects, cdmName: 'Dan Baldauf', campaign: null, untrackedMap: { hooli: true } }).map(r => r.company), ['Acme Holdings', 'Globex Corp']);
 check('clients: no CDM set means every Client', currentClients(prospects, '').map(p => p.id), ['1', '2', '3', '6']);
 
 const campaign = {
