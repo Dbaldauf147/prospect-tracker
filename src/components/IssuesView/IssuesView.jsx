@@ -998,6 +998,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       // shows a dash. Same 1..N rank the Opps tab's "Opp #" column shows,
       // so a row can be found there by the number printed here.
       key: 'oppNumber', label: 'Opp #', defaultWidth: 80,
+      shownFor: (row) => row.oppNumber != null,
       getFilterValue: (row) => (row.oppNumber == null ? '' : String(row.oppNumber)),
       getSortValue: (row) => (row.oppNumber == null ? null : row.oppNumber),
       render: (row) => (row.oppNumber == null
@@ -1013,6 +1014,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     },
     {
       key: 'clientManager', label: 'Client Manager', defaultWidth: 180,
+      shownFor: (row) => !!managerMap[normClientName(row.company)],
       getFilterValue: (row) => managerMap[normClientName(row.company)] || '',
       getSortValue: (row) => (managerMap[normClientName(row.company)] || '').toLowerCase(),
       render: (row) => {
@@ -1024,6 +1026,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     },
     {
       key: 'daysUntil', label: 'Days Until', defaultWidth: 110,
+      shownFor: (row) => row.daysUntil != null,
       getSortValue: (row) => row.daysUntil == null ? null : row.daysUntil,
       render: (row) => {
         if (row.daysUntil == null) return <span style={{ color: '#94A3B8' }}>-</span>;
@@ -1036,6 +1039,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     },
     {
       key: 'expirationDate', label: 'Expiration', defaultWidth: 130,
+      shownFor: (row) => !!row.expirationDate,
       getSortValue: (row) => row.expirationDate ? row.expirationDate.getTime() : null,
       render: (row) => (
         <span style={{ color: row.expirationDate ? '#334155' : '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
@@ -1048,6 +1052,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       // IssueResolution.jsx); rows with nothing editable from here show a
       // dash. Filters on "Resolve" so the fixable rows can be pulled out.
       key: 'resolution', label: 'Resolution', defaultWidth: 110,
+      shownFor: (row) => canResolve(row),
       getFilterValue: (row) => (canResolve(row) ? 'Resolve' : ''),
       render: (row) => {
         if (!canResolve(row)) return <span style={{ color: '#94A3B8' }}>-</span>;
@@ -1074,6 +1079,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       // every Table View name); red when the name isn't one. Tick to
       // approve, then "Approve ticked matches" above the table.
       key: 'bestMatch', label: 'Best Match', defaultWidth: 260,
+      shownFor: (row) => bestByRow.has(row.id),
       getFilterValue: (row) => (bestByRow.has(row.id) ? (matchFor(row) || 'No match') : ''),
       getSortValue: (row) => (bestByRow.has(row.id) ? (matchFor(row) || '~').toLowerCase() : null),
       render: (row) => {
@@ -1119,6 +1125,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       // every other issue type shows a dash. Sorts / filters on the
       // current value so the unset ones can be pulled to the top.
       key: 'reasonNotSold', label: 'Reason Not Sold', defaultWidth: 175,
+      shownFor: (row) => !!row.closeNotSold,
       getFilterValue: (row) => row.closeNotSold?.reasonNotSold || '',
       getSortValue: (row) => (row.closeNotSold?.reasonNotSold || '').toLowerCase(),
       render: (row) => {
@@ -1185,6 +1192,17 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
   ], [onSelectProspect, prospectById, managerMap, settings, oppsRecords, updateProspect, bestByRow, matchEdits, matchTicked, companyByLower]);
 
 
+  // A column that only serves certain issues (shownFor) is shown only while
+  // one of those issues is on the list: no Close Not Sold issue, no Reason
+  // Not Sold column; no "Opp company not in Table View", no Best Match.
+  // Read off every issue, snoozed included, not the filtered rows, so a
+  // column with a filter on it can't vanish and leave the filter stuck.
+  // Area, Issue, Client, Details and Snooze always show.
+  const visibleColumns = useMemo(() => {
+    const pool = issues || [];
+    return columns.filter(c => !c.shownFor || pool.some(r => c.shownFor(r)));
+  }, [columns, issues]);
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <div style={{ padding: '1rem 1.25rem 0.5rem', flexShrink: 0 }}>
@@ -1239,7 +1257,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           <>
           <DataTable
             tableId="issues"
-            columns={columns}
+            columns={visibleColumns}
             rows={issues}
             defaultSort={{ key: 'daysUntil', direction: 'asc' }}
             emptyMessage="No issues to display"
