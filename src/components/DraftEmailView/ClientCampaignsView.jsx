@@ -6,10 +6,21 @@
 //
 // The roster is the campaign as last saved on Email Campaigns, so a send
 // that went out since its last refresh shows once that page refreshes it.
-import { useMemo, useState } from 'react';
+//
+// When the campaign is tagged with services (Email Campaigns > Services),
+// a panel above the table splits the clients by where each service stands
+// at them: Sold, In progress, Not sold, N/A, Not explored, read the way the
+// company popup reads it (manual status, then a matching opp, then auto N/A).
+import { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
-import { campaignChoices, clientCampaignRows } from '../../utils/clientCampaignCoverage';
+import { campaignChoices, clientCampaignRows, clientServiceBuckets } from '../../utils/clientCampaignCoverage';
+import { campaignServices } from '../../utils/campaignServices';
+import { buildOppStagesByClient, effectiveServiceStatus } from '../../utils/serviceCoverage';
+import { buildAutoNaByClient } from '../../utils/serviceAutoNaByClient';
+import { serviceStatusBucket, serviceStatusColor, SERVICE_BUCKETS } from '../../utils/serviceStatusColors';
+import { loadOppsFromCache } from '../../utils/oppsCache';
+import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 
@@ -58,7 +69,47 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     () => clientCampaignRows({ prospects, cdmName, campaign, untrackedMap: clientUntrackedMap }),
     [prospects, cdmName, campaign, clientUntrackedMap],
   );
-  const rows = onlyReached ? allRows.filter(r => r.onCampaign > 0) : allRows;
+  // Opps and HubSpot contacts feed the service statuses (an opp naming the
+  // service, and the auto N/A rules), as on the company popup.
+  const [oppsRecords, setOppsRecords] = useState([]);
+  const [contacts, setContacts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    loadOppsFromCache().then(o => { if (!cancelled) setOppsRecords(o?.records || []); }).catch(() => {});
+    getHubspotContacts().then(c => { if (!cancelled) setContacts(c || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const services = useMemo(() => campaignServices(campaign), [campaign]);
+  const clients = useMemo(() => allRows.map(r => r.client).filter(Boolean), [allRows]);
+  const oppStagesByClient = useMemo(
+    () => (services.length ? buildOppStagesByClient(clients, oppsRecords, services) : new Map()),
+    [services, clients, oppsRecords],
+  );
+  const autoNaByClient = useMemo(
+    () => (services.length ? buildAutoNaByClient(clients, { settings, contacts, oppStagesByClient }) : new Map()),
+    [services, clients, settings, contacts, oppStagesByClient],
+  );
+  const statusOf = (client, service) => effectiveServiceStatus(client, service, oppStagesByClient, autoNaByClient);
+  const serviceBuckets = useMemo(
+    () => clientServiceBuckets({ rows: allRows, services, statusOf }),
+    // statusOf only reads the two maps below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allRows, services, oppStagesByClient, autoNaByClient],
+  );
+
+  // Clicking a bucket narrows the table to its clients; again clears it.
+  const [bucketPick, setBucketPick] = useState(null); // { service, key }
+  const pickedName = picked?.label || '';
+  useEffect(() => { setBucketPick(null); }, [pickedName]);
+  const bucketIds = useMemo(() => {
+    if (!bucketPick) return null;
+    const b = serviceBuckets.find(x => x.service === bucketPick.service)?.buckets.find(x => x.key === bucketPick.key);
+    return b ? new Set(b.clients.map(x => x.row.id)) : null;
+  }, [bucketPick, serviceBuckets]);
+
+  let rows = onlyReached ? allRows.filter(r => r.onCampaign > 0) : allRows;
+  if (bucketIds) rows = rows.filter(r => bucketIds.has(r.id));
   const reached = allRows.filter(r => r.onCampaign > 0).length;
   const peopleCount = allRows.reduce((n, r) => n + r.onCampaign, 0);
   const repliedClients = allRows.filter(r => r.replied > 0).length;
@@ -139,6 +190,25 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
       exportValue: r => r.lastSent,
       render: r => (r.lastSent ? fmtDate(r.lastSent) : <span style={{ color: '#94A3B8' }}>-</span>),
     },
+    ...services.map(service => ({
+      key: `svc:${service.toLowerCase()}`,
+      label: service,
+      defaultWidth: 130,
+      getSortValue: r => SERVICE_BUCKETS.findIndex(b => b.key === serviceStatusBucket(r.client ? statusOf(r.client, service) : '')),
+      getFilterValue: r => (r.client && statusOf(r.client, service)) || 'Not explored',
+      exportValue: r => (r.client && statusOf(r.client, service)) || '',
+      render: r => {
+        const status = r.client ? statusOf(r.client, service) : '';
+        if (!status) return <span style={{ color: '#94A3B8' }}>Not explored</span>;
+        const c = serviceStatusColor(status);
+        return (
+          <span style={{
+            background: c.bg || '#F1F5F9', color: c.color || '#475569',
+            padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap',
+          }}>{status}</span>
+        );
+      },
+    })),
   ];
 
   const noClients = allRows.length === 0;
@@ -184,6 +254,54 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
         </div>
       )}
 
+      {campaign && !noClients && serviceBuckets.map(({ service, buckets }) => (
+        <div key={service} data-service-buckets style={{ border: '1px solid #E2E8F0', borderRadius: 8, background: '#fff', padding: '0.6rem 0.75rem' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.45rem' }}>
+            {service}
+            <span style={{ fontWeight: 400, color: '#64748B' }}> - where this service stands at each client. Click a heading to filter the table.</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.5rem' }}>
+            {buckets.map(b => {
+              const active = bucketPick?.service === service && bucketPick?.key === b.key;
+              return (
+                <div key={b.key} style={{
+                  border: `1px solid ${active ? b.color : '#E2E8F0'}`, borderRadius: 6, overflow: 'hidden',
+                  boxShadow: active ? `0 0 0 1px ${b.color}` : 'none',
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => setBucketPick(active ? null : { service, key: b.key })}
+                    title={active ? 'Show every client again' : `Show only the clients where ${service} is ${b.label}`}
+                    style={{
+                      width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      background: b.bg === '#FFFFFF' ? '#F8FAFC' : b.bg, color: b.color, border: 'none',
+                      padding: '0.3rem 0.55rem', font: 'inherit', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
+                    }}
+                  >
+                    <span>{b.label}</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{b.clients.length}</span>
+                  </button>
+                  <div style={{ padding: '0.3rem 0.55rem', display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 140, overflowY: 'auto' }}>
+                    {b.clients.length === 0 && <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>No clients</span>}
+                    {b.clients.map(({ row, status }) => (
+                      <div key={row.id} style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: '0.75rem', minWidth: 0 }}>
+                        {onSelectProspect && row.client
+                          ? <button type="button" style={{ ...linkBtn, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${row.company}${status && b.key === 'inProgress' ? ` (${status})` : ''}. Open the company popup`} onClick={() => onSelectProspect(row.client)}>{row.company}</button>
+                          : <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company}</span>}
+                        <span
+                          style={{ marginLeft: 'auto', flexShrink: 0, fontSize: '0.68rem', color: row.onCampaign ? '#3730A3' : '#94A3B8', fontWeight: row.onCampaign ? 700 : 400 }}
+                          title={row.onCampaign ? `${row.onCampaign} ${row.onCampaign === 1 ? 'person' : 'people'} here on this campaign` : 'Nobody here is on this campaign'}
+                        >{row.onCampaign ? `${row.onCampaign} on` : 'not on'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
       <div style={{
         height: 'calc(100vh - 230px)', minHeight: 320, display: 'flex', flexDirection: 'column',
         border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff',
@@ -197,7 +315,9 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           variableRowHeight
           emptyMessage={noClients
             ? 'No current clients found. Clients are the Table View companies with status Client and you as CDM, less any ticked Don\'t Track on the Clients tab.'
-            : onlyReached && reached === 0
+            : bucketIds && rows.length === 0
+              ? 'No clients in that bucket match the filters.'
+              : onlyReached && reached === 0
               ? 'None of your current clients are on this campaign.'
               : 'No clients match the filters.'}
           exportFileName={`Client campaigns - ${picked?.label || 'campaign'}`}

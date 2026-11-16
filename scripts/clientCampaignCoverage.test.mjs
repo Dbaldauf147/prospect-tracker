@@ -2,7 +2,7 @@
 // clients a campaign reached, and who at each.
 // Plain Node, no framework. Run:
 //   node scripts/clientCampaignCoverage.test.mjs
-import { currentClients, campaignChoices, clientCampaignRows } from '../src/utils/clientCampaignCoverage.js';
+import { currentClients, campaignChoices, clientCampaignRows, clientServiceBuckets } from '../src/utils/clientCampaignCoverage.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -52,6 +52,15 @@ check('no campaign: every client with nobody', clientCampaignRows({ prospects, c
 check('choices: newest first', campaignChoices([
   { title: 'Old', savedAt: '2026-01-01' }, { title: 'New', savedAt: '2026-06-01' }, null,
 ]).map(c => c.label), ['New', 'Old']);
+
+{
+  const rows = clientCampaignRows({ prospects, cdmName: 'Dan Baldauf', campaign: null });
+  const status = { 'Acme Holdings': 'Sold', 'Globex Corp': 'N/A' };
+  const out = clientServiceBuckets({ rows, services: ['Advisory'], statusOf: (c, svc) => (svc === 'Advisory' ? status[c.company] : '') });
+  check('buckets: one block per service', out.map(o => o.service), ['Advisory']);
+  check('buckets: every bucket listed, empty ones too', out[0].buckets.map(b => `${b.label}:${b.clients.map(x => x.row.company).join('|')}`),
+    ['Sold:Acme Holdings', 'In progress:', 'Not sold:', 'N/A:Globex Corp', 'Not explored:Hooli']);
+}
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll client campaign coverage tests passed.');
