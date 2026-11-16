@@ -64,6 +64,37 @@ export function oppCompaniesMissing(oppRecords, prospects) {
   return [...groups.values()].sort((a, b) => (b.opps.length - a.opps.length) || a.account.localeCompare(b.account));
 }
 
+// Words that say nothing about which company it is.
+const FILLER = new Set(['the', 'of', 'and', 'a', 'an', 'group', 'holdings', 'partners', 'company', 'inc', 'llc', 'lp', 'trust', 'real', 'estate', 'capital', 'properties', 'management', 'investments', 'investment']);
+const wordsOf = (name) => bfoNorm(name).split(' ').filter(w => w.length > 1);
+
+/**
+ * Table View company names ordered for mapping `account` to one: the
+ * likeliest first (one name inside the other, then the most shared
+ * distinctive words), then the rest A to Z. Returns { names, best }, `best`
+ * the top name when it shares a distinctive word or contains / is contained
+ * by the account, else ''.
+ */
+export function rankCompanyChoices(account, prospects) {
+  const target = bfoNorm(account);
+  const tWords = new Set(wordsOf(account));
+  const seen = new Set();
+  const scored = [];
+  for (const p of prospects || []) {
+    const name = String(p?.company || '').trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    const n = bfoNorm(name);
+    let score = 0;
+    if (n && target && (n.includes(target) || target.includes(n)) && Math.min(n.length, target.length) >= 3) score += 10;
+    for (const w of wordsOf(name)) if (tWords.has(w)) score += FILLER.has(w) ? 0.25 : 2;
+    scored.push({ name, score });
+  }
+  scored.sort((a, b) => (b.score - a.score) || a.name.localeCompare(b.name));
+  const top = scored[0];
+  return { names: scored.map(x => x.name), best: top && top.score >= 2 ? top.name : '' };
+}
+
 /** The Issues rows for them. `oppNumbers` maps opp _id to its Opp #. */
 export function oppCompanyMissingIssues(oppRecords, prospects, oppNumbers = new Map()) {
   return oppCompaniesMissing(oppRecords, prospects).map((g) => {
@@ -81,6 +112,9 @@ export function oppCompanyMissingIssues(oppRecords, prospects, oppNumbers = new 
       prospectId: null,
       daysUntil: null,
       expirationDate: null,
+      // Resolution popup (Issues > Resolve): map these opps to an existing
+      // Table View company by setting their Account to its name.
+      resolve: { kind: 'oppCompany', account: g.account, accounts: g.accounts, oppIds: g.opps.map(r => r._id).filter(id => id != null) },
       detail: `${count} ${count === 1 ? 'opp names' : 'opps name'} "${g.account}" as the Account (${stages})`
         + `${nums.length > 1 ? `: Opp # ${nums.join(', ')}` : ''}, but no Table View company has that name.`
         + `${spellings} Add the company to Table View, or correct the Account to an existing company's name.`,

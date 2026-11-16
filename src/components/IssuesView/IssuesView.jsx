@@ -821,6 +821,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
   const oppNumbers = useMemo(() => buildOppNumberMap(oppsRecords), [oppsRecords]);
   const resolutionCtx = {
     settings, updateSettings, updateProspect, dropdownLists, oppNumbers,
+    prospects,
     oppsRecords: oppsRecords || [],
     uid: user?.uid,
   };
