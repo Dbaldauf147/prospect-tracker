@@ -17,7 +17,8 @@ import { buildOppNumberMap } from '../../utils/oppNumbers';
 import { buildResolution, resolutionKind } from './issueResolutionSpecs';
 import { IssueResolutionModal } from './IssueResolution';
 import { OppCompanyMapModal } from './OppCompanyMapModal';
-import { mapOppsToCompany } from '../../utils/oppCompanyMap';
+import { mapOppsToCompany, mapManyOppsToCompanies } from '../../utils/oppCompanyMap';
+import { rankCompanyChoices } from '../../utils/oppCompanyMissing';
 
 // Issues tab — a running list of outstanding items that need to be
 // addressed across the app. Each row is one problem surfaced by a
@@ -864,6 +865,66 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       setSavingFix(false);
     }
   }
+  // Best Match column: for each "Opp company not in Table View" row, the
+  // Table View company it most likely is (rankCompanyChoices), which the
+  // user can retype, and a tick to approve it. "Approve ticked matches"
+  // re-points all their opps in one Opps save (utils/oppCompanyMap).
+  const companyByLower = useMemo(() => {
+    const m = new Map();
+    for (const p of prospects || []) {
+      const k = String(p?.company || '').trim().toLowerCase();
+      if (k && !m.has(k)) m.set(k, p);
+    }
+    return m;
+  }, [prospects]);
+  const bestByRow = useMemo(() => {
+    const m = new Map();
+    for (const row of issues || []) {
+      if (resolutionKind(row) !== 'oppCompany') continue;
+      m.set(row.id, rankCompanyChoices(row.resolve.account, prospects).best);
+    }
+    return m;
+  }, [issues, prospects]);
+  const [matchEdits, setMatchEdits] = useState(() => new Map());
+  const [matchTicked, setMatchTicked] = useState(() => new Set());
+  const matchFor = (row) => (matchEdits.has(row.id) ? matchEdits.get(row.id) : (bestByRow.get(row.id) || ''));
+  const matchRecord = (row) => companyByLower.get(String(matchFor(row)).trim().toLowerCase()) || null;
+  const matchRows = (issues || []).filter(r => bestByRow.has(r.id));
+  const tickedReady = matchRows.filter(r => matchTicked.has(r.id) && matchRecord(r));
+  const [approving, setApproving] = useState(false);
+  function setMatch(row, value) {
+    setMatchEdits(prev => new Map(prev).set(row.id, value));
+  }
+  function toggleMatchTick(row) {
+    setMatchTicked(prev => {
+      const next = new Set(prev);
+      if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
+      return next;
+    });
+  }
+  function tickAllMatches() {
+    setMatchTicked(new Set(matchRows.filter(r => !r.snoozed && matchRecord(r)).map(r => r.id)));
+  }
+  async function approveMatches() {
+    const items = tickedReady.map(row => ({ row, resolve: row.resolve, record: matchRecord(row) }));
+    if (!items.length || approving) return;
+    const opps = items.reduce((n, it) => n + (it.resolve.oppIds?.length || 0), 0);
+    const lines = items.slice(0, 15).map(it => `${it.resolve.account}  ->  ${it.record.company}`);
+    if (items.length > 15) lines.push(`and ${items.length - 15} more`);
+    const ok = window.confirm(`Change the Account on ${opps} opp${opps === 1 ? '' : 's'} to these Table View companies?\n\n${lines.join('\n')}\n\nEach old spelling is kept as the company's other name.`);
+    if (!ok) return;
+    setApproving(true);
+    try {
+      const res = await mapManyOppsToCompanies(items, { keepAlias: true }, { uid: user?.uid, updateProspect });
+      setMatchTicked(new Set());
+      setMatchEdits(new Map());
+      window.alert(`Mapped ${res.opps} opp${res.opps === 1 ? '' : 's'} to ${res.companies} compan${res.companies === 1 ? 'y' : 'ies'}.`);
+    } catch (err) {
+      window.alert(`Could not approve the matches: ${err?.message || err}`);
+    } finally {
+      setApproving(false);
+    }
+  }
   async function saveResolution(values, changed) {
     if (!resolvingSpec) return;
     setSavingFix(true);
@@ -1008,6 +1069,47 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       },
     },
     {
+      // "Opp company not in Table View" rows only: the Table View company
+      // the Account most likely is. Retype to change it (the list offers
+      // every Table View name); red when the name isn't one. Tick to
+      // approve, then "Approve ticked matches" above the table.
+      key: 'bestMatch', label: 'Best Match', defaultWidth: 260,
+      getFilterValue: (row) => (bestByRow.has(row.id) ? (matchFor(row) || 'No match') : ''),
+      getSortValue: (row) => (bestByRow.has(row.id) ? (matchFor(row) || '~').toLowerCase() : null),
+      render: (row) => {
+        if (!bestByRow.has(row.id)) return <span style={{ color: '#94A3B8' }}>-</span>;
+        const value = matchFor(row);
+        const valid = !!matchRecord(row);
+        return (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }} onClick={(e) => e.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={matchTicked.has(row.id) && valid}
+              disabled={!valid}
+              onChange={() => toggleMatchTick(row)}
+              aria-label={`Approve ${row.company} as ${value || 'no match'}`}
+              title={valid ? `Tick to approve: the opps' Account becomes "${matchRecord(row).company}"` : 'Pick a Table View company first'}
+            />
+            <input
+              type="text"
+              list="issues-table-view-companies"
+              value={value}
+              placeholder="No match: type a company"
+              onChange={(e) => setMatch(row, e.target.value)}
+              aria-label={`Best Table View match for ${row.company}`}
+              title={value && !valid ? `"${value}" is not a Table View company` : value}
+              style={{
+                flex: 1, minWidth: 0, padding: '2px 6px', fontSize: '0.74rem', fontFamily: 'inherit', borderRadius: 4,
+                border: `1px solid ${value && !valid ? '#FCA5A5' : '#CBD5E1'}`,
+                background: value && !valid ? '#FEF2F2' : (matchEdits.has(row.id) ? '#FFFBEB' : '#fff'),
+                color: '#1E293B',
+              }}
+            />
+          </span>
+        );
+      },
+    },
+    {
       key: 'detail', label: 'Details', defaultWidth: 420,
       getFilterValue: (row) => row.detail || '',
       render: (row) => <span style={{ color: '#475569' }}>{row.detail}</span>,
@@ -1080,7 +1182,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     },
     // canResolve / openResolution read settings, opps and prospects.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [onSelectProspect, prospectById, managerMap, settings, oppsRecords, updateProspect]);
+  ], [onSelectProspect, prospectById, managerMap, settings, oppsRecords, updateProspect, bestByRow, matchEdits, matchTicked, companyByLower]);
 
 
   return (
@@ -1134,6 +1236,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
             </div>
           </div>
         ) : (
+          <>
           <DataTable
             tableId="issues"
             columns={columns}
@@ -1144,7 +1247,26 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
             rowStyle={(row) => (row.snoozed ? { opacity: 0.5 } : undefined)}
             settings={settings}
             updateSettings={updateSettings}
+            toolbarActions={matchRows.length ? [
+              {
+                key: 'tick-best-matches',
+                label: 'Tick all best matches',
+                title: 'Tick every "Opp company not in Table View" row whose Best Match is a Table View company',
+                onClick: tickAllMatches,
+              },
+              {
+                key: 'approve-best-matches',
+                label: approving ? 'Approving...' : `Approve ticked matches (${tickedReady.length})`,
+                title: 'Set the Account on the ticked rows\' opps to their Best Match, in one save',
+                onClick: approveMatches,
+                disabled: approving || tickedReady.length === 0,
+              },
+            ] : undefined}
           />
+          <datalist id="issues-table-view-companies">
+            {[...companyByLower.values()].map(p => <option key={p.id} value={String(p.company).trim()} />)}
+          </datalist>
+          </>
         )}
       </div>
 

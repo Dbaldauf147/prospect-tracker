@@ -68,3 +68,34 @@ export async function mapOppsToCompany(resolve, target, { keepAlias = true } = {
   }
   return { name, created };
 }
+
+/**
+ * The Issues tab's "Approve best matches": several rows at once, each to an
+ * existing company. `items` is [{ resolve, record }]. One Opps save for every
+ * opp, then each company's aliases (all its new spellings in one write).
+ * Returns { opps, companies } counts.
+ */
+export async function mapManyOppsToCompanies(items, { keepAlias = true } = {}, deps = {}) {
+  const { uid, updateProspect } = deps;
+  const patches = {};
+  const spellingsByRecord = new Map();
+  for (const { resolve, record } of items || []) {
+    const name = String(record?.company || '').trim();
+    if (!record?.id || !name) continue;
+    for (const id of resolve?.oppIds || []) patches[String(id)] = { Account: name };
+    const spellings = (resolve?.accounts?.length ? resolve.accounts : [resolve?.account]).filter(s => String(s || '').trim() && String(s).trim() !== name);
+    const entry = spellingsByRecord.get(record.id) || { record, names: [] };
+    entry.names.push(...spellings);
+    spellingsByRecord.set(record.id, entry);
+  }
+  const opps = Object.keys(patches).length;
+  if (!opps) throw new Error('Nothing to approve: no ticked row has a Table View company.');
+  await bulkSetOppFields(uid, patches);
+  if (keepAlias && updateProspect) {
+    for (const { record, names } of spellingsByRecord.values()) {
+      const next = aliasesWith(record, names);
+      if (next) await updateProspect(record.id, { [ALIASES_FIELD]: next });
+    }
+  }
+  return { opps, companies: spellingsByRecord.size };
+}

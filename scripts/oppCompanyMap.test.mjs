@@ -7,7 +7,7 @@ register('./stubs/idbLoader.mjs', import.meta.url);
 register('./stubs/loader.mjs', import.meta.url);
 const { setDbUserId } = await import('../src/utils/db.js');
 const { saveOpps2Cache, loadOpps2Cache } = await import('../src/utils/opps2Store.js');
-const { mapOppsToCompany, aliasesWith } = await import('../src/utils/oppCompanyMap.js');
+const { mapOppsToCompany, aliasesWith, mapManyOppsToCompanies } = await import('../src/utils/oppCompanyMap.js');
 
 let passed = 0, failed = 0;
 function ok(cond, name) {
@@ -57,6 +57,26 @@ try { await mapOppsToCompany(resolve, { mode: 'create', name: '  ' }, {}, { addP
 ok(/Type a name/.test(threw), 'a blank new name is refused');
 
 ok(aliasesWith({ company: 'Acme', companyAliases: [] }, ['ACME Inc.', 'Acme']) === null, 'a spelling of its own name is no alias');
+
+// Approve best matches: several rows in one go.
+await saveOpps2Cache({ records: [
+  { _id: 'a1', Account: 'Brookfield (Calare)' }, { _id: 'a2', Account: 'Brookfield (AVEN)' },
+  { _id: 'a3', Account: 'Best Buy Co' }, { _id: 'a4', Account: 'Untouched' },
+], _updatedAt: Date.now() });
+const many = [];
+const bf = { id: 'bf', company: 'Brookfield' };
+const bb = { id: 'bb', company: 'Best Buy' };
+const res = await mapManyOppsToCompanies([
+  { resolve: { account: 'Brookfield (Calare)', accounts: ['Brookfield (Calare)'], oppIds: ['a1'] }, record: bf },
+  { resolve: { account: 'Brookfield (AVEN)', accounts: ['Brookfield (AVEN)'], oppIds: ['a2'] }, record: bf },
+  { resolve: { account: 'Best Buy Co', oppIds: ['a3'] }, record: bb },
+], { keepAlias: true }, { updateProspect: async (id, patch) => many.push([id, patch]) });
+ok(res.opps === 3 && res.companies === 2, 'counts the opps and companies');
+ok(JSON.stringify(await accounts()) === JSON.stringify(['Brookfield', 'Brookfield', 'Best Buy', 'Untouched']), 'every ticked opp re-pointed in one save');
+ok(JSON.stringify(many) === JSON.stringify([['bf', { companyAliases: ['Brookfield (Calare)', 'Brookfield (AVEN)'] }]]), 'one alias write per company, a same-key spelling skipped');
+threw = '';
+try { await mapManyOppsToCompanies([{ resolve: { oppIds: ['a1'] }, record: null }], {}, {}); } catch (e) { threw = e.message; }
+ok(/Nothing to approve/.test(threw), 'nothing valid, nothing saved');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
