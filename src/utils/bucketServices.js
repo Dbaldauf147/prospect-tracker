@@ -122,3 +122,27 @@ export function companyClosedBuckets(record, ctx, buckets, { contacts = null, ta
   if (contactNa) for (const k of contactNa.keys()) closed.add(k);
   return closed;
 }
+
+/**
+ * The services that read N/A at a company because their contact category is
+ * N/A there: the By Category heading's own N/A (record.dmSearchSteps[key].na)
+ * or a contact with that category's tag marked N/A (contactNaByBucket).
+ * Returns Map(service name -> { why, bucket }), the first category to claim
+ * a service winning. Derived only: callers lay it under a manual status and
+ * a matching opp, like the sold-service Auto-N/A.
+ */
+export function categoryNaServices({ buckets, serviceNames, overrides, dmSearchSteps = null, contacts = null, tagReview = null }) {
+  const out = new Map();
+  const byContact = contacts && tagReview ? contactNaByBucket(contacts, tagReview, buckets) : new Map();
+  for (const b of buckets || []) {
+    const names = (byContact.get(b.key) || []).map(x => x.name);
+    if (!names.length && !dmSearchSteps?.[b.key]?.na) continue;
+    const why = names.length
+      ? `${b.label} is marked N/A by ${names.join(', ')}`
+      : `${b.label} is marked N/A for this company`;
+    for (const name of servicesForBucket(b, serviceNames, overrides || {})) {
+      if (!out.has(name)) out.set(name, { why, bucket: b.label });
+    }
+  }
+  return out;
+}
