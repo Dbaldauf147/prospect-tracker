@@ -5,6 +5,7 @@
 // match and every tick re-adds the whole sheet as duplicates; match too
 // eagerly and a genuinely new account never arrives.
 import { companyDedupeKey } from './companyKey.js';
+import { recordCompanyKeys } from './companyAliases.js';
 
 // Which sheet rows the website doesn't have yet.
 //
@@ -29,9 +30,14 @@ import { companyDedupeKey } from './companyKey.js';
 // collapse agreed the two were the same company — exactly the case that
 // was failing.
 export function newSheetRows(sheetProspects, prospects) {
-  const seen = new Set(
-    (prospects || []).map((p) => rowKey(p)),
-  );
+  // A roster record counts under its aliases too: a name merged away
+  // with "Merge duplicate…" must not come back from the sheet as a new
+  // account (see utils/companyAliases).
+  const seen = new Set();
+  for (const p of prospects || []) {
+    seen.add(rowKey(p));
+    for (const k of recordCompanyKeys(p)) seen.add(k);
+  }
   const fresh = [];
   for (const p of sheetProspects || []) {
     const key = rowKey(p);

@@ -28,7 +28,11 @@
 //   readRoster()       → an authoritative read, used only when the wait
 //                        above fails
 //   create(record)     → writes the record, resolves to its id
-export function createAddProspectGuard({ keyOf, getRoster, whenRosterReady, readRoster, create }) {
+//   keysOf(record)     → optional: every key an EXISTING record answers
+//                        to (its name plus any merge aliases, see
+//                        utils/companyAliases). Defaults to [keyOf(record)].
+export function createAddProspectGuard({ keyOf, keysOf, getRoster, whenRosterReady, readRoster, create }) {
+  const matchKeys = keysOf || ((p) => [keyOf(p)]);
   // key → promise of the id being created for it. An entry lives until
   // the roster reports that company, so a second caller in the same
   // moment waits for the first rather than creating its own copy.
@@ -59,7 +63,7 @@ export function createAddProspectGuard({ keyOf, getRoster, whenRosterReady, read
       if (inFlight) return inFlight;
 
       const roster = await rosterFor(key);
-      const existing = roster.find(p => keyOf(p) === key);
+      const existing = roster.find(p => matchKeys(p).includes(key));
       if (existing) return existing.id;
 
       // Re-check: awaiting the roster above yields, and another caller

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, reconcileAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, companyDedupeKey, readAllProspects } from '../utils/firestoreSync';
 import { createAddProspectGuard } from '../utils/addProspectGuard';
+import { recordCompanyKeys } from '../utils/companyAliases';
 import { clearImportedTierOnEdit } from '../utils/tierSource';
 
 // Local calendar date as YYYY-MM-DD. Used to stamp when a firm entered
@@ -52,6 +53,8 @@ export function useProspects(user, { settingsLoaded = true, onDuplicatesCollapse
   if (!addGuardRef.current) {
     addGuardRef.current = createAddProspectGuard({
       keyOf: (p) => companyDedupeKey(p?.company),
+      // A merged-away name finds the record it was merged into.
+      keysOf: (p) => recordCompanyKeys(p),
       getRoster: () => prospectsRef.current,
       whenRosterReady: () => rosterReadyRef.current.promise,
       readRoster: () => readAllProspects(),

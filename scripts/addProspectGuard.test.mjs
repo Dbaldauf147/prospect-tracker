@@ -9,6 +9,7 @@
 // before the first snapshot and stale for a moment after every write.
 // The dependencies are injected so the timing can be driven here.
 import { createAddProspectGuard } from '../src/utils/addProspectGuard.js';
+import { recordCompanyKeys } from '../src/utils/companyAliases.js';
 // The real key the app injects, so these exercise the wiring as shipped
 // rather than a stand-in that happens to be stricter.
 import { companyDedupeKey } from '../src/utils/companyKey.js';
@@ -24,12 +25,13 @@ const keyOf = (p) => companyDedupeKey(p?.company);
 
 // A harness that models the real thing: writes land in `store`, but the
 // roster only sees them when the test says a snapshot arrived.
-function harness({ roster = [], ready = true, readRoster } = {}) {
+function harness({ roster = [], ready = true, readRoster, keysOf } = {}) {
   const state = { roster: [...roster], created: [], nextId: 1, reads: 0 };
   let resolveReady;
   const readyPromise = ready ? Promise.resolve() : new Promise(r => { resolveReady = r; });
   const guard = createAddProspectGuard({
     keyOf,
+    keysOf,
     getRoster: () => state.roster,
     whenRosterReady: () => readyPromise,
     readRoster: readRoster ? (...a) => { state.reads++; return readRoster(...a); } : async () => state.roster,
@@ -158,6 +160,25 @@ function harness({ roster = [], ready = true, readRoster } = {}) {
   await h.guard.add({});
   eq(h.state.created.length, 2, 'unnamed records are created as asked');
   eq(h.guard.pendingKeys(), [], 'and never claim a key');
+}
+
+{
+  // A name merged away with "Merge duplicate…" lives on the survivor as an
+  // alias. Adding it again returns the survivor instead of re-creating it.
+  const h = harness({
+    roster: [{ id: 'wsp', company: 'WSP', companyAliases: ['WSP Global'] }],
+    keysOf: recordCompanyKeys,
+  });
+  const id = await h.guard.add({ company: 'WSP Global Inc.' });
+  eq(id, 'wsp', 'a merged-away name finds the record it was merged into');
+  eq(h.state.created.length, 0, 'and creates nothing');
+}
+
+{
+  // Without keysOf the guard behaves as it always did.
+  const h = harness({ roster: [{ id: 'wsp', company: 'WSP', companyAliases: ['WSP Global'] }] });
+  await h.guard.add({ company: 'WSP Global' });
+  eq(h.state.created.length, 1, 'aliases only count when keysOf is supplied');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
