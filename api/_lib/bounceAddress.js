@@ -39,6 +39,12 @@ const PATTERNS = [
 ];
 const SYSTEM_LOCAL = /^(?:postmaster|mailer-daemon|no-?reply|do-?not-?reply|bounces?)$/i;
 
+// Outlook's plain-text copy of a forwarded message writes every link as
+// "text<target>", so an address reads "harveyw@x.com<mailto:harveyw@x.com>"
+// and "<harveyw@x.com<mailto:harveyw@x.com>>". The link target is dropped
+// so the address reads as the notice wrote it.
+const plainLinks = (t) => String(t || '').replace(/<mailto:[^<>\s]*>/gi, '').replace(/<(https?:[^<>\s]*)>/gi, '');
+
 /**
  * The failed addresses a notice names, lowercased, each once. `exclude` is
  * addresses never to return (the mailbox's own).
@@ -46,7 +52,7 @@ const SYSTEM_LOCAL = /^(?:postmaster|mailer-daemon|no-?reply|do-?not-?reply|boun
 export function bouncedAddresses(text, { exclude = [] } = {}) {
   const skip = new Set((exclude || []).map(e => String(e || '').trim().toLowerCase()).filter(Boolean));
   const out = [];
-  const body = String(text || '');
+  const body = plainLinks(text);
   for (const re of PATTERNS) {
     re.lastIndex = 0;
     let m;
@@ -61,7 +67,7 @@ export function bouncedAddresses(text, { exclude = [] } = {}) {
 
 /** The notice's one-line reason, when it gives one ('' otherwise). */
 export function bounceReason(text) {
-  const body = String(text || '').replace(/\r/g, '');
+  const body = plainLinks(text).replace(/\r/g, '');
   const tidy = (s) => s.replace(/\s+/g, ' ').trim().slice(0, 200);
   let m = body.match(/reason for the problem:\s*([\s\S]{0,300})/i);
   if (m) return tidy(m[1].split(/\n\s*\n|\[|For more information/i)[0]);

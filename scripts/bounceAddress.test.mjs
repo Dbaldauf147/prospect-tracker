@@ -41,6 +41,23 @@ eq(bouncedAddresses('Please contact daniel.baldauf@se.com or sales@acme.com for 
 eq(isBounceNotice({ subject: 'RE: Capital Planning Webinar Invite', from: 'kchatman@whitestonereit.com' }), false, 'a real reply');
 eq(isBounceNotice({ subject: 'Automatic reply: Capital Planning Webinar Invite', from: 'x@y.com' }), false, 'an out-of-office');
 
+// Outlook's plain text of a forward writes links as "text<target>". This is
+// the Nationwide notice exactly as it arrived in Gmail when forwarded.
+const outlookFwd = `From: Mail Delivery System <noreply@nationwide.com>
+Sent: Monday, November 16, 2026 11:26 AM
+To: Daniel Baldauf <Daniel.Baldauf@se.com>
+Subject: Delivery Status Notification (Failure)
+
+The following message to <harveyw@nationwide.com<mailto:harveyw@nationwide.com>> was undeliverable.
+The reason for the problem:
+5.1.0 - Unknown address error 550-'5.4.1 Recipient address rejected: Access denied. For more information see https://aka.ms/EXOSmtpErrors<https://aka.ms/EXOSmtpErrors> [BL6PEPF0006C3DE.namprd02.prod.outlook.com 2026-11-16T16:26:07.428Z 08DF434B9A8DFE68]'`;
+eq(bouncedAddresses(outlookFwd, { exclude: me }), ['harveyw@nationwide.com'], 'an Outlook forward with <mailto:> links (no Final-Recipient line)');
+eq(bounceReason(outlookFwd).startsWith("5.1.0 - Unknown address error 550-'5.4.1 Recipient address rejected: Access denied."), true, 'its reason');
+const outlookFwdMimecast = mimecast
+  .replace('sent to kchatman@whitestonereit.com couldn', 'sent to kchatman@whitestonereit.com<mailto:kchatman@whitestonereit.com> couldn')
+  .replace('5.1.1 <kchatman@whitestonereit.com>:', '5.1.1 <kchatman@whitestonereit.com<mailto:kchatman@whitestonereit.com>>:');
+eq(bouncedAddresses(outlookFwdMimecast, { exclude: me }), ['kchatman@whitestonereit.com'], 'the Mimecast notice forwarded from Outlook');
+
 // Forwarded notices, read out of the app mailbox's label (a fake session).
 eq(bounceForwardAddress('prospect.tracker.app@gmail.com'), 'prospect.tracker.app+bounces@gmail.com', 'forward to the +bounces alias');
 eq(bounceForwardAddress('x+old@gmail.com'), 'x+bounces@gmail.com', 'an existing alias is replaced');
