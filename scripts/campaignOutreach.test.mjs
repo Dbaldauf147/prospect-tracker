@@ -9,7 +9,7 @@
 // one function, so a drift here is a drift there.
 import {
   isCampaignFresh, isCampaignActive, campaignSendStats, campaignOutreachLabel, unfinishedCampaigns,
-  isCampaignPaused, campaignStatus, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS, campaignsAllSent,
+  isCampaignPaused, campaignStatus, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS, campaignPauseDays, campaignsAllSent,
   isCampaignFullySent,
 } from '../src/utils/campaignOutreach.js';
 
@@ -104,6 +104,16 @@ check('a manual Inactive beats it too',
 // its own instead of waiting to be switched back off.
 check('a pause runs for two days', CAMPAIGN_PAUSE_DAYS, 2);
 check('pausing now lands two days out', campaignPauseUntil(NOW), inDays(2));
+check('a picked length is used', campaignPauseUntil(NOW, 10), inDays(10));
+check('5 days is 5 days', campaignPauseDays(5, 'days'), 5);
+check('3 weeks is 21 days', campaignPauseDays(3, 'weeks'), 21);
+check('a typed string counts', campaignPauseDays('4', 'weeks'), 28);
+check('zero is not a pause', campaignPauseDays(0, 'days'), null);
+check('a negative is not a pause', campaignPauseDays(-2, 'weeks'), null);
+check('junk is not a pause', campaignPauseDays('soon', 'days'), null);
+check('half a day rounds to nothing', campaignPauseDays(0.4, 'days'), null);
+check('over a year is refused', campaignPauseDays(53, 'weeks'), null);
+check('a year is allowed', campaignPauseDays(365, 'days'), 365);
 
 check('paused until tomorrow is paused', isCampaignPaused({ pausedUntil: inDays(1) }, NOW), true);
 check('a pause that has run out is not', isCampaignPaused({ pausedUntil: daysAgo(1) }, NOW), false);
