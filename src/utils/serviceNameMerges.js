@@ -111,7 +111,7 @@ export function serviceRenameLogEntry(from, to, now = new Date()) {
 
 // The prospect fields keyed by service name. Each is a plain
 // { [serviceName]: value } map on the record.
-export const SERVICE_KEYED_PROSPECT_FIELDS = ['servicesExplored', 'serviceNotes', 'serviceSMEs'];
+export const SERVICE_KEYED_PROSPECT_FIELDS = ['servicesExplored', 'serviceNotes', 'serviceSMEs', 'serviceProspectAnyway'];
 
 // The settings keyed by service name, same { [serviceName]: value } shape and
 // all merged by the same rule. Everything the user fills in per service lives
