@@ -2049,6 +2049,18 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     setJobDescription(next);
     saveJobDescription(next);
   }
+  // A saved description shows as a short preview; clicking it opens the
+  // whole text in its own popup over this one. "Edit" (or an empty box)
+  // gives the textarea back.
+  const [jobDescriptionEditing, setJobDescriptionEditing] = useState(false);
+  const [jobDescriptionPopup, setJobDescriptionPopup] = useState(false);
+  const [jobDescriptionCopied, setJobDescriptionCopied] = useState(false);
+  useEffect(() => {
+    if (!jobDescriptionPopup) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setJobDescriptionPopup(false); } };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [jobDescriptionPopup]);
   const saveJobDescriptionRef = useRef(saveJobDescription);
   saveJobDescriptionRef.current = saveJobDescription;
   // Closing the popup without leaving the box (Esc) still keeps what was pasted.
@@ -3079,17 +3091,88 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                   color: jobDescription === JOB_DESCRIPTION_NA ? '#334155' : '#64748B',
                 }}
               >{jobDescription === JOB_DESCRIPTION_NA ? '\u2713 N/A' : 'N/A'}</button>
+              {jobDescription !== JOB_DESCRIPTION_NA && jobDescription.trim() && !jobDescriptionEditing && (
+                <button
+                  type="button"
+                  onClick={() => setJobDescriptionEditing(true)}
+                  title="Edit the job description"
+                  style={{ fontSize: '0.62rem', fontWeight: 700, padding: '0.05rem 0.45rem', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', border: '1px solid #E2E8F0', background: '#fff', color: '#64748B' }}
+                >Edit</button>
+              )}
             </div>
-            <textarea
-              id="contact-job-description"
-              style={{ ...inputStyle, resize: 'vertical', minHeight: '60px', lineHeight: 1.4, ...(jobDescription === JOB_DESCRIPTION_NA ? { background: '#F8FAFC', color: '#94A3B8' } : null) }}
-              value={jobDescription === JOB_DESCRIPTION_NA ? '' : jobDescription}
-              disabled={jobDescription === JOB_DESCRIPTION_NA}
-              placeholder={jobDescription === JOB_DESCRIPTION_NA ? 'N/A: no job description for this contact' : 'Paste the job description here'}
-              onChange={e => setJobDescription(e.target.value)}
-              onBlur={() => saveJobDescription()}
-              rows={3}
-            />
+            {jobDescription !== JOB_DESCRIPTION_NA && jobDescription.trim() && !jobDescriptionEditing ? (
+              <button
+                type="button"
+                id="contact-job-description"
+                data-testid="job-description-preview"
+                onClick={() => setJobDescriptionPopup(true)}
+                title="Click to read the full job description"
+                style={{
+                  ...inputStyle, display: 'block', textAlign: 'left', cursor: 'pointer', background: '#F8FAFC',
+                  minHeight: '60px', maxHeight: '60px', overflow: 'hidden', lineHeight: 1.4,
+                  whiteSpace: 'pre-wrap', color: '#334155', position: 'relative',
+                  WebkitMaskImage: 'linear-gradient(to bottom, #000 60%, transparent)', maskImage: 'linear-gradient(to bottom, #000 60%, transparent)',
+                }}
+              >{jobDescription}</button>
+            ) : (
+              <textarea
+                id="contact-job-description"
+                style={{ ...inputStyle, resize: 'vertical', minHeight: '60px', lineHeight: 1.4, ...(jobDescription === JOB_DESCRIPTION_NA ? { background: '#F8FAFC', color: '#94A3B8' } : null) }}
+                value={jobDescription === JOB_DESCRIPTION_NA ? '' : jobDescription}
+                disabled={jobDescription === JOB_DESCRIPTION_NA}
+                placeholder={jobDescription === JOB_DESCRIPTION_NA ? 'N/A: no job description for this contact' : 'Paste the job description here'}
+                onChange={e => setJobDescription(e.target.value)}
+                onBlur={() => { saveJobDescription(); setJobDescriptionEditing(false); }}
+                autoFocus={jobDescriptionEditing}
+                rows={3}
+              />
+            )}
+            {jobDescriptionPopup && createPortal(
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Job Description"
+                data-testid="job-description-popup"
+                onClick={(e) => { e.stopPropagation(); setJobDescriptionPopup(false); }}
+                style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', zIndex: 10050, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ background: '#fff', borderRadius: 12, width: 760, maxWidth: '94vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '1rem 1.25rem 0.75rem', borderBottom: '1px solid #E2E8F0' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>Job Description</h3>
+                      <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: 2 }}>
+                        {[`${f.firstname || ''} ${f.lastname || ''}`.trim(), f.jobtitle, f.company].filter(Boolean).join(' · ')}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setJobDescriptionPopup(false)} aria-label="Close" style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
+                  </div>
+                  <div style={{ padding: '1rem 1.25rem', overflowY: 'auto', whiteSpace: 'pre-wrap', fontSize: '0.85rem', lineHeight: 1.55, color: '#1E293B' }}>{jobDescription}</div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '0.75rem 1.25rem', borderTop: '1px solid #E2E8F0' }}>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try { await navigator.clipboard.writeText(jobDescription); setJobDescriptionCopied(true); window.setTimeout(() => setJobDescriptionCopied(false), 1500); } catch { /* clipboard blocked */ }
+                      }}
+                      style={{ padding: '0.35rem 0.9rem', borderRadius: 6, border: '1px solid #E2E8F0', background: '#fff', color: '#334155', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
+                    >{jobDescriptionCopied ? 'Copied!' : 'Copy'}</button>
+                    <button
+                      type="button"
+                      onClick={() => { setJobDescriptionPopup(false); setJobDescriptionEditing(true); }}
+                      style={{ padding: '0.35rem 0.9rem', borderRadius: 6, border: '1px solid #E2E8F0', background: '#fff', color: '#334155', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
+                    >Edit</button>
+                    <button
+                      type="button"
+                      onClick={() => setJobDescriptionPopup(false)}
+                      style={{ padding: '0.35rem 0.9rem', borderRadius: 6, border: '1px solid #0A66C2', background: '#0A66C2', color: '#fff', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
+                    >Close</button>
+                  </div>
+                </div>
+              </div>,
+              document.body,
+            )}
           </div>
           <div style={{ gridColumn: 'span 2', position: 'relative' }} ref={companyBoxRef}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
