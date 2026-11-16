@@ -1,4 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense, Fragment, isValidElement, cloneElement } from 'react';
+import { useBadEmails } from '../../hooks/useBadEmails';
+import { badEmailInfo, badEmailTitle } from '../../utils/badEmails';
 import { BfoHistoryTab } from './BfoHistoryTab';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { lsHas, settingsHaveLoaded } from '../../utils/tablePrefsSync';
@@ -1325,6 +1327,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [connected, setConnected] = useState(() =>
     metCid != null ? !!contactConnected[metCid] : false
   );
+  // Bad email: this address bounced (a delivery-failure notice in the
+  // Outlook inbox, utils/badEmails.js), until Mark fixed or the address
+  // changes. Read live, so a scan landing while the popup is open shows.
+  const badEmailsStore = useBadEmails();
+  const badEmail = badEmailInfo(badEmailsStore.map, f.email);
   // A contact named on an opp is connected whatever the tick says: the box
   // shows Yes, marked "from Opps", and can't be unticked here while the opp
   // names them (see utils/contactConnected.js).
@@ -2914,9 +2921,26 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <div><label style={labelStyle}>Partner&apos;s name</label><input style={inputStyle} value={f.partner} onChange={e => set('partner', e.target.value)} /></div>
           <div><label style={labelStyle}>Kids&apos; names</label><input style={inputStyle} value={f.kids} onChange={e => set('kids', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 2' }}>
-            <label style={labelStyle}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
+            <label style={labelStyle}>
+              Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span>
+              {badEmail && (
+                <span
+                  data-bad-email
+                  title={`${badEmailTitle(badEmail)}. Found automatically in your Outlook inbox.`}
+                  style={{ marginLeft: 6, padding: '0 6px', borderRadius: 999, background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#B91C1C', fontSize: '0.62rem', fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}
+                >Bad email: bounced</span>
+              )}
+              {badEmail && badEmailsStore.clear && (
+                <button
+                  type="button"
+                  onClick={() => badEmailsStore.clear(f.email)}
+                  title="The address is right after all (or the bounce was temporary): stop flagging it. A newer bounce flags it again."
+                  style={{ marginLeft: 6, padding: 0, border: 0, background: 'none', color: '#0A66C2', fontSize: '0.62rem', fontWeight: 600, textTransform: 'none', letterSpacing: 0, cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit' }}
+                >Mark fixed</button>
+              )}
+            </label>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <input style={{ ...inputStyle, flex: 1 }} type="email" value={f.email} onChange={e => set('email', e.target.value)} />
+              <input style={{ ...inputStyle, flex: 1, ...(badEmail ? { borderColor: '#F87171', background: '#FEF2F2' } : {}) }} type="email" value={f.email} onChange={e => set('email', e.target.value)} />
               <button
                 type="button"
                 onClick={copyEmail}

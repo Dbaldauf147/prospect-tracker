@@ -50,6 +50,9 @@ const LOCAL_BY_DESIGN = {
   'listAccountMapping.js': 'fallback - every write also lands in synced settings.listMappings',
   // Caches. The real copy is server-side; losing these costs a refetch.
   'callHistoryCache.js': 'cache - the call history itself is one document per call in Firestore',
+  // Only when the inbox was last scanned for bounces; the flags themselves
+  // are synced settings (badEmails). Losing it costs one wider rescan.
+  'bounceScan.js': 'timestamp - the bad-email flags live in synced settings.badEmails',
   'hubspotContactsCache.js': 'cache - refetched from HubSpot',
   'rosterLocalStore.js': 'cache - the roster lives in Firestore; losing the copy costs one full read',
   // Only the last check's time and message; the imported companies go to Firestore (se-hubspot).
