@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   jobDescriptionTargets, jobDescriptionPromptBlock, parseJobDescriptionPaste,
-  jobDescriptionsPasteUpdate, DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS,
+  jobDescriptionsPasteUpdate, DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS, parseLocation, locationUpdatesFor,
 } from '../src/utils/jobDescriptionAgent.js';
 
 const contacts = [
@@ -44,9 +44,9 @@ test('reads a multi-line paste back, N/A and empty blocks become N/A', () => {
     '',
   ].join('\r\n');
   assert.deepEqual(parseJobDescriptionPaste(paste), [
-    { id: '1', text: 'Enterprise-wide responsibility.\n\n- Asset Management\nCurrent role: SVP, Simon, Jan 2013 - Present' },
-    { id: '2', text: 'N/A' },
-    { id: '9', text: 'N/A' },
+    { id: '1', text: 'Enterprise-wide responsibility.\n\n- Asset Management\nCurrent role: SVP, Simon, Jan 2013 - Present', location: null },
+    { id: '2', text: 'N/A', location: null },
+    { id: '9', text: 'N/A', location: null },
   ]);
   assert.deepEqual(parseJobDescriptionPaste('no headers here'), []);
 });
@@ -61,5 +61,30 @@ test('writes the paste into contactJobDescriptions, no write when nothing change
 
 test('the prompt asks for the format the parser reads', () => {
   const example = DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS.split('For example:\n')[1];
-  assert.equal(parseJobDescriptionPaste(example)[0].id, '12345');
+  const [first] = parseJobDescriptionPaste(example);
+  assert.equal(first.id, '12345');
+  assert.deepEqual(first.location, { city: 'Indianapolis', state: 'Indiana' });
+  assert.ok(!first.text.includes('Location:'), 'the Location line is not part of the job description');
+  assert.match(DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS, /Location: <City>, <State>/);
+});
+
+test('a leading Location line becomes city/state, later ones stay in the text', () => {
+  const paste = [
+    '=== 1 | A ===', '', 'Location: Austin, Texas, United States', 'About text', 'Location: somewhere else',
+    '=== 2 | B ===', 'Location: N/A', 'N/A',
+    '=== 3 | C ===', 'location:  Greater Boston ', 'Current role: X',
+  ].join('\n');
+  const [a, b, c] = parseJobDescriptionPaste(paste);
+  assert.deepEqual(a, { id: '1', text: 'About text\nLocation: somewhere else', location: { city: 'Austin', state: 'Texas' } });
+  assert.deepEqual(b, { id: '2', text: 'N/A', location: null });
+  assert.deepEqual(c, { id: '3', text: 'Current role: X', location: null });
+  assert.equal(parseLocation(''), null);
+  assert.deepEqual(parseLocation('Toronto, Ontario'), { city: 'Toronto', state: 'Ontario' });
+});
+
+test('location updates skip contacts that already have that city and state', () => {
+  const cs = [{ id: '1', city: 'austin', state: 'TEXAS' }, { id: '2', city: 'Dallas', state: 'Texas' }, { vid: 3 }];
+  const loc = { city: 'Austin', state: 'Texas' };
+  const u = locationUpdatesFor([{ id: '1', location: loc }, { id: '2', location: loc }, { id: '3', location: loc }, { id: '4', location: loc }, { id: '2', location: null }], cs);
+  assert.deepEqual(u, [{ id: '2', properties: loc }, { id: '3', properties: loc }]);
 });

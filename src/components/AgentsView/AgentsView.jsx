@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { leadNameKey } from '../../utils/marketingLeadsImport';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { setOppField, setOppBfoLink, loadOpps2Cache, loadOpps2FromFirestore, mergeOpps2Datasets } from '../../utils/opps2Store';
@@ -41,7 +41,7 @@ import { useDmsNoActivity, readDmsWindow, dmsWindowLabel } from '../../hooks/use
 import { bfoHistoryTargets, BFO_HISTORY_HEADER, BFO_HISTORY_FRESH_DAYS } from '../../utils/bfoHistory';
 import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
 import { DataTable } from '../common/DataTable';
-import { jobDescriptionTargets, jobDescriptionPromptBlock, parseJobDescriptionPaste, jobDescriptionsPasteUpdate, DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS } from '../../utils/jobDescriptionAgent';
+import { jobDescriptionTargets, jobDescriptionPromptBlock, parseJobDescriptionPaste, jobDescriptionsPasteUpdate, locationUpdatesFor, DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS } from '../../utils/jobDescriptionAgent';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
 // (or meeting contact) that didn't auto-match an Opps-tab row. Keyed
@@ -5257,11 +5257,49 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           const unknown = entries.filter(e => !known.has(e.id)).map(e => e.id);
           if (good.length) updateSettings?.(jobDescriptionsPasteUpdate(good));
           const naCount = good.filter(e => e.text === 'N/A').length;
+          const noLocation = good.filter(e => !e.location).length;
+          const locUpdates = locationUpdatesFor(good, hubspotCache?.contacts);
+          const baseText = `Saved ${good.length} job description${good.length === 1 ? '' : 's'}${naCount ? ` (${naCount} marked N/A)` : ''}.${unknown.length ? ` Not saved, no contact with this ID: ${unknown.join(', ')}.` : ''}`;
+          const noLocText = noLocation ? ` ${noLocation} had no City, State location.` : '';
           setJobDescriptionsPasteMsg({
             ok: good.length > 0,
-            text: `Saved ${good.length} job description${good.length === 1 ? '' : 's'}${naCount ? ` (${naCount} marked N/A)` : ''}.${unknown.length ? ` Not saved, no contact with this ID: ${unknown.join(', ')}.` : ''}`,
+            text: `${baseText}${locUpdates.length ? ` Updating ${locUpdates.length} location${locUpdates.length === 1 ? '' : 's'} in HubSpot...` : ''}${noLocText}`,
           });
           if (good.length && !unknown.length) setJobDescriptionsPaste('');
+          if (!locUpdates.length) return;
+          // City and State go to the contact in HubSpot (one update-contact
+          // call each) and into the contacts cache, so they show without a
+          // re-sync. A failure is reported, the job descriptions stay saved.
+          (async () => {
+            const done = [];
+            const failed = [];
+            for (const u of locUpdates) {
+              try {
+                const res = await apiFetch('/api/hubspot?action=update-contact', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ contactId: u.id, properties: u.properties }),
+                });
+                const json = await res.json().catch(() => ({}));
+                if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+                done.push(u);
+              } catch {
+                failed.push(u.id);
+              }
+            }
+            if (done.length) {
+              await updateHubspotCache(draft => {
+                for (const u of done) {
+                  const i = draft.contacts.findIndex(x => String(x.id || x.vid) === u.id);
+                  if (i !== -1) draft.contacts[i] = { ...draft.contacts[i], ...u.properties };
+                }
+              }).catch(() => {});
+            }
+            setJobDescriptionsPasteMsg({
+              ok: failed.length === 0,
+              text: `${baseText} Updated ${done.length} location${done.length === 1 ? '' : 's'} (City, State) in HubSpot.${failed.length ? ` HubSpot update failed for: ${failed.join(', ')}.` : ''}${noLocText}`,
+            });
+          })();
         };
         const columns = [
           {
