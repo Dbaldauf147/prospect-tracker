@@ -60,14 +60,15 @@ export function isTopicDecisionMaker(contact, tag) {
 }
 
 /**
- * The contact's own `tag` status is Sold or Not sold?
+ * The contact's own `tag` status is Sold, Not sold or N/A? Any of them
+ * settles the sale question, so the decision maker is no longer open.
  * `reviewMap` is settings.contactTagReview (contact id -> tag -> record).
  */
 export function hasTopicTagSaleStatus(contact, reviewMap, tag) {
   const cid = contact?.id ?? contact?.vid;
   if (cid == null || !reviewMap) return false;
   const { status } = tagRecordFrom(findTagRecord(reviewMap[cid], tag));
-  return status === 'sold' || status === 'notsold';
+  return status === 'sold' || status === 'notsold' || status === 'na';
 }
 
 /** One button's test for one contact row (its raw HubSpot contact). */

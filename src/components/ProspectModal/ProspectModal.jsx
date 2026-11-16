@@ -2627,6 +2627,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                   tip: (tag) => `Their company has bought ${tag}. Keeps the tag on, so they still come back in a general ${tag} pull` },
                 { key: 'notsold', label: 'Not sold', on: { bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3' },
                   tip: (tag) => `Their company hasn't bought ${tag} yet. Takes the tag off whatever the answer says, so they stay out of a general ${tag} pull; find them again under the Not sold status on All Contacts` },
+                { key: 'na',      label: 'N/A',      on: { bg: '#F1F5F9', border: '#94A3B8', color: '#334155' },
+                  tip: (tag) => `Sold / Not sold doesn't apply to ${tag} for this person. Leaves the tag as the answer sets it. Kept in the app` },
               ];
               return (
                 <div style={{ marginTop: '2px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
@@ -2637,7 +2639,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     fontSize: '0.68rem', fontWeight: 700,
                     color: done ? '#166534' : '#475569',
                   }}>
-                    <span title={`${answered} of ${total} scored tags have been answered. Hide, Left and Test are excluded - they're housekeeping, not classifications. Either half counts: an answer of Yes / No / Not sure, or a Sold / Not sold status on its own.`}>
+                    <span title={`${answered} of ${total} scored tags have been answered. Hide, Left and Test are excluded - they're housekeeping, not classifications. Either half counts: an answer of Yes / No / Not sure, or a Sold / Not sold / N/A status on its own.`}>
                       Tagged {pct}%
                       <span style={{ fontWeight: 500, color: done ? '#15803D' : '#94A3B8' }}>
                         {' · '}{done ? 'all tags mapped' : `${answered} of ${total} mapped`}

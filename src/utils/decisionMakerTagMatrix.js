@@ -26,7 +26,7 @@
 // or counted here, but the Zoom export treats the account as covered: see
 // zoomExportRowsForTag.
 
-import { tagKey, tagVocabulary, TAG_OPTIONS, findTagRecord, isLocalTagVerdict, tagAnswerFrom, tagRecordFrom } from './contactTagReview.js';
+import { tagKey, tagVocabulary, TAG_OPTIONS, findTagRecord, isLocalTagVerdict, tagAnswerFrom, tagRecordFrom, isSaleStatus } from './contactTagReview.js';
 import { TIERS } from '../data/enums.js';
 
 // Tags that are never a column. Decision Maker is the gate every cell
@@ -95,7 +95,7 @@ export function decisionMakersSaleStatus(dms, tag, review) {
     if (contactTagList(c).some(t => tagKey(t) === k)) return false;
     const cid = c?.id ?? c?.vid;
     if (cid == null) return false;
-    return !!tagRecordFrom(findTagRecord(review[cid], tag)).status;
+    return isSaleStatus(tagRecordFrom(findTagRecord(review[cid], tag)).status);
   });
 }
 

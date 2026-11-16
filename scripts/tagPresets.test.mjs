@@ -75,7 +75,7 @@ const TAGS = ['ESG', 'Efficiency / Renewables', 'Procurement', 'Decision Maker',
 }
 
 eq(presetSummary({ tags: { ESG: { answer: 'yes', status: '' }, Procurement: { answer: 'no', status: '' } } }),
-  'Tags on: ESG. 1 other answer (No / Not sure / Not sold)', 'the tooltip names the tags a preset turns on');
+  'Tags on: ESG. 1 other answer (No / Not sure / Not sold / N/A)', 'the tooltip names the tags a preset turns on');
 
 
 // --- applying to one contact in a bulk edit -------------------------------
