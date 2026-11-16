@@ -99,3 +99,55 @@ export async function mapManyOppsToCompanies(items, { keepAlias = true } = {}, d
   }
   return { opps, companies: spellingsByRecord.size };
 }
+
+/**
+ * The Issues tab's "Create ticked as Hold Off companies": several rows at
+ * once, each made a NEW Table View company named the opps' Account, at
+ * `status` (Hold Off). `items` is [{ resolve }]. Companies are added one at
+ * a time through addProspect, whose guard hands back an existing company
+ * rather than a second copy, so a name already on Table View is mapped to it
+ * instead. Then one Opps save for any opp spelled differently, and the other
+ * spellings kept as aliases. Returns { created, existing, opps, failed }.
+ *
+ * deps: { uid, prospects, addProspect, updateProspect }.
+ */
+export async function createCompaniesForOpps(items, { status = 'Hold Off', keepAlias = true } = {}, deps = {}) {
+  const { uid, prospects = [], addProspect, updateProspect } = deps;
+  if (!addProspect) throw new Error('Companies can\'t be added from this page.');
+  const known = new Set((prospects || []).map(p => p?.id).filter(Boolean));
+  const patches = {};
+  const aliasJobs = [];
+  let created = 0, existing = 0;
+  const failed = [];
+  for (const { resolve } of items || []) {
+    const name = String(resolve?.account || '').trim();
+    if (!name) continue;
+    let id;
+    try {
+      id = await addProspect({ company: name, status });
+    } catch (err) {
+      failed.push(`${name}: ${err?.message || err}`);
+      continue;
+    }
+    if (!id) { failed.push(`${name}: not added`); continue; }
+    const prior = known.has(id) ? prospects.find(p => p.id === id) : null;
+    if (prior) existing++; else { created++; known.add(id); }
+    const record = prior || { id, company: name };
+    const target = String(record.company || name).trim();
+    const spellings = (resolve?.accounts?.length ? resolve.accounts : [name]).map(s => String(s || '').trim()).filter(Boolean);
+    if (spellings.some(s => s !== target)) {
+      for (const oid of resolve?.oppIds || []) patches[String(oid)] = { Account: target };
+    }
+    const others = spellings.filter(s => s !== target);
+    if (others.length) aliasJobs.push({ record, names: others });
+  }
+  const opps = Object.keys(patches).length;
+  if (opps) await bulkSetOppFields(uid, patches);
+  if (keepAlias && updateProspect) {
+    for (const { record, names } of aliasJobs) {
+      const next = aliasesWith(record, names);
+      if (next) await updateProspect(record.id, { [ALIASES_FIELD]: next });
+    }
+  }
+  return { created, existing, opps, failed };
+}
