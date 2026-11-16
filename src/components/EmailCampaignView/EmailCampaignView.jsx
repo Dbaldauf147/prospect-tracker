@@ -64,6 +64,8 @@ import { failedCampaignEmailRows, failedEmailCount } from '../../utils/failedCam
 import { withAudience } from '../../utils/campaignAudience';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { CampaignLinkedDrafts } from './CampaignLinkedDrafts';
+import { CampaignServicesPicker } from './CampaignServicesPicker';
+import { campaignServices, withServices, sameServices, campaignServiceOptions } from '../../utils/campaignServices';
 import { subscribeDraftHistory } from '../../utils/emailDraftHistoryStore';
 import { draftsForCampaign } from '../../utils/emailDraftHistory';
 import { loadDraftIntoComposer } from '../../utils/draftComposerLoad';
@@ -673,6 +675,8 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
       removedEmails: results.removedEmails || [],
       contacts: results.contacts,
     }, campaignSubjects(results)), campaignEventUrl(results));
+    // The services set on the open campaign go with it (utils/campaignServices).
+    if (campaignServices(results).length) campaign.services = campaignServices(results);
     // Replace if a campaign already leads with the same subject, otherwise add.
     // A replace rebuilds the campaign from the search results, which know
     // nothing about its status — so the two status fields are carried across
@@ -689,6 +693,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     // The hand-set Sent To ticks and Category are the user's too.
     if (prev?.sentTo && typeof prev.sentTo === 'object' && Object.keys(prev.sentTo).length) kept.sentTo = prev.sentTo;
     if (prev?.category) kept.category = prev.category;
+    if (!campaignServices(campaign).length && campaignServices(prev).length) kept.services = campaignServices(prev);
     // Same story for the event link: a search result carries one only if it
     // was opened from the saved campaign, so a re-save of a fresh search would
     // otherwise drop the link somebody added.
@@ -1374,6 +1379,22 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     const next = normalizeCampaignCategory(typed, categoryOptions);
     if (next === campaignCategory(c)) return;
     saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, category: next } : x)));
+  }
+
+  // Services: the services a campaign is about, picked off the Services
+  // board (utils/campaignServices). Set from the Saved Campaigns table or the
+  // open campaign's header; an unsaved campaign keeps them on screen until
+  // it is saved, like its event link.
+  const serviceOptions = useMemo(() => campaignServiceOptions(settings), [settings]);
+  function setCampaignServices(index, list) {
+    const c = savedCampaigns[index];
+    if (!c || sameServices(c, { services: list })) return;
+    saveCampaigns(savedCampaigns.map((x, i) => (i === index ? withServices(x, list) : x)));
+    if (index === viewingSaved) setResults(r => (r ? withServices(r, list) : r));
+  }
+  function setOpenCampaignServices(list) {
+    if (viewingSaved != null) { setCampaignServices(viewingSaved, list); return; }
+    setResults(r => (r ? withServices(r, list) : r));
   }
 
   // Sent To: tick or untick one audience on one saved campaign.
@@ -2947,6 +2968,15 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                   >+ Add event link</button>
                 )}
               </div>
+              {/* The services this campaign is about (CampaignServicesPicker). */}
+              <div data-open-campaign-services style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginTop: '3px' }}>
+                <CampaignServicesPicker
+                  label="Services:"
+                  value={campaignServices(displayResults)}
+                  options={serviceOptions}
+                  onChange={setOpenCampaignServices}
+                />
+              </div>
               <CampaignLinkedDrafts
                 drafts={draftsForCampaign(draftHistory, { subjects: displaySubjects })}
                 onLoad={(d) => { if (loadDraftIntoComposer(d)) onLoadDraft?.(); }}
@@ -3407,6 +3437,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                 <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700 }}>Campaign</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="Type a category for the campaign, or pick one already in use.">Category</th>
+                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="The services this campaign is about. Click to pick them off the Services list.">Services</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="Who this campaign went to: tick Clients, Key Contacts and / or Prospects">Sent To</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>% Sent</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>Response Rate</th>
@@ -3553,6 +3584,15 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                     placeholder="Add category"
                     aria-label={`Category for ${c.title || subs[0] || 'this campaign'}`}
                     style={{ width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'inherit', background: 'var(--color-surface)', color: 'var(--color-text)' }}
+                  />
+                </td>
+                {/* Services: its own click, like the category. */}
+                <td style={{ padding: '0.4rem 0.6rem', verticalAlign: 'top', minWidth: 130 }} onClick={e => e.stopPropagation()}>
+                  <CampaignServicesPicker
+                    compact
+                    value={campaignServices(c)}
+                    options={serviceOptions}
+                    onChange={list => setCampaignServices(i, list)}
                   />
                 </td>
                 {/* Sent To: which audiences this campaign went to, ticked by
