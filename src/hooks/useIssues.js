@@ -7,6 +7,7 @@ import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } f
 import { loadHubspotOthersActivity, HUBSPOT_OTHERS_ACTIVITY_EVENT, HUBSPOT_OTHERS_ACTIVITY_KEY } from '../utils/hubspotOthersActivityStore';
 import { loadHubspotGapFill, HUBSPOT_GAP_FILL_EVENT, HUBSPOT_GAP_FILL_KEY } from '../utils/hubspotGapFillStore';
 import { dbGet } from '../utils/db';
+import { getHubspotContacts } from '../utils/hubspotContactsCache';
 import { getEffectiveDropdownLists } from '../utils/dropdownListsStore';
 import { useOpps2Data } from './useOpps2Data';
 import { computeIssues, computeServiceCoverageGaps } from '../utils/clientIssues';
@@ -278,9 +279,23 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   // is left out of it: nothing on the Prospecting ladder can be snoozed, so
   // honouring an old Issues-tab snooze would hide a service with no way to
   // bring it back.
+  // A service the company popup shows as N/A automatically (a sold service
+  // retiring it, or its contact category N/A there) counts as N/A on the
+  // ladder too: the whole settings, as the popup reads them, and the
+  // contacts, loaded only while services are tracked.
+  const [coverageContacts, setCoverageContacts] = useState(null);
+  const tracksServices = coverageServices.length > 0;
+  useEffect(() => {
+    if (!tracksServices) return undefined;
+    let cancelled = false;
+    const load = () => getHubspotContacts().then(list => { if (!cancelled) setCoverageContacts(list); }).catch(() => {});
+    load();
+    window.addEventListener('hubspot-cache-updated', load);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', load); };
+  }, [tracksServices]);
   const serviceGaps = useMemo(
-    () => computeServiceCoverageGaps({ prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap }),
-    [prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap],
+    () => computeServiceCoverageGaps({ prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap, autoNaSettings: settings, contacts: coverageContacts }),
+    [prospects, cdmName, coverageServices, oppsCache, serviceCatalogSettings, clientStatusMap, untrackedMap, settings, coverageContacts],
   );
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);

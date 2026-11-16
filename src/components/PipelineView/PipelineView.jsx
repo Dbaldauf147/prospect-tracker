@@ -39,6 +39,7 @@ import {
 } from '../../utils/pipelineDashboardStore';
 import { mirrorDbPut } from '../../utils/localMirrorSync';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
+import { buildAutoNaByClient } from '../../utils/serviceAutoNaByClient';
 import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
 import { buildQ4Focus } from '../../utils/q4Focus';
 import { loadYoyOverrides } from '../../utils/yoyOverridesStore';
@@ -610,7 +611,7 @@ function notQuotedRows(deals, head) {
 // The client set mirrors the renewals table: Status = Client and matching the
 // configured CDM (or all clients when no CDM is set). The tracked-service list
 // is passed in from persisted Pipeline state via `services` / `onChangeServices`.
-function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices, oppsRecords = [], clientStatusMap = {}, clientUntrackedMap = {} }) {
+function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, onSelectProspect, services = [], onChangeServices, oppsRecords = [], clientStatusMap = {}, clientUntrackedMap = {}, contacts = [] }) {
   const catalog = useMemo(
     () => buildServiceCatalog(settings),
     [settings.hiddenServices, settings.serviceRenames, settings.customServiceCategories],
@@ -651,12 +652,21 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
     [clients, oppsRecords],
   );
 
+  // The services each client reads N/A on without a status of its own: a
+  // sold service retiring it, or its contact category N/A there (a contact's
+  // tag or the By Category heading), as the company popup's Services board
+  // shows them.
+  const autoNaByClient = useMemo(
+    () => buildAutoNaByClient(clients, { settings, contacts, oppStagesByClient }),
+    [clients, settings, contacts, oppStagesByClient],
+  );
+
   // Coverage for every tracked service, computed once per client/service change.
   const coverageByService = useMemo(() => {
     const m = new Map();
-    for (const key of services) m.set(key, computeServiceCoverage(clients, key, oppStagesByClient));
+    for (const key of services) m.set(key, computeServiceCoverage(clients, key, oppStagesByClient, autoNaByClient));
     return m;
-  }, [clients, services, oppStagesByClient]);
+  }, [clients, services, oppStagesByClient, autoNaByClient]);
 
   // Which rows are expanded to show their client breakdown. Local-only (not
   // persisted) — every row starts collapsed so the breakdown is hidden by
@@ -1598,6 +1608,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, update
         const services = state.coverageServices || [];
         const clients = coverageClientsOf(prospects, cdmName, { statusMap: clientStores.statusMap, untrackedMap: clientStores.untrackedMap });
         const oppStagesByClient = buildOppStagesByClient(clients, oppsRecords);
+        const autoNaByClient = buildAutoNaByClient(clients, { settings, contacts: hubspotContacts, oppStagesByClient });
         const labels = serviceLabelMap(buildServiceCatalog(settings));
         return {
           title: lbl('svc-cov-title', 'Service Exploration Coverage'),
@@ -1608,7 +1619,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, update
             lbl('svc-cov-col-coverage', 'Coverage'),
           ],
           rows: services.map((key) => {
-            const cov = computeServiceCoverage(clients, key, oppStagesByClient);
+            const cov = computeServiceCoverage(clients, key, oppStagesByClient, autoNaByClient);
             return {
               service: labels.get(key) || key,
               explored: cov.explored.length,
@@ -2469,6 +2480,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, update
           oppsRecords={oppsRecords}
           clientStatusMap={clientStores.statusMap}
           clientUntrackedMap={clientStores.untrackedMap}
+          contacts={hubspotContacts}
         />
 
         {/* Client renewals — active clients whose soonest contract End Date

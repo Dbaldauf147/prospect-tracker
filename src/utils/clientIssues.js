@@ -13,6 +13,7 @@ import { missingCommissionFileIssues } from './commissionMonthUploads.js';
 import { siteListSizeIssues } from './siteListSize.js';
 import { asDate, fmtDate, isInactiveAgreement } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
+import { buildAutoNaByClient } from './serviceAutoNaByClient.js';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
 import { computeCloseNotSoldOpps, computeCloseNotSoldMissingData } from './closeNotSoldOpps';
 import { computeAppDescriptionOpps, NO_COMPANY } from './appDescriptionOpps';
@@ -709,7 +710,10 @@ function detectAppDescriptionMissingContracting({ bfoActivity = null, oppsCache 
 // Suppressed while there are no matching clients (pre-load, or no clients
 // for the CDM) — that's the table's own "No active clients found" state,
 // where every row would otherwise read 0%.
-export function computeServiceCoverageGaps({ prospects = [], cdmName, coverageServices = [], oppsCache = null, serviceCatalogSettings = {}, clientStatusMap = {}, untrackedMap = {} }) {
+// `autoNaSettings` / `contacts` (optional) let a client the company popup
+// shows as N/A on a service count as N/A here too (utils/serviceAutoNaByClient),
+// the same as the table.
+export function computeServiceCoverageGaps({ prospects = [], cdmName, coverageServices = [], oppsCache = null, serviceCatalogSettings = {}, clientStatusMap = {}, untrackedMap = {}, autoNaSettings = null, contacts = null }) {
   if (!Array.isArray(coverageServices) || coverageServices.length === 0) return [];
   // Same client set as the table — including its "Cancelling for Sure" /
   // "Don't Track" exclusions, so a warning can't count clients the table
@@ -717,10 +721,13 @@ export function computeServiceCoverageGaps({ prospects = [], cdmName, coverageSe
   const clients = coverageClientsOf(prospects, cdmName, { statusMap: clientStatusMap, untrackedMap });
   if (clients.length === 0) return [];
   const oppStagesByClient = buildOppStagesByClient(clients, oppsCache?.records || []);
+  const autoNaByClient = autoNaSettings
+    ? buildAutoNaByClient(clients, { settings: autoNaSettings, contacts: contacts || [], oppStagesByClient })
+    : null;
   const labels = serviceLabelMap(buildServiceCatalog(serviceCatalogSettings));
   const rows = [];
   for (const key of coverageServices) {
-    const cov = computeServiceCoverage(clients, key, oppStagesByClient);
+    const cov = computeServiceCoverage(clients, key, oppStagesByClient, autoNaByClient);
     if (cov.pct >= 100 && cov.notExplored.length === 0) continue;
     rows.push({
       id: `svc-coverage:${key}`,

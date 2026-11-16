@@ -108,11 +108,15 @@ export function buildOppStagesByClient(clients, oppsRecords, serviceNames = null
 // fall back to the status implied by the client's opportunities. Returns '' when
 // neither applies — i.e. the service is genuinely unexplored. Mirrors the
 // company page's effective-status logic (manual override > opp-derived).
-export function effectiveServiceStatus(prospect, serviceKey, oppStagesByClient) {
+// `autoNaByClient` (utils/serviceAutoNaByClient) adds the page's last
+// fallback: N/A when a sold service retires it or its contact category is N/A
+// at the company. Optional, so a caller without it reads as before.
+export function effectiveServiceStatus(prospect, serviceKey, oppStagesByClient, autoNaByClient = null) {
   const manual = (prospect?.servicesExplored || {})[serviceKey];
   if (manual && manual !== '-') return manual;
   const oppStage = oppStagesByClient?.get(prospect)?.get(serviceKey);
-  return oppStage || '';
+  if (oppStage) return oppStage;
+  return autoNaByClient?.get(prospect)?.has(serviceKey) ? 'N/A' : '';
 }
 
 // Service catalogue for the coverage picker/table — the user's custom
@@ -224,13 +228,13 @@ export function isNotApplicableStatus(status) {
 // status (the coverage count / percentage), and it splits into `exploredActive`
 // (a real exploration status) plus `na` (the service doesn't apply). Callers
 // that only want the headline number keep using `explored`.
-export function computeServiceCoverage(clients, serviceKey, oppStagesByClient) {
+export function computeServiceCoverage(clients, serviceKey, oppStagesByClient, autoNaByClient = null) {
   const explored = [];
   const exploredActive = [];
   const na = [];
   const notExplored = [];
   for (const p of clients) {
-    const status = serviceKey ? effectiveServiceStatus(p, serviceKey, oppStagesByClient) : '';
+    const status = serviceKey ? effectiveServiceStatus(p, serviceKey, oppStagesByClient, autoNaByClient) : '';
     if (status) {
       const entry = { p, status };
       explored.push(entry);
