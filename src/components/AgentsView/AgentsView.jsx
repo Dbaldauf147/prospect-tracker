@@ -41,6 +41,7 @@ import { useDmsNoActivity, readDmsWindow, dmsWindowLabel } from '../../hooks/use
 import { bfoHistoryTargets, BFO_HISTORY_HEADER, BFO_HISTORY_FRESH_DAYS } from '../../utils/bfoHistory';
 import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
 import { DataTable } from '../common/DataTable';
+import { jobDescriptionTargets, jobDescriptionPromptBlock, parseJobDescriptionPaste, jobDescriptionsPasteUpdate, DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS } from '../../utils/jobDescriptionAgent';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
 // (or meeting contact) that didn't auto-match an Opps-tab row. Keyed
@@ -69,6 +70,7 @@ const MARKETING_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-leads';
 const MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-marketing-lead-status-update';
 const DUPLICATE_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-duplicate-leads';
 const BFO_HISTORY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-history';
+const JOB_DESCRIPTIONS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-job-descriptions';
 
 // The BFO Activity page's "Leads" subtab (pasted Salesforce Leads
 // printable view) persists under its own key in the same store. The
@@ -974,6 +976,19 @@ function writeBfoHistoryPrompt(next) {
   try { writeWorkKey(BFO_HISTORY_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
+function readJobDescriptionsPrompt() {
+  try {
+    const raw = userLsGet(JOB_DESCRIPTIONS_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS;
+  }
+}
+
+function writeJobDescriptionsPrompt(next) {
+  try { writeWorkKey(JOB_DESCRIPTIONS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
 function readImportMarketingLeadsPrompt() {
   try {
     const raw = userLsGet(IMPORT_MARKETING_LEADS_PROMPT_STORAGE_KEY);
@@ -1841,6 +1856,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [duplicateLeadsPrompt, setDuplicateLeadsPrompt] = useState(readDuplicateLeadsPrompt);
   const [bfoHistoryPrompt, setBfoHistoryPrompt] = useState(readBfoHistoryPrompt);
   const [bfoHistoryCopyFlash, setBfoHistoryCopyFlash] = useState('');
+  // Job Descriptions agent: Key Contacts with a blank Job Description.
+  const [jobDescriptionsPrompt, setJobDescriptionsPrompt] = useState(readJobDescriptionsPrompt);
+  const [jobDescriptionsCopyFlash, setJobDescriptionsCopyFlash] = useState('');
+  const [jobDescriptionsPasteOpen, setJobDescriptionsPasteOpen] = useState(false);
+  const [jobDescriptionsPaste, setJobDescriptionsPaste] = useState('');
+  const [jobDescriptionsPasteMsg, setJobDescriptionsPasteMsg] = useState(null);
   // The BFO History table leaves out companies whose history was pasted in
   // the last BFO_HISTORY_FRESH_DAYS days (they're done); this brings them
   // back. Per session, not saved.
@@ -1884,6 +1905,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       setMarketingLeadStatusUpdatePrompt(readMarketingLeadStatusUpdatePrompt());
       setDuplicateLeadsPrompt(readDuplicateLeadsPrompt());
       setBfoHistoryPrompt(readBfoHistoryPrompt());
+      setJobDescriptionsPrompt(readJobDescriptionsPrompt());
     };
     window.addEventListener(AGENT_SETTINGS_EVENT, onMirror);
     return () => window.removeEventListener(AGENT_SETTINGS_EVENT, onMirror);
@@ -2018,6 +2040,11 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     writeBfoHistoryPrompt(next);
   };
   const resetBfoHistoryPrompt = () => updateBfoHistoryPrompt(DEFAULT_AI_PROMPT_BFO_HISTORY);
+  const updateJobDescriptionsPrompt = (next) => {
+    setJobDescriptionsPrompt(next);
+    writeJobDescriptionsPrompt(next);
+  };
+  const resetJobDescriptionsPrompt = () => updateJobDescriptionsPrompt(DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS);
 
   const updateUpdateBfoActivityPrompt = (next) => {
     setUpdateBfoActivityPrompt(next);
@@ -2464,6 +2491,15 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Key Contacts whose Job Description is still blank (N/A counts as done),
+  // for the Job Descriptions agent. Only the ones with a LinkedIn URL go in
+  // the prompt; the rest are listed so the URL can be added.
+  const jobDescriptionRows = useMemo(
+    () => jobDescriptionTargets(hubspotCache?.contacts, settings?.contactJobDescriptions, settings?.contactLocalFields),
+    [hubspotCache, settings?.contactJobDescriptions, settings?.contactLocalFields],
+  );
+  const jobDescriptionReady = useMemo(() => jobDescriptionRows.filter(r => r.linkedin), [jobDescriptionRows]);
 
   // Opps cache (IndexedDB) — drives the BFO Opportunity Name tagging.
   // Each opp record carries Contact (recipient email[s]), Account
@@ -3507,8 +3543,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       { title: 'Marketing Leads', prompt: withMarketingLeadsSafety(marketingLeadsPrompt), block: marketingLeadsBlock, hasData: marketingLeadsMissing.length > 0, always: true },
       { title: 'Marketing Lead Status Update', prompt: marketingLeadStatusUpdatePrompt, block: marketingLeadStatusBlock, hasData: marketingLeadStatusRows.length > 0, always: true },
       { title: 'Duplicate Leads', prompt: duplicateLeadsPrompt, block: duplicateLeadsBlock, hasData: duplicateLeadRows.length > 0, always: true },
-      // Second to last: just ahead of the Update BFO Activity suffix.
+      // Ahead of Job Descriptions and the Update BFO Activity suffix.
       { title: 'BFO History', prompt: bfoHistoryPrompt, block: bfoHistoryBlock, hasData: bfoHistoryReady.length > 0 },
+      // Last before the Update BFO Activity suffix.
+      { title: 'Job Descriptions', prompt: jobDescriptionsPrompt, block: jobDescriptionPromptBlock(jobDescriptionReady), hasData: jobDescriptionReady.length > 0 },
     ];
     // Skip sections that carry no data — when a section is just its prompt
     // with an empty data block (no BFO links, names, or opportunities to
@@ -3535,6 +3573,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     marketingLeadStatusUpdatePrompt, marketingLeadStatusRows,
     duplicateLeadsPrompt, duplicateLeadRows,
     bfoHistoryPrompt, bfoHistoryReady,
+    jobDescriptionsPrompt, jobDescriptionReady,
   ]);
 
   const [copyAllFlash, setCopyAllFlash] = useState('');
@@ -5186,6 +5225,138 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                   rows={tableRows}
                   alwaysVisible={['company']}
                   emptyMessage={bfoHistoryRows.length ? `Every company has a BFO History pasted in the last ${BFO_HISTORY_FRESH_DAYS} days or is marked Not in BFO. Tick "Show pasted" or "Show not in BFO" to see them.` : 'No companies on the DMs Without Activity list.'}
+                  settings={settings}
+                  updateSettings={updateSettings}
+                />
+              </div>
+            )}
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+      {(() => {
+        const fullPrompt = `${jobDescriptionsPrompt}\n\n${jobDescriptionPromptBlock(jobDescriptionReady)}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(withBfoActivitySuffix(fullPrompt));
+            setJobDescriptionsCopyFlash('Copied!');
+          } catch {
+            setJobDescriptionsCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setJobDescriptionsCopyFlash(''), 1500);
+        };
+        const noUrlCount = jobDescriptionRows.length - jobDescriptionReady.length;
+        const onSavePaste = () => {
+          const entries = parseJobDescriptionPaste(jobDescriptionsPaste);
+          if (!entries.length) {
+            setJobDescriptionsPasteMsg({ ok: false, text: 'No job descriptions found. Each one needs a header line like "=== 12345 | Name ===".' });
+            return;
+          }
+          const known = new Set((hubspotCache?.contacts || []).map(c => String(c.id || c.vid || '')));
+          const good = entries.filter(e => known.has(e.id));
+          const unknown = entries.filter(e => !known.has(e.id)).map(e => e.id);
+          if (good.length) updateSettings?.(jobDescriptionsPasteUpdate(good));
+          const naCount = good.filter(e => e.text === 'N/A').length;
+          setJobDescriptionsPasteMsg({
+            ok: good.length > 0,
+            text: `Saved ${good.length} job description${good.length === 1 ? '' : 's'}${naCount ? ` (${naCount} marked N/A)` : ''}.${unknown.length ? ` Not saved, no contact with this ID: ${unknown.join(', ')}.` : ''}`,
+          });
+          if (good.length && !unknown.length) setJobDescriptionsPaste('');
+        };
+        const columns = [
+          {
+            key: 'name', label: 'Name', defaultWidth: 180,
+            getSortValue: r => r.name.toLowerCase(), getFilterValue: r => r.name, exportValue: r => r.name,
+          },
+          {
+            key: 'company', label: 'Company', defaultWidth: 200,
+            getSortValue: r => r.company.toLowerCase() || null, getFilterValue: r => r.company, exportValue: r => r.company,
+          },
+          {
+            key: 'jobtitle', label: 'Job Title', defaultWidth: 220,
+            getSortValue: r => r.jobtitle.toLowerCase() || null, getFilterValue: r => r.jobtitle, exportValue: r => r.jobtitle,
+          },
+          {
+            key: 'linkedin', label: 'LinkedIn URL', defaultWidth: 300,
+            getSortValue: r => r.linkedin.toLowerCase() || null,
+            getFilterValue: r => r.linkedin || 'No LinkedIn URL',
+            exportValue: r => r.linkedin,
+            render: r => (r.linkedin
+              ? <a href={r.linkedin} target="_blank" rel="noreferrer" className={styles.bfoLink}>{r.linkedin}</a>
+              : <span className={styles.missing} title="Add the contact's LinkedIn URL in HubSpot to put them in the prompt">No LinkedIn URL</span>),
+          },
+          {
+            key: 'contactId', label: 'Contact ID', defaultWidth: 110,
+            getSortValue: r => r.id, getFilterValue: r => r.id, exportValue: r => r.id,
+            render: r => <span className={styles.muted}>{r.id}</span>,
+          },
+        ];
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (Job Descriptions)
+              <span className={styles.sectionCount}>{jobDescriptionReady.length}</span>
+            </h2>
+            <p className={styles.subnote}>
+              Every Key Contact (tagged Dan Key Target) whose Job Description is blank. Contacts marked N/A in their contact pop-up are left out. The assistant opens each LinkedIn URL, copies the About section and the current (Present) role, and pastes them back here with &ldquo;Paste job descriptions&rdquo;, which fills in each contact&rsquo;s Job Description. Contacts with no LinkedIn URL are listed but left out of the prompt.
+            </p>
+            {revealedPrompts.jobDescriptions && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={jobDescriptionsPrompt}
+                onChange={(e) => updateJobDescriptionsPrompt(e.target.value)}
+                rows={12}
+                spellCheck={false}
+              />
+            )}
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy} disabled={!jobDescriptionReady.length}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => { setJobDescriptionsPasteOpen(v => !v); setJobDescriptionsPasteMsg(null); }}>
+                {jobDescriptionsPasteOpen ? 'Hide paste box' : 'Paste job descriptions'}
+              </button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('jobDescriptions')}>
+                {revealedPrompts.jobDescriptions ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.jobDescriptions && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetJobDescriptionsPrompt}>Reset to default</button>
+              )}
+              {jobDescriptionsCopyFlash && <span className={styles.copyFlash}>{jobDescriptionsCopyFlash}</span>}
+            </div>
+            {jobDescriptionsPasteOpen && (
+              <div style={{ marginTop: '0.5rem' }}>
+                <textarea
+                  className={styles.aiPromptInput}
+                  aria-label="Paste job descriptions"
+                  value={jobDescriptionsPaste}
+                  onChange={(e) => setJobDescriptionsPaste(e.target.value)}
+                  rows={10}
+                  spellCheck={false}
+                  placeholder={'=== 12345 | Stephen Smith ===\nAbout text...\n\nCurrent role: ...'}
+                />
+                <div className={styles.aiPromptControls}>
+                  <button type="button" className={styles.aiPromptBtn} onClick={onSavePaste} disabled={!jobDescriptionsPaste.trim()}>Save job descriptions</button>
+                  {jobDescriptionsPasteMsg && (
+                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: jobDescriptionsPasteMsg.ok ? '#15803D' : '#B91C1C' }}>{jobDescriptionsPasteMsg.text}</span>
+                  )}
+                </div>
+              </div>
+            )}
+            {jobDescriptionRows.length > 0 && (
+              <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+                {jobDescriptionReady.length} in the prompt{noUrlCount ? ` · ${noUrlCount} with no LinkedIn URL` : ''}.
+              </div>
+            )}
+            {!hubspotCache ? (
+              <div className={styles.subnote}>Loading HubSpot contacts...</div>
+            ) : (
+              <div style={{ marginTop: '0.5rem', height: Math.min(480, 120 + jobDescriptionRows.length * 36), minHeight: 160, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                <DataTable
+                  tableId="agents-job-descriptions"
+                  exportFileName="Key Contacts Missing Job Descriptions"
+                  columns={columns}
+                  rows={jobDescriptionRows}
+                  alwaysVisible={['name']}
+                  emptyMessage="Every Key Contact has a Job Description or is marked N/A."
                   settings={settings}
                   updateSettings={updateSettings}
                 />
