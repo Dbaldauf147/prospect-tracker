@@ -164,7 +164,7 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
-import { bucketServiceState, isClosingStatus, setServiceBucket } from '../../utils/bucketServices';
+import { bucketServiceState, isClosingStatus, setServiceBucket, categoryNaServices as categoryNaServiceMap } from '../../utils/bucketServices';
 import { DM_STEPS, bucketStepsLeft, dmBucketAnswer, contactNaByBucket } from '../../utils/dmSteps.js';
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
@@ -7656,16 +7656,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
   }, [allServiceItems, fields.servicesExplored, scopeMatchedServices, settings.serviceOverrides]);
 
+  // Services tagged to a contact category that is N/A at this company: the
+  // By Category heading's own N/A, or a contact here with that category's
+  // tag marked N/A on their tag table (dmSteps contactNaByBucket). The
+  // category doesn't apply, so neither do its services. service -> why.
+  // Derived like autoNaServices, and laid under the same things: a manual
+  // status or a matching opp still wins.
+  const categoryNaServices = useMemo(() => categoryNaServiceMap({
+    buckets: BUCKETS, serviceNames: allServiceItems, overrides: settings.serviceOverrides || {},
+    dmSearchSteps: fields.dmSearchSteps || {}, contacts: companyContacts, tagReview: settings.contactTagReview || {},
+  }), [fields.dmSearchSteps, companyContacts, settings.contactTagReview, settings.serviceOverrides, allServiceItems]);
+
   // A service's status at this company as the Services board paints it:
-  // the manual status, else a matching opp's stage, else an auto N/A. The
+  // the manual status, else a matching opp's stage, else an auto N/A (a sold
+  // service retiring it, or its contact category being N/A). The
   // Contacts > By Category Services row reads it.
   const effectiveServiceStatus = useCallback((item) => {
     const manual = (fields.servicesExplored || {})[item];
     if (manual && manual !== '-') return manual;
     const opp = scopeMatchedServices.get(item);
     if (opp) return opp;
-    return autoNaServices.get(item) ? 'N/A' : '';
-  }, [fields.servicesExplored, scopeMatchedServices, autoNaServices]);
+    return autoNaServices.get(item) || categoryNaServices.get(item) ? 'N/A' : '';
+  }, [fields.servicesExplored, scopeMatchedServices, autoNaServices, categoryNaServices]);
 
   const [onePagerBusy, setOnePagerBusy] = useState(false);
 
@@ -12308,7 +12320,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   if (manual !== '-') return manual;
                   const opp = scopeMatchedServices.get(item);
                   if (opp) return opp;
-                  if (autoNaServices.get(item)) return 'N/A';
+                  if (autoNaServices.get(item) || categoryNaServices.get(item)) return 'N/A';
                   return '-';
                 }
                 function matchesFilter(item, catName) {
@@ -12599,6 +12611,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             // Why this row would read N/A without anyone
                             // setting it: the sold services that retire it.
                             const autoNaBy = autoNaServices.get(item);
+                            // Or its contact category is N/A here.
+                            const categoryNa = categoryNaServices.get(item);
                             let effectiveStatus = manualStatus;
                             if (manualStatus === '-') {
                               // An opp naming the service outranks the
@@ -12606,9 +12620,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               // the account saying it is a question after
                               // all, whatever was sold alongside.
                               if (oppStage) effectiveStatus = oppStage;
-                              else if (autoNaBy) effectiveStatus = 'N/A';
+                              else if (autoNaBy || categoryNa) effectiveStatus = 'N/A';
                             }
                             const isAutoNa = manualStatus === '-' && !oppStage && !!autoNaBy;
+                            const isCategoryNa = manualStatus === '-' && !oppStage && !autoNaBy && !!categoryNa;
                             // A real value in servicesExplored is a manual
                             // override of the automatic (opp-derived) status.
                             // When set, surface a one-click "revert to auto"
@@ -12748,6 +12763,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       ? `Manual override: ${manualStatus}.${oppStage ? ` Automatic status from a matching opp would be: ${oppStage}.` : ' No matching opp, so the automatic status is blank.'} Pick "- (auto)" or click ↺ to revert to the automatic status.`
                                       : oppStage ? `Automatic status from a matching opp: ${oppStage}. Pick a status to set a manual override.`
                                       : isAutoNa ? autoNaTitle(getDisplayName(item), autoNaBy)
+                                      : isCategoryNa ? `N/A automatically: ${categoryNa.why}, and ${getDisplayName(item)} is tagged ${categoryNa.bucket}. Pick a status to overrule it.`
                                       : 'No manual override and no matching opp.'}
                                     style={{
                                       fontSize: '0.62rem', padding: '1px 2px', border: `1px solid ${isManualOverride ? 'var(--color-accent)' : 'var(--color-border)'}`,
