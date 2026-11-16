@@ -16,6 +16,8 @@ import { scopeRemapPatches, serviceAliasNotePatches, serviceAliasNoteLine, sugge
 import { buildOppNumberMap } from '../../utils/oppNumbers';
 import { buildResolution, resolutionKind } from './issueResolutionSpecs';
 import { IssueResolutionModal } from './IssueResolution';
+import { OppCompanyMapModal } from './OppCompanyMapModal';
+import { mapOppsToCompany } from '../../utils/oppCompanyMap';
 
 // Issues tab — a running list of outstanding items that need to be
 // addressed across the app. Each row is one problem surfaced by a
@@ -657,7 +659,7 @@ function SnoozeMenu({ anchor, snoozed, until, onPick, onUnsnooze, onClose }) {
   );
 }
 
-export function IssuesView({ prospects = [], cdmName, settings, updateSettings, updateProspect, onSelectProspect }) {
+export function IssuesView({ prospects = [], cdmName, settings, updateSettings, updateProspect, addProspect = null, onSelectProspect }) {
   // useIssues handles loading the source data + listening for cross-tab
   // refreshes, and tags each row with a `snoozed` flag.
   const { issues, openCount, knownServices, ignoredScopeServices, oppsRecords } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
@@ -821,13 +823,13 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
   const oppNumbers = useMemo(() => buildOppNumberMap(oppsRecords), [oppsRecords]);
   const resolutionCtx = {
     settings, updateSettings, updateProspect, dropdownLists, oppNumbers,
-    prospects,
     oppsRecords: oppsRecords || [],
     uid: user?.uid,
   };
   const canResolve = (row) => {
     const kind = resolutionKind(row);
     if (kind === 'service' || kind === 'closeNotSold') return true;
+    if (kind === 'oppCompany') return (row.resolve?.oppIds?.length || 0) > 0;
     if (!kind) return false;
     return !!buildResolution(row, { ...resolutionCtx, prospect: prospectById.get(row.prospectId) });
   };
@@ -842,7 +844,25 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     const kind = resolutionKind(row);
     if (kind === 'service') setFixingRow(row);
     else if (kind === 'closeNotSold') setEditingRow(row);
+    else if (kind === 'oppCompany') setMappingRow(row);
     else setResolvingRow(row);
+  }
+  // "Opp company not in Table View": its own popup (OppCompanyMapModal),
+  // pick a Table View company or create one, then re-point the opps.
+  const [mappingRow, setMappingRow] = useState(null);
+  async function saveMapping(target, opts) {
+    if (!mappingRow) return;
+    setSavingFix(true);
+    setFixError('');
+    try {
+      const { name, created } = await mapOppsToCompany(mappingRow.resolve, target, opts, { uid: user?.uid, prospects, addProspect, updateProspect });
+      if (target.mode === 'create' && !created) window.alert(`"${name}" was already on Table View, so the opps now point to it.`);
+      setMappingRow(null);
+    } catch (err) {
+      setFixError(`Could not save: ${err?.message || err}`);
+    } finally {
+      setSavingFix(false);
+    }
   }
   async function saveResolution(values, changed) {
     if (!resolvingSpec) return;
@@ -1162,6 +1182,21 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           error={fixError}
           onSave={saveResolution}
           onClose={() => { if (!savingFix) { setResolvingRow(null); setFixError(''); } }}
+        />
+      )}
+
+      {mappingRow && (
+        <OppCompanyMapModal
+          key={mappingRow.id}
+          row={mappingRow}
+          prospects={prospects}
+          oppsRecords={oppsRecords || []}
+          oppNumbers={oppNumbers}
+          canCreate={!!addProspect}
+          saving={savingFix}
+          error={fixError}
+          onSave={saveMapping}
+          onClose={() => { if (!savingFix) { setMappingRow(null); setFixError(''); } }}
         />
       )}
 

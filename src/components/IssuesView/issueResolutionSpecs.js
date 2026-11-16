@@ -5,10 +5,7 @@ import { HANDOFF_FIELDS } from '../../utils/dealHandoff';
 import { DEAL_IGNORED_KEY } from '../../utils/postSaleFollowUp';
 import { updateDealFields } from '../../utils/dealsStore';
 import { setClientStatus, setClientUntracked } from '../../utils/clientManagerStore';
-import { setOppBfoLink, bulkSetOppFields } from '../../utils/opps2Store';
-import { rankCompanyChoices } from '../../utils/oppCompanyMissing';
-import { ALIASES_FIELD } from '../../utils/companyAliases';
-import { companyDedupeKey } from '../../utils/companyKey';
+import { setOppBfoLink } from '../../utils/opps2Store';
 import { normalizeBfoCompany } from '../../utils/newBfoOpps';
 
 // Resolution popups for the Issues tab. Each issue row the detectors in
@@ -18,9 +15,9 @@ import { normalizeBfoCompany } from '../../utils/newBfoOpps';
 // IssueResolutionModal (IssueResolution.jsx) draws the form. Saving writes to the same store the
 // owning page does, so the row drops off this tab once useIssues re-reads.
 //
-// The two issue types that already had their own popup (Service not in
-// Dropdowns, Close Not Sold missing data) keep them; IssuesView routes to
-// those directly and this module covers everything else.
+// The issue types with their own popup (Service not in Dropdowns, Close Not
+// Sold missing data, Opp company not in Table View) keep them; IssuesView
+// routes to those directly and this module covers everything else.
 
 // Which kinds of row open the dedicated popups rather than a form here.
 export function resolutionKind(row) {
@@ -96,8 +93,8 @@ function oppChoices(records, account, oppNumbers) {
 
 /**
  * The popup for one issue row, or null when nothing on it can be edited
- * from here. ctx: { prospect, prospects, settings, updateSettings,
- * updateProspect, dropdownLists, oppsRecords, oppNumbers, uid }.
+ * from here. ctx: { prospect, settings, updateSettings, updateProspect,
+ * dropdownLists, oppsRecords, oppNumbers, uid }.
  *
  * Returns { title, subtitle, note, fields, save(values) }.
  */
@@ -109,43 +106,6 @@ export function buildResolution(row, ctx) {
   const statusOpts = clientStatusOptions(settings, dropdownLists);
 
   switch (r.kind) {
-    // "Opp company not in Table View": point the opps at an existing Table
-    // View company by setting their Account to its exact name, which is
-    // how every opp-by-company lookup finds them (the company popup's opp
-    // list and Services grid, Retention, BFO). The old spelling can be kept
-    // as the company's alias so an import under it lands there too.
-    case 'oppCompany': {
-      const prospects = ctx.prospects || [];
-      const { names, best } = rankCompanyChoices(r.account, prospects);
-      if (!names.length || !r.oppIds?.length) return null;
-      const byLower = new Map(prospects.filter(p => p?.company).map(p => [String(p.company).trim().toLowerCase(), p]));
-      const count = r.oppIds.length;
-      return {
-        title: 'Map to a Table View company',
-        subtitle,
-        note: `Pick the Table View company these ${count === 1 ? 'opp belongs' : `${count} opps belong`} to. Saving sets ${count === 1 ? 'its' : 'their'} Account to that company's name, so the company's card, Retention and the BFO prompts find ${count === 1 ? 'it' : 'them'}. Type to search; the closest names are listed first.`,
-        fields: [
-          field('company', 'Table View company', 'text', r.account, { start: best || '', compare: true, suggestions: names }),
-          field('alias', `Also remember "${r.account}" as this company's other name`, 'checkbox', false, { start: true }),
-        ],
-        async save(v) {
-          const chosen = byLower.get(String(v.company || '').trim().toLowerCase());
-          if (!chosen) throw new Error(`"${String(v.company || '').trim()}" is not a Table View company. Pick a name from the list.`);
-          const name = String(chosen.company).trim();
-          if (name === r.account) throw new Error('That is already the Account on these opps.');
-          const patches = Object.fromEntries(r.oppIds.map(id => [String(id), { Account: name }]));
-          await bulkSetOppFields(uid, patches);
-          if (v.alias && updateProspect) {
-            const own = companyDedupeKey(name);
-            const have = Array.isArray(chosen[ALIASES_FIELD]) ? chosen[ALIASES_FIELD] : [];
-            const keys = new Set([own, ...have.map(companyDedupeKey)]);
-            const add = (r.accounts?.length ? r.accounts : [r.account]).filter(a => { const k = companyDedupeKey(a); if (!k || keys.has(k)) return false; keys.add(k); return true; });
-            if (add.length) await updateProspect(chosen.id, { [ALIASES_FIELD]: [...have, ...add] });
-          }
-        },
-      };
-    }
-
     case 'contractExpired':
       return {
         title: 'Resolve expired contract',
