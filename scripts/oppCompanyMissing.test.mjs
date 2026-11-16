@@ -1,6 +1,6 @@
 // Issues > "Opp company not in Table View" (utils/oppCompanyMissing).
 // Plain Node. Run: node scripts/oppCompanyMissing.test.mjs
-import { oppCompaniesMissing, oppCompanyMissingIssues } from '../src/utils/oppCompanyMissing.js';
+import { oppCompaniesMissing, oppCompanyMissingIssues, rankCompanyChoices } from '../src/utils/oppCompanyMissing.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -42,6 +42,24 @@ eq(issues[0].detail.includes('Opp # 4, 9') && issues[0].detail.includes('"Acme W
 eq(issues[2].oppNumber, 2, 'a single opp carries its Opp #');
 eq(issues[2].detail.startsWith('1 opp names "Zeta Partners"') && issues[2].detail.includes('1 No stage'), true, 'singular wording, blank stage');
 eq(/—/.test(issues.map(i => i.detail).join('')), false, 'no em dash in what the page shows');
+
+
+// The Resolve popup's payload: every opp in the group, the spellings.
+eq(issues[0].resolve, { kind: 'oppCompany', account: 'Acme Widgets', accounts: ['Acme Widgets', 'Acme Widgets, Inc.'], oppIds: ['d', 'e'] }, 'resolve carries the opps to re-point');
+
+// Ranking Table View names for mapping an Account to one.
+const roster = [
+  { company: 'Westin Hotels' }, { company: 'Jones Lang LaSalle (JLL)' }, { company: 'Starwood Capital Group' },
+  { company: 'Apollo' }, { company: 'Capital One' }, { company: 'Starwood Capital Group' },
+];
+const sw = rankCompanyChoices('Starwood Capital G...', roster);
+eq(sw.best, 'Starwood Capital Group', 'the closest name is suggested');
+eq(sw.names.length, 5, 'each name offered once');
+eq(sw.names[0], 'Starwood Capital Group', 'and listed first');
+eq(rankCompanyChoices('Jones Lang LaSalle, Inc.', roster).best, 'Jones Lang LaSalle (JLL)', 'a longer spelling finds it');
+eq(rankCompanyChoices('Capital Partners LLC', roster).best, '', 'sharing only a filler word suggests nothing');
+eq(rankCompanyChoices('Nothing Alike', roster).best, '', 'no match, no suggestion');
+eq(rankCompanyChoices('Apollo', []).names, [], 'no roster, nothing offered');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
