@@ -9,7 +9,7 @@ import { apiFetch } from './apiFetch';
 const CLOUD_BACKUPS_TO_READ = 45;
 
 /**
- * [{ label, data }] for each backup whose settings pass `has`, plus how many
+ * [{ label, data, at }] (`at` is the backup's time in ms, 0 when unknown) for each backup whose settings pass `has`, plus how many
  * of each kind were read and the oldest date reached, so a search that finds
  * nothing can say how far back it looked. One backup that can't be read is
  * skipped rather than ending the search.
@@ -21,7 +21,7 @@ export async function settingsBackupSources(has, { onProgress } = {}) {
   for (const b of await listBackups()) {
     read.browser += 1;
     note(new Date(b.timestamp).toISOString().slice(0, 10));
-    if (has(b?.data)) sources.push({ label: `browser backup ${new Date(b.timestamp).toLocaleString()}`, data: b.data });
+    if (has(b?.data)) sources.push({ label: `browser backup ${new Date(b.timestamp).toLocaleString()}`, data: b.data, at: Number(b.timestamp) || 0 });
   }
   let newest = [];
   try {
@@ -45,7 +45,7 @@ export async function settingsBackupSources(has, { onProgress } = {}) {
       read.cloud += 1;
       const when = String(out.generatedAt || f.createdTime || '').slice(0, 10);
       note(when);
-      if (has(out?.value)) sources.push({ label: `cloud backup ${when || f.name}`, data: out.value });
+      if (has(out?.value)) sources.push({ label: `cloud backup ${when || f.name}`, data: out.value, at: Date.parse(out.generatedAt || f.createdTime || '') || 0 });
     } catch (err) {
       read.cloudFailed += 1;
       if (!read.cloudError) read.cloudError = err?.message || String(err);
