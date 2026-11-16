@@ -41,7 +41,7 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
 
   const columns = useMemo(() => [
     {
-      key: 'campaign', label: 'Campaign', defaultWidth: 320,
+      key: 'campaign', label: 'Campaign', defaultWidth: 300,
       getFilterValue: (r) => campaignOutreachLabel(r.campaign),
       getSortValue: (r) => campaignOutreachLabel(r.campaign).toLowerCase(),
       render: (r) => {
@@ -108,7 +108,7 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
       ),
     },
     {
-      key: 'responseRate', label: 'Response Rate', defaultWidth: 110,
+      key: 'responseRate', label: 'Response Rate', defaultWidth: 135,
       getFilterValue: (r) => `${Number(r.campaign.responseRate) || 0}%`,
       getSortValue: (r) => Number(r.campaign.responseRate) || 0,
       render: (r) => {
@@ -150,6 +150,7 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
         columns={columns}
         rows={rows}
         variableRowHeight
+        fitWidth
         emptyMessage="No saved campaigns"
         settings={settings}
         updateSettings={updateSettings}
