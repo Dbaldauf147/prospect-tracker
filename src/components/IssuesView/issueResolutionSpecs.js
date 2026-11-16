@@ -7,6 +7,26 @@ import { updateDealFields } from '../../utils/dealsStore';
 import { setClientStatus, setClientUntracked } from '../../utils/clientManagerStore';
 import { setOppBfoLink } from '../../utils/opps2Store';
 import { normalizeBfoCompany } from '../../utils/newBfoOpps';
+import { cleanLinkedinUrl, markNoLinkedinUpdate } from '../../utils/keyContactLinkedin';
+import { apiFetch } from '../../utils/apiFetch';
+import { updateHubspotCache } from '../../utils/hubspotContactsCache';
+
+// A Key Contact's LinkedIn URL, written to HubSpot (update-contact) and
+// patched into the contacts cache so the issue clears without a re-sync.
+async function saveContactLinkedin(contactId, url) {
+  const properties = { hs_linkedin_url: url };
+  const res = await apiFetch('/api/hubspot?action=update-contact', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contactId, properties }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+  await updateHubspotCache(draft => {
+    const i = draft.contacts.findIndex(x => String(x.id || x.vid) === String(contactId));
+    if (i !== -1) draft.contacts[i] = { ...draft.contacts[i], ...properties };
+  });
+}
 
 // Resolution popups for the Issues tab. Each issue row the detectors in
 // utils/clientIssues.js raise carries a `resolve` payload naming the data
@@ -225,6 +245,23 @@ export function buildResolution(row, ctx) {
           : 'Type the name exactly as BFO Activity shows it.',
         fields: [field('bfoLink', 'BFO Opportunity Name', 'text', r.bfoLink, { suggestions: r.suggestions })],
         async save(v) { await setOppBfoLink(uid, r.oppId, v.bfoLink.trim()); },
+      };
+
+    case 'keyContactLinkedin':
+      return {
+        title: 'Add LinkedIn URL',
+        subtitle: `${r.name}${row.company && row.company !== '-' ? ` · ${row.company}` : ''}`,
+        note: 'Saved to the contact in HubSpot, and the contact goes into the Agents tab\'s Job Descriptions prompt. If the person has no LinkedIn profile, tick the box instead and the issue clears.',
+        fields: [
+          field('linkedin', 'LinkedIn URL', 'text', '', { placeholder: 'https://www.linkedin.com/in/...' }),
+          field('noLinkedin', 'This person has no LinkedIn profile', 'checkbox', false),
+        ],
+        async save(v) {
+          if (v.noLinkedin) { await updateSettings(markNoLinkedinUpdate(r.contactId)); return; }
+          const url = cleanLinkedinUrl(v.linkedin);
+          if (!url) throw new Error('That is not a LinkedIn address. Paste the profile URL, e.g. https://www.linkedin.com/in/name');
+          await saveContactLinkedin(r.contactId, url);
+        },
       };
 
     case 'bfoCompanyName':

@@ -71,7 +71,7 @@ export function IssueResolutionModal({ spec, saving, error, onSave, onClose }) {
       const listId = f.suggestions?.length ? `issue-resolve-${f.key}` : undefined;
       input = (
         <>
-          <input autoFocus={first} type="text" list={listId} value={v} onChange={(e) => set(f.key, e.target.value)} style={inputStyle} />
+          <input autoFocus={first} type="text" list={listId} value={v} placeholder={f.placeholder} onChange={(e) => set(f.key, e.target.value)} style={inputStyle} />
           {listId && <datalist id={listId}>{f.suggestions.map(s => <option key={s} value={s} />)}</datalist>}
         </>
       );
