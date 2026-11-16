@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
+import { contactConnectedUpdate } from '../../utils/contactConnected';
 import { createPortal } from 'react-dom';
 import { doc, collection, getDocs } from 'firebase/firestore';
 import { onSnapshot } from '../../utils/safeOnSnapshot';
@@ -19511,7 +19512,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={saveContactInvitedToLouisville}
           contactConnected={settings?.contactConnected || {}}
-          onSaveConnected={(cid, on) => updateSettings({ contactConnected: { ...(settings?.contactConnected || {}), [cid]: !!on } })}
+          onSaveConnected={(cid, on) => updateSettings(contactConnectedUpdate(cid, on))}
           contactSentiment={settings?.contactSentiment || {}}
           onSaveSentiment={(cid, v) => {
             if (cid == null) return;

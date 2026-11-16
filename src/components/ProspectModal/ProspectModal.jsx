@@ -58,6 +58,8 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { prwEmailEml } from '../../utils/prwRequestEmail';
 import { downloadDrafts, resolveSignature, safeFileName } from '../../utils/draftEmail';
 import { useAuth } from '../../contexts/AuthContext';
+import { contactConnectedUpdate, oppNamingContact } from '../../utils/contactConnected';
+import { useOppsRecords } from '../../utils/rosterHooks';
 import { ContactCampaignAdd, ContactsCampaignBulkAdd } from './ContactCampaignAdd';
 import { ListMatchWarning } from './ListMatchWarning';
 import { CompanyCampaignAdd } from './CompanyCampaignAdd';
@@ -1299,6 +1301,13 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [connected, setConnected] = useState(() =>
     metCid != null ? !!contactConnected[metCid] : false
   );
+  // A contact named on an opp is connected whatever the tick says: the box
+  // shows Yes, marked "from Opps", and can't be unticked here while the opp
+  // names them (see utils/contactConnected.js).
+  const connectedUser = useAuth()?.user;
+  const connectedOpps = useOppsRecords(connectedUser?.uid);
+  const connectedOpp = useMemo(() => oppNamingContact(contact, connectedOpps), [contact, connectedOpps]);
+  const connectedShown = connected || !!connectedOpp;
   // Champion / neutral / detractor — local-only as well, and the thing the
   // Divisions chart marks people with. Neutral is the stored absence, so a
   // contact nobody has judged starts here and leaves no key behind.
@@ -2523,15 +2532,24 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               })}
             </div>
           </div>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: 'pointer', padding: '0.45rem 0.7rem', border: `1px solid ${connected ? '#86EFAC' : '#E2E8F0'}`, borderRadius: '8px', background: connected ? '#F0FDF4' : '#fff' }}>
+          <label
+            title={connectedOpp
+              ? `Connected: named on the ${String(connectedOpp.Account || '').trim() || 'an'} opp${connectedOpp.Stage ? ` (${connectedOpp.Stage})` : ''} on your Opps page`
+              : undefined}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', cursor: connectedOpp ? 'default' : 'pointer', padding: '0.45rem 0.7rem', border: `1px solid ${connectedShown ? '#86EFAC' : '#E2E8F0'}`, borderRadius: '8px', background: connectedShown ? '#F0FDF4' : '#fff' }}
+          >
             <input
               type="checkbox"
-              checked={connected}
+              checked={connectedShown}
               onChange={toggleConnected}
+              disabled={!!connectedOpp}
               aria-label="Connected?"
-              style={{ accentColor: '#16A34A', width: '16px', height: '16px', cursor: 'pointer' }}
+              style={{ accentColor: '#16A34A', width: '16px', height: '16px', cursor: connectedOpp ? 'default' : 'pointer' }}
             />
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: connected ? '#166534' : '#374151' }}>Connected?</span>
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: connectedShown ? '#166534' : '#374151' }}>Connected?</span>
+            {connectedOpp && (
+              <span style={{ fontSize: '0.66rem', fontWeight: 700, color: '#166534', background: '#DCFCE7', border: '1px solid #86EFAC', borderRadius: 999, padding: '1px 6px' }}>from Opps</span>
+            )}
           </label>
           {/* Where this contact came to us from. A value saved before the
               option list had it still shows, so nothing is silently lost. */}
@@ -8074,8 +8092,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     updateSettings({ contactInvitedToLouisville: next });
   }, [settings.contactInvitedToLouisville, updateSettings]);
   const handleSaveContactConnected = useCallback((contactId, on) => {
-    updateSettings({ contactConnected: { ...(settings.contactConnected || {}), [contactId]: !!on } });
-  }, [settings.contactConnected, updateSettings]);
+    updateSettings(contactConnectedUpdate(contactId, on));
+  }, [updateSettings]);
 
   // Champion / detractor. Neutral removes the key rather than storing an
   // empty string, so the map only carries contacts anyone has judged.

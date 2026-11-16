@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { companyOverrideUpdate } from '../utils/contactCompanyOverride';
 import { metInPersonUpdate } from '../utils/metInPerson';
+import { contactConnectedUpdate } from '../utils/contactConnected';
 import { recipientMapSaver } from '../utils/recipientMaps';
 import { toggleContactInEvents, addContactToNewEvent } from '../utils/eventsStore';
 
@@ -90,6 +91,14 @@ export function useContactEditSettings({ settings, updateSettings }) {
       },
       // Champion / detractor. Neutral is the empty value, and saveMap's
       // "blank means remove the key" is exactly that.
+      // Connected? One edit to the stored map, never a copy of it (see
+      // utils/contactConnected.js): without these two the popups opened
+      // through this hook couldn't save the tick at all.
+      contactConnected: settings?.contactConnected || {},
+      onSaveConnected: (cid, on) => {
+        if (cid == null) return;
+        updateSettings?.(contactConnectedUpdate(cid, on));
+      },
       contactSentiment: settings?.contactSentiment || {},
       onSaveSentiment: (cid, v) => saveMap('contactSentiment', cid, v),
       // Where the contact came from. See utils/contactLeadSource.js.
