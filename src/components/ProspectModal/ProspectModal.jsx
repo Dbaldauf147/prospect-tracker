@@ -2503,8 +2503,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     ? companyMappingCheck(f.company, f.email)
     : { mapped: true, blank: false, suggestions: [] };
 
-  const inputStyle = { width: '100%', padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' };
-  const labelStyle = { fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '3px' };
+  const inputStyle = { width: '100%', padding: '0.22rem 0.45rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' };
+  const labelStyle = { fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '1px' };
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={e => { e.stopPropagation(); onClose(); }}>
@@ -2643,7 +2643,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             />
           )}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, minmax(0, 1fr))', gap: '0.45rem 0.6rem' }}>
           {/* Tags lead the form: they are the field reached for most. */}
           <div
             style={{ gridColumn: '1 / -1' }}
@@ -3063,7 +3063,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               );
             })()}
           </div>
-          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
+          <div style={{ gridColumn: 'span 4' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 4' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
               <label style={{ ...labelStyle, marginBottom: 0 }} htmlFor="contact-job-description">Job Description</label>
