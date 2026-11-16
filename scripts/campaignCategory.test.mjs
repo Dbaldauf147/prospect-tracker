@@ -23,10 +23,10 @@ eq(normalizeCampaignCategory('EVENTS', ['events', 'Webinars']), 'events', 'a typ
 eq(normalizeCampaignCategory('  Market  Update ', ['events']), 'Market Update', 'a new category is tidied');
 eq(normalizeCampaignCategory('   ', ['events']), '', 'blank clears it');
 
-eq(CAMPAIGN_SUMMARY_HEADERS[CAMPAIGN_SUMMARY_HEADERS.length - 1], 'Category', 'the CSV gains Category as its last column');
+eq(CAMPAIGN_SUMMARY_HEADERS.indexOf('Category'), 12, 'the CSV carries Category after Event Link');
 eq(CAMPAIGN_SUMMARY_HEADERS.indexOf('Event Link'), 11, 'the columns before it keep their places');
 const row = campaignSummaryRow({ subject: 's', category: 'Webinars' });
-eq([row.length, row[row.length - 1]], [CAMPAIGN_SUMMARY_HEADERS.length, 'Webinars'], 'a campaign row carries its category');
+eq([row.length, row[CAMPAIGN_SUMMARY_HEADERS.indexOf('Category')]], [CAMPAIGN_SUMMARY_HEADERS.length, 'Webinars'], 'a campaign row carries its category');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
