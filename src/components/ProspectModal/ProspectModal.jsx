@@ -15264,8 +15264,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </div>
                 )}
               {contactView === 'orgchart' ? (
+                // The company's own people only. A roster contact whose
+                // Company text names an owner (PE firm or parent, usually
+                // there through a link) sits in the Table view's owner
+                // bucket, and placing them here closed this company's
+                // categories on somebody who doesn't work at it.
                 <OrgChart
-                  contacts={companyContacts}
+                  contacts={directContacts}
                   onEditContact={setEditingContact}
                   tagReview={settings.contactTagReview || {}}
                   zoomCompanyId={String(fields.zoomCompanyId || '').trim()}
