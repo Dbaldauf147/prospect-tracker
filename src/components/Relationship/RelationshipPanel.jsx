@@ -1,5 +1,6 @@
 // A contact's Relationship Strength, for the Edit HubSpot Contact popup:
-// the score with its tier, trend and days since a two-way touch, what each
+// just the score and the Log activity button; clicking the score opens a
+// popup with the score's tier, trend and days since a two-way touch, what each
 // component contributed, the latest activity (each one editable), and the
 // Log activity button.
 //
@@ -9,7 +10,7 @@
 
 import { useState } from 'react';
 import { useContactRelationship } from '../../hooks/useRelationshipStrength';
-import { RelationshipBadge } from './RelationshipBadge';
+import { RelationshipBadge, ScorePill } from './RelationshipBadge';
 import { LogActivityModal } from './LogActivityModal';
 import { RELATIONSHIP_CONFIG, touchPoints, isTwoWay, localDay, touchLabel, OPTION_LABELS, ageLabel, contactKey } from '../../utils/relationshipStrength';
 import { saveContactDateAdded } from '../../utils/relationshipLog';
@@ -99,6 +100,9 @@ export function RelationshipPanel({ contact }) {
   const [showActivity, setShowActivity] = useState(false);
   // Narrow the list to what the contact sent you.
   const [onlyFromThem, setOnlyFromThem] = useState(false);
+  // The breakdown (date added, components, activity) lives in a popup so
+  // the contact popup shows just the score until it is clicked.
+  const [showBreakdown, setShowBreakdown] = useState(false);
   if (!contact || (!contact.id && !contact.vid && !contact.email)) return null;
   const name = String(contact.firstname || '').trim() || 'them';
   const fromThemCount = touches.filter(t => t.direction === 'inbound').length;
@@ -107,10 +111,18 @@ export function RelationshipPanel({ contact }) {
     .slice(0, RECENT_SHOWN);
 
   return (
-    <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.6rem 0.75rem', marginBottom: '1rem', background: '#F8FAFC' }}>
+    <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.45rem 0.75rem', marginBottom: '1rem', background: '#F8FAFC' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Relationship Strength</span>
-        <RelationshipBadge result={result} />
+        <button
+          type="button"
+          onClick={() => setShowBreakdown(true)}
+          aria-haspopup="dialog"
+          aria-label="Show the relationship strength breakdown"
+          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center' }}
+        >
+          {result ? <ScorePill score={result.score} tier={result.tier} showLabel={false} title="Click for the breakdown" /> : <span style={{ color: 'var(--color-accent)', fontSize: '0.7rem', fontWeight: 600 }}>Details</span>}
+        </button>
         <span style={{ flex: 1 }} />
         <button
           type="button"
@@ -118,6 +130,15 @@ export function RelationshipPanel({ contact }) {
           style={{ padding: '0.25rem 0.7rem', borderRadius: 6, border: '1px solid var(--color-accent)', background: 'var(--color-accent)', color: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600 }}
         >+ Log activity</button>
       </div>
+      {showBreakdown && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 10040, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={e => { e.stopPropagation(); setShowBreakdown(false); }}>
+          <div role="dialog" aria-label="Relationship Strength breakdown" style={{ background: '#fff', borderRadius: 12, padding: '1.1rem 1.25rem', width: 640, maxWidth: 'calc(100vw - 32px)', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>Relationship Strength</h3>
+              <RelationshipBadge result={result} />
+              <span style={{ flex: 1 }} />
+              <button type="button" onClick={() => setShowBreakdown(false)} aria-label="Close" style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
+            </div>
       <DateAddedField contact={contact} added={result?.added} ageDays={result?.ageDays} isNew={result?.isNew} />
       {result && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.35rem 0.9rem', marginTop: '0.5rem' }}>
@@ -189,6 +210,9 @@ export function RelationshipPanel({ contact }) {
           </>
         )}
       </div>
+          </div>
+        </div>
+      )}
       {form && (
         <LogActivityModal
           contact={contact}
