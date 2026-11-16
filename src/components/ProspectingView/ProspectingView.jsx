@@ -26,6 +26,7 @@
 // than a tab away.
 
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { MarketUpdatesCampaigns } from './MarketUpdatesCampaigns';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { setStepCaughtUp, todayISO } from '../../utils/prospectingStatus';
 import {
@@ -684,24 +685,6 @@ function StatusCell({ state, label, title, onToggle, align = 'center' }) {
 // is, and who is left to talk to. It used to sit on the Issues tab, where
 // it read as something broken rather than as the next set of calls.
 const COVERAGE_NAMES_SHOWN = 6;
-// The email campaigns that haven't finished sending, under the
-// market-updates step.
-//
-// "Reach out to contacts with market updates" is exactly what a saved
-// campaign is a batch of, and a campaign sitting at 39% sent is that step
-// half-done: twenty people who were meant to hear from us and haven't.
-// Until this the only place that showed was the Saved Campaigns table two
-// tabs away, so a stall was invisible from the page that ranks the work.
-//
-// Each row reads like the service-coverage rows above it — name, how far
-// it got, how many are left — and opens the Email Campaigns tab, where the
-// unsent recipients can be pushed into a draft.
-//
-// Paused campaigns aren't here (see unfinishedCampaigns): a pause is the
-// user having dealt with one for a couple of days, and the step's status
-// already leaves it out, so listing it under a row reading "All caught up"
-// only made the two contradict each other. It comes back on its own when
-// the pause lifts.
 // The Changed Jobs contacts nobody has dealt with yet, under the "Contacts
 // who changed companies" step: a warning line, then the names (the first
 // few, then a count of the rest). Each one is still sitting on the Changed
@@ -749,67 +732,6 @@ function ChangedJobsWarning({ rows, onNavigate, onOpenContact }) {
   );
 }
 
-function CampaignOutreachList({ rows, onNavigate }) {
-  if (!rows || rows.length === 0) return null;
-  return (
-    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>
-          Campaigns under 100% sent:
-        </span>
-        {onNavigate && (
-          <button
-            type="button"
-            onClick={onNavigate}
-            style={{
-              padding: 0, border: 0, background: 'none', font: 'inherit',
-              fontSize: '0.68rem', fontWeight: 700, color: '#0A66C2', cursor: 'pointer',
-              textDecoration: 'underline', textDecorationColor: '#BFDBFE', textUnderlineOffset: 2,
-            }}
-          >Open Email Campaigns</button>
-        )}
-      </div>
-      {rows.map((c) => (
-        <div
-          key={`${c.index}-${c.label}`}
-          title={(c.total > 0
-            ? `${c.sent} of ${c.total} sent (${c.pct}%) - ${c.remaining} still to go`
-            : 'Saved with nobody on it yet - 0% sent. Open the campaign to build its list')
-            + (c.active ? '' : ' · Inactive: no save or refresh in the last 60 days, or marked inactive by hand')}
-          style={{
-            display: 'flex', alignItems: 'baseline', gap: '0.5rem',
-            fontSize: '0.72rem', lineHeight: 1.35,
-            // An inactive campaign is still listed — a parked one that never
-            // finished is exactly what goes quiet — but it doesn't read as
-            // live work.
-            opacity: c.active ? 1 : 0.6,
-          }}
-        >
-          <span style={{
-            fontWeight: 700, color: '#334155', minWidth: 0,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>{c.label}</span>
-          {/* Same figures the Saved Campaigns table prints, through the same
-              function, so the two pages can't disagree about a percentage.
-              Tabular figures keep the column straight down the list. A
-              campaign with no list yet says so instead of printing "0 to
-              go", which would read as nothing left to do on the one row
-              where everything is. */}
-          <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-            {c.total > 0 ? `${c.pct}% sent · ${c.remaining} to go` : '0% sent · no contacts yet'}
-          </span>
-          {!c.active && (
-            <span style={{
-              flexShrink: 0, padding: '0 6px', borderRadius: 999,
-              background: '#F1F5F9', color: '#64748B',
-              fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase',
-            }}>Inactive</span>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function ServiceGapList({ gaps }) {
   if (!gaps || gaps.length === 0) return null;
@@ -1555,12 +1477,6 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
     () => collectPeFirmTopPcs(peFirmsToWork, prospects),
     [peFirmsToWork, prospects],
   );
-  // The email campaigns that haven't finished sending, printed under the
-  // market-updates step. Comes from the ladder for the same reason the
-  // counts do: those rows and that step's Status pill are the same read of
-  // the same campaigns, so the list can't show two still going out beside
-  // a row that says the step is clear. `null` until it has loaded.
-  const campaignsToFinish = ladder?.campaignsToFinish || null;
   // The Changed Jobs contacts still to deal with, under that step. Off the
   // ladder for the same reason: the list and the step's count are one read.
   const changedJobsWork = ladder?.changedJobsWork || null;
@@ -1900,7 +1816,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           const hasList = (step.key === 'targeted-services' && serviceGaps?.length)
             || (step.key === 'pe-intros' && peFirmsToWork?.length)
             || (step.key === 'contact-mapping' && tagCoverage?.all?.contacts)
-            || (step.key === 'market-updates' && campaignsToFinish?.length)
+            || step.key === 'market-updates'
             || (step.key === 'changed-jobs' && changedJobsWork?.length)
             || (step.key === 'visits' && visitContacts?.groups?.length)
             || (step.key === 'cold' && dmCoverage?.tiers?.some(t => t.total > 0));
@@ -2000,9 +1916,13 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                   />
                 )}
                 {/* And which writing has been started and not finished. */}
+                {/* The saved campaigns, as the Email Campaigns table shows
+                    them, with the Sent To ticks (Clients / Key Contacts /
+                    Prospects) editable from here. */}
                 {!editing && step.key === 'market-updates' && (
-                  <CampaignOutreachList
-                    rows={campaignsToFinish}
+                  <MarketUpdatesCampaigns
+                    settings={settings}
+                    updateSettings={updateSettings}
                     onNavigate={onNavigate ? () => onNavigate('campaigns') : null}
                   />
                 )}

@@ -54,6 +54,8 @@ import { buildCampaignTierLookup, tierRank } from '../../utils/campaignTier';
 import { buildScheduledCampaign, cannotCreateReason } from '../../utils/campaignSchedules';
 import { CampaignSchedulesPanel } from './CampaignSchedulesPanel';
 import { CampaignPauseButton } from './CampaignPauseButton';
+import { CampaignAudienceTicks } from './CampaignAudienceTicks';
+import { withAudience } from '../../utils/campaignAudience';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { CampaignLinkedDrafts } from './CampaignLinkedDrafts';
 import { subscribeDraftHistory } from '../../utils/emailDraftHistoryStore';
@@ -657,6 +659,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     const kept = {};
     if (typeof prev?.manualActive === 'boolean') kept.manualActive = prev.manualActive;
     if (prev?.pausedUntil) kept.pausedUntil = prev.pausedUntil;
+    // The hand-set Sent To ticks and Category are the user's too.
+    if (prev?.sentTo && typeof prev.sentTo === 'object' && Object.keys(prev.sentTo).length) kept.sentTo = prev.sentTo;
+    if (prev?.category) kept.category = prev.category;
     // Same story for the event link: a search result carries one only if it
     // was opened from the saved campaign, so a re-save of a fresh search would
     // otherwise drop the link somebody added.
@@ -1342,6 +1347,12 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     const next = normalizeCampaignCategory(typed, categoryOptions);
     if (next === campaignCategory(c)) return;
     saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, category: next } : x)));
+  }
+
+  // Sent To: tick or untick one audience on one saved campaign.
+  function setCampaignAudience(index, key, on) {
+    if (!savedCampaigns[index]) return;
+    saveCampaigns(savedCampaigns.map((x, i) => (i === index ? withAudience(x, key, on) : x)));
   }
 
   // Park a campaign for `days` days (the picker's X days or X weeks,
@@ -3275,6 +3286,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                 <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700 }}>Campaign</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="Type a category for the campaign, or pick one already in use.">Category</th>
+                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="Who this campaign went to: tick Clients, Key Contacts and / or Prospects">Sent To</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>% Sent</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>Response Rate</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'center', whiteSpace: 'nowrap' }}>Status</th>
@@ -3421,6 +3433,12 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                     aria-label={`Category for ${c.title || subs[0] || 'this campaign'}`}
                     style={{ width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'inherit', background: 'var(--color-surface)', color: 'var(--color-text)' }}
                   />
+                </td>
+                {/* Sent To: which audiences this campaign went to, ticked by
+                    hand (utils/campaignAudience). Its own click, like the
+                    category, so a tick doesn't open the row. */}
+                <td style={{ padding: '0.4rem 0.6rem', verticalAlign: 'top', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+                  <CampaignAudienceTicks campaign={c} onToggle={(key, on) => setCampaignAudience(i, key, on)} />
                 </td>
                 {isEditing ? (
                   <td colSpan={3} />
