@@ -30,6 +30,11 @@ export function EmailDomainsField({ value, onChange, options }) {
   // the user.
   const [domainPickerOpen, setDomainPickerOpen] = useState(false);
   const [domainPicks, setDomainPicks] = useState([]);
+  // What is typed in the "+ Add domain" box. It used to be committed on
+  // Enter only, so typing a domain and clicking Done (or anywhere else)
+  // threw it away without a word. Now Enter, the Add button and leaving
+  // the box all record it.
+  const [draft, setDraft] = useState('');
 
   const domains = (value || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
   const opts = options;
@@ -45,6 +50,19 @@ export function EmailDomainsField({ value, onChange, options }) {
     const n = i + 1;
     const t = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
     return `${n}${t}`.toUpperCase();
+  };
+  const addDraft = () => {
+    const typed = draft.split(/[\n;,\s]+/).map(t => t.trim()).filter(Boolean);
+    if (!typed.length) return;
+    const have = new Set(domains.map(lower));
+    const fresh = [];
+    for (const t of typed) {
+      if (have.has(lower(t))) continue;
+      have.add(lower(t));
+      fresh.push(t);
+    }
+    if (fresh.length) onChange([...domains, ...fresh].join('\n'));
+    setDraft('');
   };
   const move = (list, i, by) => {
     const j = i + by;
@@ -212,18 +230,29 @@ export function EmailDomainsField({ value, onChange, options }) {
         <input
           type="text"
           placeholder={domains.length === 0 && estimated.length === 0 ? 'firstname.lastname@domain.com' : '+ Add domain'}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter' && e.target.value.trim()) {
+            if (e.key === 'Enter') {
               e.preventDefault();
-              const val = e.target.value.trim();
-              if (!domains.includes(val)) {
-                onChange([...domains, val].join('\n'));
-              }
-              e.target.value = '';
+              addDraft();
             }
           }}
+          onBlur={addDraft}
           style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
         />
+        {draft.trim() && (
+          <button
+            type="button"
+            data-add-domain
+            // Keep focus in the box until the click lands, so the blur
+            // commit and this one don't both run.
+            onMouseDown={e => e.preventDefault()}
+            onClick={addDraft}
+            title="Add what is typed (Enter does the same)"
+            style={{ padding: '0.1rem 0.5rem', border: '1px solid #2563EB', borderRadius: 4, background: '#2563EB', color: '#fff', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', flexShrink: 0 }}
+          >Add</button>
+        )}
       </div>
       {/* The contacts on this card have already answered this
           question, one address each - but they can answer it
