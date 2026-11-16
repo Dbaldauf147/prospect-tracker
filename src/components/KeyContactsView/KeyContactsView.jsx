@@ -27,7 +27,10 @@ import { reportingTier } from '../../utils/tierSource';
 import { checkCity, checkState } from '../../utils/locationStandardize';
 import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '../../data/cities';
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
-import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
+import { companyOverrideUpdate, companyOverridesUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
+import { findSuspectPins, pinRecoveryRows } from '../../utils/companyPinReview';
+import { settingsBackupSources } from '../../utils/settingsBackupSources';
+import { CompanyPinReview } from './CompanyPinReview';
 import { primarySubject } from '../../utils/campaignSubjects';
 import { SNOOZE_MONTH_OPTIONS, snoozeUntilIso, activeSnoozeMs } from '../../utils/changedJobs';
 import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
@@ -1562,7 +1565,26 @@ function KeyContactsViewInner({
   // stale save wiped from contactLocalFields, for the contacts whose company
   // maps to none of your accounts now (the amber cells), and only where the
   // backup's company does match one. See utils/changedJobsRecovery.
+  //
+  // Unmapped now is also what a job change looks like (HubSpot moved on to
+  // the new employer, the backup still pins the old one), so every pin it
+  // finds goes into a review list first, and the ones that look like moving
+  // someone back to a job they left (utils/companyPinReview pinRisk) start
+  // unticked.
   const [pinRecovery, setPinRecovery] = useState({ busy: false, note: '' });
+  const [pinReview, setPinReview] = useState(null);
+  // Plain functions, not memos: hubspotCache is declared further down.
+  const contactsByIdNow = () => {
+    const m = new Map();
+    for (const c of (hubspotCache?.contacts || [])) {
+      const id = String(c?.id || c?.vid || '');
+      if (id) m.set(id, c);
+    }
+    return m;
+  };
+  const accountNameSet = () => new Set(prospects.map(p => String(p.company || '').toLowerCase().trim()).filter(Boolean));
+  const searchedNote = (read) => `Searched ${read.browser} browser backup${read.browser === 1 ? '' : 's'} and ${read.cloud} cloud backup${read.cloud === 1 ? '' : 's'}${read.oldest ? `, back to ${read.oldest}` : ''}.`
+    + (read.cloudFailed || read.cloudError ? `\nCloud backups that could not be read: ${read.cloudFailed}${read.cloudError ? ` (${read.cloudError})` : ''}.` : '');
   async function recoverCompanyPins() {
     if (pinRecovery.busy) return;
     setPinRecovery({ busy: true, note: 'Searching backups...' });
@@ -1572,41 +1594,96 @@ function KeyContactsViewInner({
         const id = String(c?.id || c?.vid || '');
         if (id && !c.prospect) unmapped.set(id, c);
       }
-      const accountNames = new Set(prospects.map(p => String(p.company || '').toLowerCase().trim()).filter(Boolean));
+      const accountNames = accountNameSet();
       const allowId = (id, entry) => unmapped.has(id)
         && accountNames.has(String(entry?._companyOverride || '').toLowerCase().trim());
       const { found, sources, read } = await findLostCompanyPins(settings, allowId, {
         onProgress: (note) => setPinRecovery({ busy: true, note }),
       });
-      const searched = `Searched ${read.browser} browser backup${read.browser === 1 ? '' : 's'} and ${read.cloud} cloud backup${read.cloud === 1 ? '' : 's'}${read.oldest ? `, back to ${read.oldest}` : ''}.`
-        + (read.cloudFailed || read.cloudError ? `\nCloud backups that could not be read: ${read.cloudFailed}${read.cloudError ? ` (${read.cloudError})` : ''}.` : '');
+      const searched = searchedNote(read);
       if (!found.length) {
         window.alert(`Nothing to recover: no backup holds a company mapping for the ${unmapped.size} unmapped contact${unmapped.size === 1 ? '' : 's'} on this page that matches one of your accounts.\n\n${searched}`);
         setPinRecovery({ busy: false, note: 'Nothing to recover.' });
         return;
       }
-      const lines = found.slice(0, 20).map(x => {
-        const c = unmapped.get(x.id);
-        const name = [c?.firstname, c?.lastname].filter(Boolean).join(' ') || c?.email || `contact ${x.id}`;
-        return `${name}: ${c?.companyName || '(no company)'} -> ${x.value}`;
+      const rows = pinRecoveryRows(found, contactsByIdNow());
+      const risky = rows.filter(r => !r.tick).length;
+      setPinRecovery({ busy: false, note: '' });
+      setPinReview({
+        mode: 'recover',
+        rows,
+        title: `Recover company mappings: ${rows.length} found`,
+        intro: `Your backups hold a company mapping for these ${rows.length} unmapped contact${rows.length === 1 ? '' : 's'}. Ticked ones get the pinned company back.`
+          + (risky ? `\n${risky} start unticked: HubSpot has them somewhere else now (or they are tagged Left), which usually means they changed jobs and the backup is from before. Tick one only if you know they are still there.` : ''),
+        applyLabel: 'Put back ticked',
+        footnote: searched,
+        apply: async (ids) => {
+          const pick = new Set(ids);
+          const saved = await updateSettings((s) => {
+            const { patch } = recoverChangedJobsFlags(s, sources, Date.now(), {
+              flags: [COMPANY_PIN_FLAG],
+              allowId: (id, entry) => pick.has(id) && allowId(id, entry),
+            });
+            return patch ? { contactLocalFields: patch } : null;
+          });
+          if (saved === false) {
+            window.alert('Found the company mappings, but saving them did not go through. Reload the page and click Recover company mappings again.');
+            return 'Found them, but the save did not go through. Reload the page and try again.';
+          }
+          return `Recovered company mappings for ${ids.length} contact${ids.length === 1 ? '' : 's'}.`;
+        },
       });
-      if (found.length > 20) lines.push(`and ${found.length - 20} more`);
-      const ok = window.confirm(
-        `Found company mappings for ${found.length} unmapped contact${found.length === 1 ? '' : 's'} in your backups.\n\n${lines.join('\n')}\n\nPut them back? Contacts that are mapped now are not changed.\n\n${searched}`,
-      );
-      if (!ok) { setPinRecovery({ busy: false, note: '' }); return; }
-      const saved = await updateSettings((s) => {
-        const { patch } = recoverChangedJobsFlags(s, sources, Date.now(), { flags: [COMPANY_PIN_FLAG], allowId });
-        return patch ? { contactLocalFields: patch } : null;
-      });
-      if (saved === false) {
-        setPinRecovery({ busy: false, note: 'Found them, but the save did not go through. Reload the page and try again.' });
-        window.alert('Found the company mappings, but saving them did not go through. Reload the page and click Recover company mappings again.');
-        return;
-      }
-      setPinRecovery({ busy: false, note: `Recovered company mappings for ${found.length} contact${found.length === 1 ? '' : 's'}.` });
     } catch (err) {
       setPinRecovery({ busy: false, note: `Recovery failed: ${err?.message || err}` });
+    }
+  }
+
+  // "Undo recovered mappings": the pins on contacts now that hold them at
+  // one of your accounts while HubSpot has them somewhere else (or they are
+  // tagged Left). The ones the backups show going missing and coming back,
+  // which is what Recover company mappings did, start ticked. Un-pinning
+  // only removes the pin, so the contact shows HubSpot's company again,
+  // which is what it showed before the recovery.
+  async function reviewRecoveredPins() {
+    if (pinRecovery.busy) return;
+    setPinRecovery({ busy: true, note: 'Searching backups...' });
+    try {
+      const { sources, read } = await settingsBackupSources(
+        d => !!(d && d.contactLocalFields && typeof d.contactLocalFields === 'object'),
+        { onProgress: (note) => setPinRecovery({ busy: true, note }) },
+      );
+      const suspects = findSuspectPins({
+        contacts: hubspotCache?.contacts || [],
+        localFields: settings?.contactLocalFields || {},
+        accountNames: accountNameSet(),
+        sources,
+      });
+      const searched = searchedNote(read);
+      setPinRecovery({ busy: false, note: '' });
+      if (!suspects.length) {
+        window.alert(`No company mapping holds a contact at one of your accounts while HubSpot has them somewhere else.\n\n${searched}`);
+        return;
+      }
+      const restored = suspects.filter(r => r.restored).length;
+      setPinReview({
+        mode: 'undo',
+        rows: suspects.map(r => ({ ...r, tick: r.restored })),
+        title: `Undo recovered mappings: ${suspects.length} to review`,
+        intro: `These ${suspects.length} contact${suspects.length === 1 ? ' is' : 's are'} pinned to one of your accounts while HubSpot has them somewhere else (or they are tagged Left). Ticked ones lose the pin and show HubSpot's company again.`
+          + `\n${restored} start ticked: the backups show their pin went missing and came back, which is what Recover company mappings did. The rest look like pins you typed yourself.`,
+        applyLabel: 'Remove pin from ticked',
+        footnote: searched,
+        apply: async (ids) => {
+          const saved = await updateSettings(companyOverridesUpdate(ids, null));
+          if (saved === false) {
+            window.alert('Removing the pins did not save. Reload the page and try again.');
+            return 'The save did not go through. Reload the page and try again.';
+          }
+          return `Removed the company pin from ${ids.length} contact${ids.length === 1 ? '' : 's'}.`;
+        },
+      });
+    } catch (err) {
+      setPinRecovery({ busy: false, note: `Search failed: ${err?.message || err}` });
     }
   }
 
@@ -3915,6 +3992,44 @@ function KeyContactsViewInner({
                 fontFamily: 'inherit',
               }}
             >{pinRecovery.busy ? (pinRecovery.note || 'Searching...') : 'Recover company mappings'}</button>
+          )}
+          {hasFullTable(storagePrefix) && !pinRecovery.busy && (
+            <button
+              type="button"
+              onClick={reviewRecoveredPins}
+              title="List the contacts pinned to one of your accounts while HubSpot has them at another company, and remove the pins you tick. The ones Recover company mappings put back start ticked."
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                border: '1px solid #CBD5E1',
+                borderRadius: 6,
+                background: '#fff',
+                color: '#334155',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >Undo recovered mappings</button>
+          )}
+          {pinReview && (
+            <CompanyPinReview
+              tableId={`company-pin-review-${pinReview.mode}`}
+              title={pinReview.title}
+              intro={pinReview.intro}
+              rows={pinReview.rows}
+              applyLabel={pinReview.applyLabel}
+              footnote={pinReview.footnote}
+              settings={settings}
+              updateSettings={updateSettings}
+              onClose={() => setPinReview(null)}
+              onApply={async (ids) => {
+                const run = pinReview.apply;
+                setPinReview(null);
+                setPinRecovery({ busy: true, note: 'Saving...' });
+                const note = await run(ids).catch(err => `Save failed: ${err?.message || err}`);
+                setPinRecovery({ busy: false, note });
+              }}
+            />
           )}
           {!pinRecovery.busy && pinRecovery.note && (
             <span style={{ fontSize: '0.7rem', color: '#475569', maxWidth: 220 }}>{pinRecovery.note}</span>
