@@ -2,7 +2,9 @@
 // every one of the user's current clients, who at that company is on it.
 //
 // "Current clients" are the Table View records with status Client and the
-// user as CDM (every Client when no CDM name is set up). A campaign
+// user as CDM (every Client when no CDM name is set up), less any ticked
+// "Don't Track" on the Clients tab (untrackedMap, keyed by lowercased
+// company name). A campaign
 // contact belongs to a client the way the Client roster decides it
 // (makeClientAccountLookup): a near-name match on the contact's company,
 // then an email domain the client's record claims. A grouped send
@@ -21,7 +23,7 @@ import { campaignOutreachLabel } from './campaignOutreach.js';
 const nameKey = (s) => String(s || '').trim().toLowerCase();
 
 /** The user's current clients, one record per company name. */
-export function currentClients(prospects, cdmName) {
+export function currentClients(prospects, cdmName, untrackedMap = null) {
   const out = [];
   const seen = new Set();
   for (const p of prospects || []) {
@@ -29,6 +31,7 @@ export function currentClients(prospects, cdmName) {
     if (cdmName && !matchesCdm(p.cdm, cdmName)) continue;
     const k = nameKey(p.company);
     if (!k || seen.has(k)) continue;
+    if (untrackedMap && untrackedMap[k]) continue;
     seen.add(k);
     out.push(p);
   }
@@ -61,8 +64,8 @@ const dateOf = (v) => {
  *     onCampaign, sent, replied, lastSent }
  * `people` is everyone on the campaign at that client, Replied first.
  */
-export function clientCampaignRows({ prospects, cdmName, campaign }) {
-  const clients = currentClients(prospects, cdmName);
+export function clientCampaignRows({ prospects, cdmName, campaign, untrackedMap = null }) {
+  const clients = currentClients(prospects, cdmName, untrackedMap);
   // The lookup only knows Client records, and only these ones.
   const lookup = makeClientAccountLookup(clients);
   const byName = new Map(clients.map(p => [nameKey(p.company), p]));

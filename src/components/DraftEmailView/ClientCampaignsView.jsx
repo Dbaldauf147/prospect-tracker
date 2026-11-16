@@ -11,6 +11,7 @@ import { DataTable } from '../common/DataTable';
 import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
 import { campaignChoices, clientCampaignRows } from '../../utils/clientCampaignCoverage';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { useClientFlagMaps } from '../../utils/rosterHooks';
 
 const PICK_KEY = 'client-campaigns-pick';
 
@@ -42,6 +43,8 @@ const fmtDate = (iso) => {
 
 export function ClientCampaignsView({ prospects, cdmName = '', settings, updateSettings, onSelectProspect, onOpenCampaign }) {
   const campaigns = useEmailCampaigns();
+  // Clients ticked "Don't Track" on the Clients tab are left off this list.
+  const { clientUntrackedMap } = useClientFlagMaps();
   const choices = useMemo(() => campaignChoices(campaigns), [campaigns]);
   // Remembered by the campaign's name, so a new campaign saved above it
   // doesn't move the pick to a different one.
@@ -52,8 +55,8 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   const campaign = picked?.campaign || null;
 
   const allRows = useMemo(
-    () => clientCampaignRows({ prospects, cdmName, campaign }),
-    [prospects, cdmName, campaign],
+    () => clientCampaignRows({ prospects, cdmName, campaign, untrackedMap: clientUntrackedMap }),
+    [prospects, cdmName, campaign, clientUntrackedMap],
   );
   const rows = onlyReached ? allRows.filter(r => r.onCampaign > 0) : allRows;
   const reached = allRows.filter(r => r.onCampaign > 0).length;
@@ -193,7 +196,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           defaultSort={{ key: 'onCampaign', direction: 'desc' }}
           variableRowHeight
           emptyMessage={noClients
-            ? 'No current clients found. Clients are the Table View companies with status Client and you as CDM.'
+            ? 'No current clients found. Clients are the Table View companies with status Client and you as CDM, less any ticked Don\'t Track on the Clients tab.'
             : onlyReached && reached === 0
               ? 'None of your current clients are on this campaign.'
               : 'No clients match the filters.'}
