@@ -1,0 +1,70 @@
+// Issues > "Opp company not in Table View" > Resolve: point a company's opps
+// at a Table View company, picked from the roster or created there and then.
+//
+// The opps are tied to a company by name, so mapping sets each one's
+// Account to the company's exact name (one Opps save for them all). The old
+// spelling(s) can be kept as the company's alias (utils/companyAliases), so
+// an import under that name lands on it too. The popup is
+// IssuesView/OppCompanyMapModal.jsx; the row is utils/oppCompanyMissing.js.
+import { bulkSetOppFields } from './opps2Store';
+import { ALIASES_FIELD } from './companyAliases';
+import { companyDedupeKey } from './companyKey';
+
+/** The aliases `record` would have with `names` added (new spellings only). */
+export function aliasesWith(record, names) {
+  const have = Array.isArray(record?.[ALIASES_FIELD]) ? record[ALIASES_FIELD] : [];
+  const keys = new Set([companyDedupeKey(record?.company), ...have.map(companyDedupeKey)].filter(Boolean));
+  const add = [];
+  for (const n of names || []) {
+    const name = String(n || '').trim();
+    const k = companyDedupeKey(name);
+    if (!k || keys.has(k)) continue;
+    keys.add(k);
+    add.push(name);
+  }
+  return add.length ? [...have, ...add] : null;
+}
+
+/**
+ * Map the row's opps to a company. `target` is { mode: 'existing', record }
+ * or { mode: 'create', name, status }. Returns { name, created } (`created`
+ * false when the roster already had that company, which addProspect hands
+ * back instead of adding a second).
+ *
+ * deps: { uid, prospects, addProspect, updateProspect }.
+ */
+export async function mapOppsToCompany(resolve, target, { keepAlias = true } = {}, deps = {}) {
+  const { uid, prospects = [], addProspect, updateProspect } = deps;
+  const oppIds = (resolve?.oppIds || []).map(String);
+  if (!oppIds.length) throw new Error('This issue has no opps to map.');
+  const spellings = resolve?.accounts?.length ? resolve.accounts : [resolve?.account];
+
+  let record;
+  let created = false;
+  if (target?.mode === 'create') {
+    const name = String(target.name || '').trim();
+    if (!name) throw new Error('Type a name for the new company.');
+    if (!addProspect) throw new Error('Companies can\'t be added from this page.');
+    const id = await addProspect({ company: name, status: target.status || 'Qualifying' });
+    if (!id) throw new Error(`"${name}" could not be added to Table View.`);
+    const existing = prospects.find(p => p.id === id);
+    record = existing || { id, company: name };
+    created = !existing;
+  } else {
+    record = target?.record;
+    if (!record?.id || !String(record.company || '').trim()) throw new Error('Pick a Table View company from the list.');
+  }
+
+  const name = String(record.company).trim();
+  const patches = {};
+  for (const id of oppIds) patches[id] = { Account: name };
+  // A new company named exactly what the opps say needs no rewrite.
+  const needsRewrite = spellings.some(s => String(s || '').trim() !== name);
+  if (needsRewrite) await bulkSetOppFields(uid, patches);
+
+  if (keepAlias && updateProspect) {
+    const next = aliasesWith(record, spellings.filter(s => String(s || '').trim() !== name));
+    if (next) await updateProspect(record.id, { [ALIASES_FIELD]: next });
+  }
+  return { name, created };
+}
