@@ -2,7 +2,6 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } fr
 import { useBadEmails } from '../../hooks/useBadEmails';
 import { badEmailInfo, badEmailTitle } from '../../utils/badEmails';
 import { scanForBounces, bounceScanDue, CAMPAIGN_SCAN_EVERY_MS } from '../../utils/bounceScan';
-import { hasOutlookConnection } from '../../utils/hubspotExportMailSync';
 import { createPortal } from 'react-dom';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
@@ -59,6 +58,7 @@ import { buildScheduledCampaign, cannotCreateReason } from '../../utils/campaign
 import { CampaignSchedulesPanel } from './CampaignSchedulesPanel';
 import { CampaignPauseButton } from './CampaignPauseButton';
 import { CampaignAudienceTicks } from './CampaignAudienceTicks';
+import { BounceForwardNote } from './BounceForwardNote';
 import { withAudience } from '../../utils/campaignAudience';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { CampaignLinkedDrafts } from './CampaignLinkedDrafts';
@@ -141,7 +141,7 @@ const STATUS_TONE = {
   Replied: { background: '#DCFCE7', color: '#166534' },
   Bounced: { background: '#FEE2E2', color: '#991B1B' },
   'Out of Office': { background: '#FEF3C7', color: '#92400E' },
-  // An address a delivery-failure notice in Outlook named (utils/badEmails).
+  // An address a forwarded delivery-failure notice named (utils/badEmails).
   'Bad Email': { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
   'No Reply': { background: '#F3F4F6', color: '#6B7280' },
   'Not Sent': { background: '#FEF3C7', color: '#92400E' },
@@ -297,14 +297,13 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   const [results, setResults] = useState(null);
   // The bad-email flags from the bounce scan (utils/badEmails.js).
   const { map: badEmailMap } = useBadEmails();
-  // This page runs the Outlook bounce scan itself, on opening and on each
-  // refresh (no more than every ten minutes), rather than waiting on the
+  // This page checks for forwarded bounce notices itself, on opening and on
+  // each refresh (no more than every ten minutes), rather than waiting on the
   // background watcher's two-hourly round: the campaign is where a bounce
   // matters, and a delivery-failure notice never carries the campaign's
   // subject, so HubSpot's matching never brings it in.
   const scanBouncesSoon = useCallback(async () => {
     if (!updateSettings || !bounceScanDue(Date.now(), CAMPAIGN_SCAN_EVERY_MS)) return;
-    if (!(await hasOutlookConnection())) return;
     await scanForBounces(updateSettings);
   }, [updateSettings]);
   useEffect(() => { scanBouncesSoon(); }, [scanBouncesSoon]);
@@ -1697,7 +1696,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     () => outreachCounts(displayResults?.contacts),
     [displayResults?.contacts],
   );
-  // Rows whose address the Outlook bounce scan flagged (utils/badEmails).
+  // Rows whose address a forwarded bounce notice flagged (utils/badEmails).
   const badEmailCount = useMemo(
     () => (displayResults?.contacts || []).filter(c => String(c?.email || '').split(';').some(a => badEmailInfo(badEmailMap, a.trim()))).length,
     [displayResults?.contacts, badEmailMap],
@@ -2063,8 +2062,8 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     );
   }
 
-  // Bad email: an address on the row bounced (a delivery-failure notice in
-  // the Outlook inbox, utils/badEmails.js). Reads as Bounced in Status and
+  // Bad email: an address on the row bounced (a delivery-failure notice
+  // Dan forwarded, utils/badEmails.js). Reads as Bounced in Status and
   // Failed in Delivery, the same as a bounce the campaign itself caught.
   function badEmailOf(c) {
     for (const address of String(c?.email || '').split(';').map(x => x.trim()).filter(Boolean)) {
@@ -2076,8 +2075,8 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   function withBadEmail(c) {
     return c && !c.bounced && badEmailOf(c) ? { ...c, bounced: true } : c;
   }
-  // Status as this table reads it: "Bad Email" for an address the Outlook
-  // scan found a bounce for (and no reply since), else the campaign's own.
+  // Status as this table reads it: "Bad Email" for an address a forwarded
+  // bounce notice named (and no reply since), else the campaign's own.
   function statusLabelOf(c) {
     if (c && !c.replied && !c.bounced && badEmailOf(c)) return 'Bad Email';
     return contactStatusLabel(c);
@@ -2189,10 +2188,10 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
         const bad = badEmailOf(c);
         const STATUS_TITLE = {
           'Bad Email': bad
-            ? `${badEmailTitle(bad.info)} - a delivery-failure notice for ${bad.address} is in your Outlook inbox. Fix the address on the contact popup (or Mark fixed there) before the next send.`
+            ? `${badEmailTitle(bad.info)} - you forwarded a delivery-failure notice for ${bad.address}. Fix the address on the contact popup (or Mark fixed there) before the next send.`
             : '',
           Bounced: bad && !c.bounced
-            ? `${badEmailTitle(bad.info)} - a delivery-failure notice for ${bad.address} is in your Outlook inbox. Fix or remove it before the next send.`
+            ? `${badEmailTitle(bad.info)} - you forwarded a delivery-failure notice for ${bad.address}. Fix or remove it before the next send.`
             : 'The mail server rejected this address - nobody saw the email. Fix or remove it before the next send.',
           'Out of Office': c.oooSubject
             ? `Auto-responder: "${c.oooSubject}". Not a no - worth a second send when they're back.`
@@ -2442,6 +2441,8 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
           person already been sent? It reads the saved campaigns already in
           memory, so the rows appear as the address is typed, and it changes
           nothing - the campaign open below stays open. */}
+      {/* Where to forward bounce notices so they're logged (BounceForwardNote). */}
+      <BounceForwardNote />
       {savedCampaigns.length > 0 && (
         <div style={{ marginBottom: '1rem' }}>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -2609,7 +2610,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                     <span style={{ color: 'var(--color-text-muted)' }}> · </span>
                     <strong
                       style={{ color: '#B91C1C' }}
-                      title="Addresses on this campaign that a delivery-failure notice in your Outlook inbox named. Their Status reads Bad Email."
+                      title="Addresses on this campaign that a forwarded delivery-failure notice named. Their Status reads Bad Email."
                     >{badEmailCount}</strong> bad email{badEmailCount === 1 ? '' : 's'}
                   </>
                 )}
@@ -2799,7 +2800,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
               {badEmailCount > 0 && (
                 <span
                   data-bad-email-count
-                  title="Addresses on this campaign that a delivery-failure notice in your Outlook inbox named (checked when this page opens and on refresh). Their Status reads Bad Email; fix the address on the contact popup."
+                  title="Addresses on this campaign that a forwarded delivery-failure notice named (checked when this page opens and on refresh). Their Status reads Bad Email; fix the address on the contact popup."
                   style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#B91C1C' }}
                 >{badEmailCount} bad email{badEmailCount === 1 ? '' : 's'}</span>
               )}

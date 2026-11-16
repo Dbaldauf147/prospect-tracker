@@ -1327,8 +1327,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [connected, setConnected] = useState(() =>
     metCid != null ? !!contactConnected[metCid] : false
   );
-  // Bad email: this address bounced (a delivery-failure notice in the
-  // Outlook inbox, utils/badEmails.js), until Mark fixed or the address
+  // Bad email: this address bounced (a delivery-failure notice Dan
+  // forwarded, utils/badEmails.js), until Mark fixed or the address
   // changes. Read live, so a scan landing while the popup is open shows.
   const badEmailsStore = useBadEmails();
   const badEmail = badEmailInfo(badEmailsStore.map, f.email);
@@ -2926,7 +2926,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               {badEmail && (
                 <span
                   data-bad-email
-                  title={`${badEmailTitle(badEmail)}. Found automatically in your Outlook inbox.`}
+                  title={`${badEmailTitle(badEmail)}. From a bounce notice you forwarded.`}
                   style={{ marginLeft: 6, padding: '0 6px', borderRadius: 999, background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#B91C1C', fontSize: '0.62rem', fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}
                 >Bad email: bounced</span>
               )}
