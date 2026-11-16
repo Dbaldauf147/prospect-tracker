@@ -28,6 +28,12 @@ ok(rows.find(r => r.resolve.contactId === '7')?.company === 'Zeta Corp', 'a type
 ok(rows.every(r => r.type === KEY_CONTACT_LINKEDIN_ISSUE && r.source === 'Agents' && r.id.startsWith('key-contact-no-linkedin:')), 'row shape');
 ok(rows.find(r => r.resolve.contactId === '1').detail.startsWith('Stephen Smith (SVP Ops)'), 'detail names the contact');
 ok(!/—/.test(JSON.stringify(rows)), 'no em dash');
+ok(rows.find(r => r.resolve.contactId === '1').resolve.linkedinSearchUrl === 'https://www.linkedin.com/search/results/people/?keywords=Stephen%20Smith%20Simon%20Property%20Group', 'LinkedIn search is name + company');
+ok(rows.find(r => r.resolve.contactId === '7').resolve.linkedinSearchUrl.endsWith('Typed%20Co%20Zeta%20Corp'), 'LinkedIn search uses a typed-in company');
+{
+  const [r] = keyContactLinkedinIssues([{ id: '9', email: 'x@y.com', company: 'Acme', dans_tags: 'Dan Key Target' }]);
+  ok(r && r.resolve.linkedinSearchUrl === '', 'no name: no LinkedIn search');
+}
 const all = computeIssues({ keyContactLinkedin: rows });
 ok(all.filter(r => r.type === KEY_CONTACT_LINKEDIN_ISSUE).length === 3, 'computeIssues includes them');
 

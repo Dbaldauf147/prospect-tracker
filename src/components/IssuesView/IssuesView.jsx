@@ -1086,12 +1086,16 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       // Opens a popup over the data that would clear this issue (see
       // IssueResolution.jsx); rows with nothing editable from here show a
       // dash. Filters on "Resolve" so the fixable rows can be pulled out.
-      key: 'resolution', label: 'Resolution', defaultWidth: 110,
+      // Key Contact rows also get a LinkedIn people search for the person
+      // and company, to find the profile URL the Resolve popup asks for.
+      key: 'resolution', label: 'Resolution', defaultWidth: 190,
       shownFor: (row) => canResolve(row),
       getFilterValue: (row) => (canResolve(row) ? 'Resolve' : ''),
       render: (row) => {
         if (!canResolve(row)) return <span style={{ color: '#94A3B8' }}>-</span>;
+        const liSearch = row.resolve?.linkedinSearchUrl;
         return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); openResolution(row); }}
@@ -1105,6 +1109,24 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           >
             Resolve <span aria-hidden="true">✎</span>
           </button>
+          {liSearch && (
+            <a
+              href={liSearch}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title={`Search LinkedIn for ${row.resolve.name}${row.company && row.company !== '-' ? ` at ${row.company}` : ''}`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 10px', borderRadius: 4, textDecoration: 'none',
+                fontSize: '0.7rem', fontWeight: 600,
+                border: '1px solid #0A66C2', background: '#0A66C2', color: '#FFFFFF',
+              }}
+            >
+              LinkedIn <span aria-hidden="true">↗</span>
+            </a>
+          )}
+          </span>
         );
       },
     },
