@@ -1,4 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
+import { useBadEmails } from '../../hooks/useBadEmails';
+import { badEmailInfo, badEmailTitle } from '../../utils/badEmails';
 import { createPortal } from 'react-dom';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
@@ -289,6 +291,8 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   // Transient success line for the "Add unsent to Draft" action.
   const [notice, setNotice] = useState('');
   const [results, setResults] = useState(null);
+  // The bad-email flags from the bounce scan (utils/badEmails.js).
+  const { map: badEmailMap } = useBadEmails();
   const [savedCampaigns, setSavedCampaigns] = useState([]);
   const [campaignsLoaded, setCampaignsLoaded] = useState(false);
   const [viewingSaved, setViewingSaved] = useState(null); // index of saved campaign being viewed
@@ -1421,7 +1425,8 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   const OUTREACH_RANK = { open: 0, hold: 1, avoid: 2 };
 
 
-  function statusRank(c) {
+  function statusRank(raw) {
+    const c = withBadEmail(raw);
     if (c.replied) return 4;
     if (c.outOfOffice) return 3;
     if (c.bounced) return 1;
@@ -1660,11 +1665,13 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   // scan proves nothing about interest and everything about delivery.
   const deliveryFor = useMemo(() => (c) => {
     const t = lookupTracking(c.email);
-    return deliveryStatus(c, {
+    return deliveryStatus(withBadEmail(c), {
       hasActivity: !!t && ((t.openCount + t.machine) > 0 || t.rawClickCount > 0),
       sentAt: c.sentDate || null,
     });
-  }, [lookupTracking]);
+  // withBadEmail reads the published bad-email map, which badEmailMap tracks.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lookupTracking, badEmailMap]);
 
   // How many of the roster are currently not to be emailed. Read live, so a
   // hold that has run out stops counting on the day it lifts without anything
@@ -2034,6 +2041,20 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     );
   }
 
+  // Bad email: an address on the row bounced (a delivery-failure notice in
+  // the Outlook inbox, utils/badEmails.js). Reads as Bounced in Status and
+  // Failed in Delivery, the same as a bounce the campaign itself caught.
+  function badEmailOf(c) {
+    for (const address of String(c?.email || '').split(';').map(x => x.trim()).filter(Boolean)) {
+      const info = badEmailInfo(badEmailMap, address);
+      if (info) return { address, info };
+    }
+    return null;
+  }
+  function withBadEmail(c) {
+    return c && !c.bounced && badEmailOf(c) ? { ...c, bounced: true } : c;
+  }
+
   function renderContactCell(key, c, i, isDup) {
     switch (key) {
       case 'email':
@@ -2058,6 +2079,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                 ))}
               </span>
               {isDup && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FDE68A', color: '#92400E', flexShrink: 0 }} title="This contact appears more than once in this campaign">Duplicate</span>}
+              {/* A delivery-failure notice for this address is in the Outlook
+                  inbox (utils/badEmails.js). */}
+              {badEmailOf(c) && <span data-bad-email style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#B91C1C', flexShrink: 0 }} title={`${badEmailTitle(badEmailOf(c).info)}. Fix the address on the contact popup, or Mark fixed there.`}>Bad email</span>}
               {/* Nobody added this row - the campaign found it. Said quietly,
                   because it is provenance rather than a problem, and the
                   answer to "who is this and why are they on my list?". */}
@@ -2133,9 +2157,12 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
         // The ladder itself lives in campaignExport, because the CSV prints
         // the same words and the two must not drift; the badge here only
         // decides how each of them looks.
-        const label = contactStatusLabel(c);
+        const label = contactStatusLabel(withBadEmail(c));
+        const bad = badEmailOf(c);
         const STATUS_TITLE = {
-          Bounced: 'The mail server rejected this address - nobody saw the email. Fix or remove it before the next send.',
+          Bounced: bad && !c.bounced
+            ? `${badEmailTitle(bad.info)} - a delivery-failure notice for ${bad.address} is in your Outlook inbox. Fix or remove it before the next send.`
+            : 'The mail server rejected this address - nobody saw the email. Fix or remove it before the next send.',
           'Out of Office': c.oooSubject
             ? `Auto-responder: "${c.oooSubject}". Not a no - worth a second send when they're back.`
             : "Their auto-responder answered. Not a no - worth a second send when they're back.",

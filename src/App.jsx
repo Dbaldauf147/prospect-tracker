@@ -38,6 +38,7 @@ import { UpdateBanner } from './components/UpdateBanner';
 import { OtherTabBanner } from './components/OtherTabBanner';
 import { BackupHealthBanner } from './components/BackupHealthBanner';
 import { HubspotExportMailWatcher } from './components/HubspotExportMailWatcher';
+import { BouncedEmailWatcher } from './components/BouncedEmailWatcher';
 import { SyncPanel } from './components/SyncPanel';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
@@ -942,6 +943,7 @@ function App() {
       <OtherTabBanner />
       <BackupHealthBanner user={user} />
       {isAdmin && <HubspotExportMailWatcher />}
+      {settingsLoaded && <BouncedEmailWatcher badEmails={settings.badEmails} updateSettings={updateSettings} />}
     </div>
   );
 }
