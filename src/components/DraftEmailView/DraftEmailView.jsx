@@ -599,7 +599,7 @@ function AddFieldColumn({ fieldKeys, onChangeFieldKeys }) {
   );
 }
 
-function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null }) {
+function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null, onOpenContact = null }) {
   const fields = fieldKeys.map(contactFieldColumn).filter(Boolean);
   const fieldValue = (c, f) => {
     const raw = rawOf ? rawOf(c) : null;
@@ -705,7 +705,15 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
             {contacts.map(c => (
               <tr key={c.id || c.email}>
                 <td style={{ ...cellStyle, fontWeight: 600, color: '#1E293B' }} title={`${c.name || ''}${c.email ? ` · ${c.email}` : ''}${c.company ? ` · ${c.company}` : ''}`}>
-                  {c.name || c.email || '(unnamed)'}
+                  {onOpenContact ? (
+                    // Opens the same contact popup as the names on the To line.
+                    <button
+                      type="button"
+                      onClick={() => onOpenContact(c)}
+                      title={`Open ${c.name || c.email || 'this contact'}`}
+                      style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: '#1E293B', cursor: 'pointer', textDecoration: 'underline', textAlign: 'left', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >{c.name || c.email || '(unnamed)'}</button>
+                  ) : (c.name || c.email || '(unnamed)')}
                 </td>
                 {categorize && <CategoryCell categories={categorize(c)} cellStyle={cellStyle} />}
                 {usedTokens.map(v => {
@@ -3352,6 +3360,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               onChangeFieldKeys={saveCoverageFieldKeys}
               rawOf={rawOfRecipient}
               fieldCtx={coverageFieldCtx}
+              onOpenContact={openContact}
             />
           </div>
 
