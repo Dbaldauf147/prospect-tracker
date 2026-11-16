@@ -7,10 +7,17 @@
 // The company's Services board deliberately does NOT count: a company with
 // one Procurement service Sold or Not Sold used to hide every contact there,
 // which hid people Dan still wanted to work. The answer is per contact.
+//
+// One way back for a contact marked Not sold: their company still has a
+// service carrying the topic's contact tag that is Not Sold but marked
+// "Prospect" on the company card (utils/serviceProspectAnyway). Dan is still
+// prospecting that service there, so its decision makers stay on the list.
 // Pure, so scripts/procurementDmFilter.test.mjs checks it.
 
 import { tagKey, findTagRecord, tagRecordFrom } from './contactTagReview.js';
 import { rawTagsOf } from './tagColumnFilter.js';
+import { getEffectiveServiceMetadata, parseServiceContactTags } from '../data/serviceCatalog.js';
+import { PROSPECT_ANYWAY_FIELD, NOT_SOLD_STATUS } from './serviceProspectAnyway.js';
 
 // The buttons, in the order they show. `tag` is the dans_tags value.
 // `peOnly` narrows a button to contacts whose company is a PE firm (see
@@ -34,12 +41,47 @@ export function isPeCompany(prospect) {
   return !!prospect && (pe(prospect.type) || pe(prospect.vertical));
 }
 
-/** One button's test for one contact row, with its company record. */
-export function matchesDmTopic(contact, prospect, reviewMap, topic) {
+/**
+ * One button's test for one contact row, with its company record.
+ * `serviceOverrides` (settings.serviceOverrides) supplies each service's
+ * Contact Tags, for the Prospect-anyway rule above.
+ */
+export function matchesDmTopic(contact, prospect, reviewMap, topic, serviceOverrides = null) {
   if (!topic) return false;
   if (topic.peOnly && !isPeCompany(prospect)) return false;
   if (topic.peOnly && hasPeAnsweredNo(contact, reviewMap)) return false;
-  return isOpenTopicDecisionMaker(contact, reviewMap, topic.tag);
+  if (isOpenTopicDecisionMaker(contact, reviewMap, topic.tag)) return true;
+  // Marked Not sold, but the company is still being prospected on the topic.
+  return isTopicDecisionMaker(contact, topic.tag)
+    && topicTagStatus(contact, reviewMap, topic.tag) === 'notsold'
+    && companyProspectsTopic(prospect, topic.tag, serviceOverrides);
+}
+
+/**
+ * The company has a service tagged `tag` (its Contact Tags) that is Not Sold
+ * and marked Prospect on the card. The mark is only shown while the service
+ * reads Not Sold, so a service typed as anything else on the card (Sold,
+ * Quoted...) doesn't count even if the old mark is still stored; one with no
+ * typed status is Not Sold through an opp, which is when the mark was set.
+ */
+export function companyProspectsTopic(prospect, tag, serviceOverrides = null) {
+  const marks = prospect?.[PROSPECT_ANYWAY_FIELD];
+  if (!marks || typeof marks !== 'object') return false;
+  const want = tagKey(tag);
+  for (const [name, on] of Object.entries(marks)) {
+    if (!on) continue;
+    const typed = String(prospect?.servicesExplored?.[name] ?? '').trim();
+    if (typed && typed !== '-' && typed !== NOT_SOLD_STATUS) continue;
+    const tags = parseServiceContactTags(getEffectiveServiceMetadata(name, serviceOverrides || {}).contactTags);
+    if (tags.some(t => tagKey(t) === want)) return true;
+  }
+  return false;
+}
+
+function topicTagStatus(contact, reviewMap, tag) {
+  const cid = contact?.id ?? contact?.vid;
+  if (cid == null || !reviewMap) return '';
+  return tagRecordFrom(findTagRecord(reviewMap[cid], tag)).status || '';
 }
 
 /** The contact's own Private Equity tag is answered No? */

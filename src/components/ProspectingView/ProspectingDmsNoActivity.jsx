@@ -211,6 +211,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     return next;
   });
   const tagReviewMap = useMemo(() => settings?.contactTagReview || {}, [settings?.contactTagReview]);
+  const serviceOverrides = settings?.serviceOverrides;
   // Each topic's matches in the picked window, keyed by row id.
   const windowEntries = useMemo(() => lists?.get(windowDays) || [], [lists, windowDays]);
   const topicMatches = useMemo(() => {
@@ -218,10 +219,10 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     for (const { contact } of windowEntries) {
       const id = String(contact.id || contact.vid || contact.email);
       const account = accountOf(contact);
-      for (const t of DM_TOPICS) if (matchesDmTopic(contact, account, tagReviewMap, t)) out.get(t.key).add(id);
+      for (const t of DM_TOPICS) if (matchesDmTopic(contact, account, tagReviewMap, t, serviceOverrides)) out.get(t.key).add(id);
     }
     return out;
-  }, [windowEntries, accountOf, tagReviewMap]);
+  }, [windowEntries, accountOf, tagReviewMap, serviceOverrides]);
 
   const rows = useMemo(() => windowEntries.filter(({ contact }) => {
     if (!dmTopics.length) return true;
@@ -514,7 +515,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
                   type="button"
                   aria-pressed={on}
                   onClick={() => toggleDmTopic(t.key)}
-                  title={`Show only decision makers also tagged ${t.tag} whose own ${t.tag} tag status is not Sold or Not sold${t.peOnly ? ', at companies whose Type or Vertical is Private Equity, leaving out anyone whose Private Equity tag is No' : ''}. Light several to see anyone matching any of them.`}
+                  title={`Show only decision makers also tagged ${t.tag} whose own ${t.tag} tag status is not Sold or Not sold (Not sold still shows when their company has a ${t.tag} service marked Prospect on its card)${t.peOnly ? ', at companies whose Type or Vertical is Private Equity, leaving out anyone whose Private Equity tag is No' : ''}. Light several to see anyone matching any of them.`}
                   style={topicChipStyle(on)}
                 >
                   {t.label} DMs
