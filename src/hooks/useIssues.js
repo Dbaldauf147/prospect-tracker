@@ -21,6 +21,7 @@ import { useDmsNoActivity, readDmsWindow } from './useDmsNoActivity';
 import { useEmailCampaigns } from './useEmailCampaigns';
 import { dmsNotOnCampaign } from '../utils/dmsCampaigns';
 import { bfoHistoryTargets, bfoHistoryMissingNameIssues } from '../utils/bfoHistory';
+import { keyContactLinkedinIssues, KEY_CONTACT_NO_LINKEDIN_KEY } from '../utils/keyContactLinkedin';
 
 // The Pipeline dashboard is re-read on every window focus, and a fresh array
 // of the same services would re-run the whole issue computation each time —
@@ -266,13 +267,34 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     [dmsLists, emailCampaigns],
   );
 
+  // Key Contacts with no LinkedIn URL (utils/keyContactLinkedin): the Job
+  // Descriptions agent has to leave them out of its prompt. Off the HubSpot
+  // contacts cache, re-read when a sync or an edit updates it, and held
+  // through a string key so an unrelated settings edit doesn't re-run
+  // computeIssues.
+  const [hubspotContacts, setHubspotContacts] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => getHubspotContacts().then(list => { if (!cancelled) setHubspotContacts(list || []); }).catch(() => {});
+    load();
+    window.addEventListener('hubspot-cache-updated', load);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', load); };
+  }, [user?.uid]);
+  const contactLocalFields = settings?.contactLocalFields;
+  const noLinkedin = settings?.[KEY_CONTACT_NO_LINKEDIN_KEY];
+  const keyContactLinkedinKey = useMemo(
+    () => JSON.stringify(keyContactLinkedinIssues(hubspotContacts, { localFields: contactLocalFields || {}, noLinkedin: noLinkedin || {}, prospects })),
+    [hubspotContacts, contactLocalFields, noLinkedin, prospects],
+  );
+  const keyContactLinkedin = useMemo(() => JSON.parse(keyContactLinkedinKey), [keyContactLinkedinKey]);
+
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, now: issuesNow });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, now: issuesNow });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, issuesNow]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, issuesNow]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map
