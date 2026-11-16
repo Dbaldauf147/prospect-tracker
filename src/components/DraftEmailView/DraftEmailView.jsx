@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { CONTACT_FIELD_COLUMNS, contactFieldColumn, cleanFieldColumnKeys } from '../../utils/contactFieldColumns';
 import { contactConnectedUpdate } from '../../utils/contactConnected';
 import { toggleContactInEvents, addContactToNewEvent } from '../../utils/eventsStore';
 import { createPortal } from 'react-dom';
@@ -576,20 +577,53 @@ function CategoryCell({ categories, cellStyle }) {
   );
 }
 
-function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEditable, onEditField, categorize }) {
+// "+ Add column": any contact field (utils/contactFieldColumns) as an extra
+// column after the variables, read off the recipient's HubSpot record and
+// the app's own contact fields. `fieldKeys` is the saved list, `rawOf(c)`
+// the recipient's raw record (null when the cache has none, e.g. a
+// Marketing Lead), `onChangeFieldKeys(next)` saves the list.
+function AddFieldColumn({ fieldKeys, onChangeFieldKeys }) {
+  const left = CONTACT_FIELD_COLUMNS.filter(f => !fieldKeys.includes(f.key));
+  if (!onChangeFieldKeys || left.length === 0) return null;
+  return (
+    <select
+      value=""
+      aria-label="Add a contact field as a column"
+      title="Add any contact field as a column: title, company, team name and the rest of the contact popup's fields"
+      onChange={e => { if (e.target.value) onChangeFieldKeys([...fieldKeys, e.target.value]); }}
+      style={{ fontSize: '0.7rem', padding: '2px 4px', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', color: '#1D4ED8', background: '#fff', cursor: 'pointer' }}
+    >
+      <option value="">+ Add column</option>
+      {left.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+    </select>
+  );
+}
+
+function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null }) {
+  const fields = fieldKeys.map(contactFieldColumn).filter(Boolean);
+  const fieldValue = (c, f) => {
+    const raw = rawOf ? rawOf(c) : null;
+    return raw ? f.get(raw, fieldCtx) : '';
+  };
+  const titleRow = (title) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <h3 className={styles.cardTitle} style={{ marginRight: 'auto' }}>{title}</h3>
+      <AddFieldColumn fieldKeys={fieldKeys} onChangeFieldKeys={onChangeFieldKeys} />
+    </div>
+  );
   if (contacts.length === 0) {
     return (
       <>
-        <h3 className={styles.cardTitle}>Variable Coverage</h3>
+        {titleRow('Variable Coverage')}
         <p className={styles.emptyDrafts}>Add contacts above to see how each variable resolves per recipient.</p>
       </>
     );
   }
 
-  if (usedTokens.length === 0) {
+  if (usedTokens.length === 0 && fields.length === 0) {
     return (
       <>
-        <h3 className={styles.cardTitle}>Variable Coverage</h3>
+        {titleRow('Variable Coverage')}
         <p className={styles.emptyDrafts}>
           No variable tokens detected in the subject or body: nothing to check.
         </p>
@@ -602,9 +636,9 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
 
   return (
     <>
-      <h3 className={styles.cardTitle}>Variable Coverage ({contacts.length})</h3>
+      {titleRow(`Variable Coverage (${contacts.length})`)}
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
-        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / Key Prospect), and each column after it is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank.
+        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / Key Prospect), and each column after it is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
       </p>
       <div style={{
         // Grow with the viewport - leaves enough room for the page
@@ -641,6 +675,30 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
                   </th>
                 );
               })}
+              {fields.map(f => {
+                const filled = contacts.filter(c => fieldValue(c, f)).length;
+                return (
+                  <th key={`field:${f.key}`} style={{ ...headStyle, background: '#F1F5F9' }} title={`${f.label} (contact field) · ${filled}/${contacts.length} filled`}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+                        <span>{f.label}</span>
+                        <span style={{ fontSize: '0.62rem', fontWeight: 600, color: filled < contacts.length ? '#B91C1C' : '#16A34A' }}>
+                          {filled}/{contacts.length}
+                        </span>
+                      </div>
+                      {onChangeFieldKeys && (
+                        <button
+                          type="button"
+                          onClick={() => onChangeFieldKeys(fieldKeys.filter(k => k !== f.key))}
+                          aria-label={`Remove the ${f.label} column`}
+                          title={`Remove the ${f.label} column`}
+                          style={{ border: 'none', background: 'none', color: '#94A3B8', cursor: 'pointer', padding: 0, fontSize: '0.8rem', lineHeight: 1 }}
+                        >&times;</button>
+                      )}
+                    </div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -662,6 +720,14 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
                       cellStyle={cellStyle}
                       onCommit={nv => onEditField && onEditField(c, v.token, nv)}
                     />
+                  );
+                })}
+                {fields.map(f => {
+                  const val = fieldValue(c, f);
+                  return (
+                    <td key={`field:${f.key}`} style={cellStyle} title={val || `No ${f.label} for this recipient`}>
+                      {val || <span style={{ color: '#B91C1C', fontWeight: 700 }}>-</span>}
+                    </td>
                   );
                 })}
               </tr>
@@ -1554,6 +1620,20 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     }
     return m;
   }, [rawContacts]);
+  // Variable Coverage's extra contact-field columns ("+ Add column"), saved
+  // per user so they come back on every draft and the other machine.
+  const coverageFieldKeys = useMemo(
+    () => cleanFieldColumnKeys(settings?.variableCoverageFieldColumns),
+    [settings?.variableCoverageFieldColumns],
+  );
+  const saveCoverageFieldKeys = useCallback((next) => {
+    if (!updateSettings) return;
+    updateSettings(() => ({ variableCoverageFieldColumns: cleanFieldColumnKeys(next) }));
+  }, [updateSettings]);
+  const rawOfRecipient = useCallback((c) => (
+    (c?.id != null && rawById.get(String(c.id))) || rawByEmail.get(String(c?.email || '').toLowerCase().trim()) || null
+  ), [rawById, rawByEmail]);
+  const coverageFieldCtx = useMemo(() => ({ settings }), [settings]);
 
   // Which rosters each recipient is on — the same Key / Active / Client /
   // Key Prospect gates the contacts pages run, so the Category column below
@@ -3268,6 +3348,10 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               isEditable={token => !!COVERAGE_EDITABLE[token]}
               onEditField={handleCoverageEdit}
               categorize={categorizeRecipient}
+              fieldKeys={coverageFieldKeys}
+              onChangeFieldKeys={saveCoverageFieldKeys}
+              rawOf={rawOfRecipient}
+              fieldCtx={coverageFieldCtx}
             />
           </div>
 
