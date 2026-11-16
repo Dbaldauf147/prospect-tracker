@@ -100,7 +100,7 @@ export function presetSummary(preset) {
   const rest = Object.keys(preset?.tags || {}).length - on.length;
   const parts = [];
   if (on.length) parts.push(`Tags on: ${on.join(', ')}`);
-  if (rest) parts.push(`${rest} other answer${rest === 1 ? '' : 's'} (No / Not sure / Not sold)`);
+  if (rest) parts.push(`${rest} other answer${rest === 1 ? '' : 's'} (No / Not sure / Not sold / N/A)`);
   return parts.join('. ') || 'No answers saved';
 }
 

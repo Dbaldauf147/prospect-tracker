@@ -18,6 +18,7 @@ const ANSWERS = [
 const STATUSES = [
   { value: 'sold', label: 'Sold' },
   { value: 'notsold', label: 'Not sold' },
+  { value: 'na', label: 'N/A' },
 ];
 
 function startingRows(preset, tags) {

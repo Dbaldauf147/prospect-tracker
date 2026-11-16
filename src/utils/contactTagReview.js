@@ -339,7 +339,14 @@ export const MET_IN_PERSON_TAG = 'Met In Person';
 // can stand alone: a Not sold with no answer is still a useful "hold off on
 // this one", and a plain Yes is a tag with the sale question unasked.
 export const TAG_ANSWERS = ['yes', 'no', 'unsure'];
-export const TAG_SALE_STATUSES = ['sold', 'notsold'];
+// N/A says the sale question doesn't apply to this tag for this person
+// (Decision Maker, NAM Only: nothing to buy). It is neutral: it neither
+// puts the tag on nor holds it off, the answer decides that, and it never
+// counts as a sale (see isSaleStatus). It does count as answered.
+export const TAG_SALE_STATUSES = ['sold', 'notsold', 'na'];
+
+// Sold or Not sold, the two statuses that say something about a purchase.
+export const isSaleStatus = (status) => status === 'sold' || status === 'notsold';
 
 // One tag's stored record, normalized to { answer, status }.
 //
@@ -398,8 +405,11 @@ export function recordKeepsTag(record) {
 // on purpose.
 export function tagStateFrom(tagged, stored) {
   const { answer, status } = tagRecordFrom(stored);
-  if (tagged) return { answer: 'yes', status: status === 'sold' ? 'sold' : '' };
+  if (tagged) return { answer: 'yes', status: (status === 'sold' || status === 'na') ? status : '' };
   if (status === 'notsold') return { answer, status: 'notsold' };
+  // N/A is neutral, so it survives the tag being on or off; a Yes without
+  // the tag is still stale and goes.
+  if (status === 'na') return { answer: answer === 'yes' ? '' : answer, status: 'na' };
   return { answer: answer === 'yes' ? '' : answer, status: '' };
 }
 
@@ -409,7 +419,8 @@ export function tagStateFrom(tagged, stored) {
 // is theirs, so they're the more specific reading of the same row.
 export function tagAnswerFrom(tagged, stored) {
   const { answer, status } = tagStateFrom(tagged, stored);
-  return status || answer || '';
+  // N/A isn't a reading of the row, so the answer beside it is.
+  return (isSaleStatus(status) ? status : '') || answer || '';
 }
 
 // Setting one half of a record leaves the other half alone — that's the
@@ -423,13 +434,17 @@ export function tagAnswerFrom(tagged, stored) {
 export function withTagAnswer(stored, answer) {
   const cur = tagRecordFrom(stored);
   const next = TAG_ANSWERS.includes(answer) ? answer : '';
-  return { answer: next, status: (next === 'no' || next === 'unsure') ? '' : cur.status };
+  // N/A doesn't depend on the area being theirs, so a No keeps it.
+  const clears = (next === 'no' || next === 'unsure') && cur.status !== 'na';
+  return { answer: next, status: clears ? '' : cur.status };
 }
 
 export function withTagStatus(stored, status) {
   const cur = tagRecordFrom(stored);
   const next = TAG_SALE_STATUSES.includes(status) ? status : '';
-  return { answer: (next && cur.answer !== 'yes') ? '' : cur.answer, status: next };
+  // N/A leaves the answer alone: "not applicable" fits beside a No.
+  const clears = next && next !== 'na' && cur.answer !== 'yes';
+  return { answer: clears ? '' : cur.answer, status: next };
 }
 
 // The record a bulk "Mark …" writes on top of whatever is already there.
