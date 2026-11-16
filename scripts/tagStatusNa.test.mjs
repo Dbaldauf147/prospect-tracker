@@ -41,9 +41,9 @@ eq(withTagAnswer({ answer: '', status: 'notsold' }, 'no'), { answer: 'no', statu
 eq(withTagStatus({ answer: 'yes', status: 'sold' }, 'na'), { answer: 'yes', status: 'na' }, 'N/A replaces Sold');
 eq(recordForVerdict({ answer: 'yes', status: '' }, 'na'), { answer: 'yes', status: 'na' }, 'bulk mark N/A');
 
-// Coverage: N/A settles the open-DM question but is not sale coverage.
+// Coverage: N/A is not a sale, so the DM stays open and is not coverage.
 const c = { id: 7, properties: { dans_tags: 'Decision Maker' } };
-eq(hasTopicTagSaleStatus(c, { 7: { Procurement: { answer: '', status: 'na' } } }, 'Procurement'), true, 'N/A takes a DM off the open list');
+eq(hasTopicTagSaleStatus(c, { 7: { Procurement: { answer: '', status: 'na' } } }, 'Procurement'), false, 'N/A keeps a DM on the open list');
 eq(decisionMakersSaleStatus([c], 'Procurement', { 7: { Procurement: { answer: 'no', status: 'na' } } }).length, 0,
   'N/A does not count as sale coverage in the DM matrix');
 eq(decisionMakersSaleStatus([c], 'Procurement', { 7: { Procurement: { answer: 'yes', status: 'notsold' } } }).length, 1,

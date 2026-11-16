@@ -29,7 +29,21 @@ export const CONTACT_TAGS_COLLECTION = 'contactTags';
 // them all - a stored '' must not fall through to a stale spelling.
 export const TAG_FIELDS = ['dans_tags', 'dan_s_tags', 'dans_tag'];
 
-const clean = (v) => String(v ?? '').split(';').map(s => s.trim()).filter(Boolean).join(';');
+// Tags taken off every contact. Dan removed "Test" (a scratch value) from
+// all contacts on 2026-11-16. Stripping it here, in the one function every
+// write and every read goes through, means nothing can put it back: not a
+// stale client, not a restore from an old backup, not a seed from HubSpot's
+// old value. The stored copies are rewritten on the next contacts read
+// (purgeRemovedTags), each with a log row, so the removal is traceable.
+// Compared case- and spacing-insensitively, like the app's tagKey.
+const removedKey = (t) => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
+export const REMOVED_TAGS = new Set(['Test'].map(removedKey));
+
+const clean = (v) => String(v ?? '').split(';').map(s => s.trim())
+  .filter(s => s && !REMOVED_TAGS.has(removedKey(s))).join(';');
+
+/** The tags with every removed tag taken out, normalized. */
+export const withoutRemovedTags = clean;
 
 /** The contact's tags as HubSpot (or a request body) carries them. */
 export function tagsOfProps(props) {
@@ -65,7 +79,8 @@ export function overlayTags(contacts, stored) {
     if (!id) return c;
     if (Object.prototype.hasOwnProperty.call(map, id)) {
       const next = { ...c };
-      for (const f of TAG_FIELDS) next[f] = map[id];
+      const tags = clean(map[id]);
+      for (const f of TAG_FIELDS) next[f] = tags;
       return next;
     }
     unseen.push({ id, tags: clean(tagsOfProps(c)) });
@@ -78,12 +93,38 @@ function refFor(db, uid) {
   return db.collection(CONTACT_TAGS_COLLECTION).doc(String(uid));
 }
 
-/** The stored map, { [contactId]: tags }. {} when nothing is stored yet. */
-export async function loadContactTags(db, uid) {
+// The map exactly as stored, removed tags and all. Only the purge needs it.
+async function loadRawContactTags(db, uid) {
   if (!db || !uid) return {};
   const snap = await refFor(db, uid).get();
   const data = snap.exists ? snap.data() : null;
   return (data && data.tags && typeof data.tags === 'object') ? { ...data.tags } : {};
+}
+
+/** The stored map, { [contactId]: tags }, removed tags taken out. {} when nothing is stored yet. */
+export async function loadContactTags(db, uid) {
+  const raw = await loadRawContactTags(db, uid);
+  for (const id of Object.keys(raw)) raw[id] = clean(raw[id]);
+  return raw;
+}
+
+/** The entries of a stored map still carrying a removed tag, as [{ id, tags }] with it taken out. */
+export function removedTagEntries(stored) {
+  return Object.entries(stored || {})
+    .filter(([, v]) => clean(v) !== String(v ?? ''))
+    .map(([id, v]) => ({ id, tags: clean(v) }));
+}
+
+/**
+ * Rewrite every stored contact still carrying a removed tag, logged under
+ * source 'remove-tag'. Idempotent: once clean, it writes nothing. Returns the
+ * number of contacts changed.
+ */
+export async function purgeRemovedTags(db, uid, raw = null) {
+  const stored = raw || await loadRawContactTags(db, uid);
+  const entries = removedTagEntries(stored);
+  if (!entries.length) return 0;
+  return saveContactTags(db, uid, entries, { source: 'remove-tag', prev: { ...stored } });
 }
 
 /**
@@ -137,7 +178,16 @@ export async function saveContactTags(db, uid, entries, { source = 'edit', prev 
  * HubSpot's tags are still read, and only for contacts new to the store.
  */
 export async function contactsWithStoredTags(db, uid, contacts) {
-  const stored = await loadContactTags(db, uid);
+  const raw = await loadRawContactTags(db, uid);
+  try {
+    await purgeRemovedTags(db, uid, raw);
+  } catch (e) {
+    // Nothing lost: every read already strips the removed tags, so a failed
+    // rewrite only means the stored copy is tidied on the next read.
+    console.error('contactTagStore: removed-tag purge failed', e?.message || e);
+  }
+  const stored = {};
+  for (const id of Object.keys(raw)) stored[id] = clean(raw[id]);
   const { contacts: out, unseen } = overlayTags(contacts, stored);
   if (unseen.length) {
     try {
