@@ -31,7 +31,8 @@ export function keyContactLinkedinIssues(contacts, { localFields = {}, noLinkedi
     if (!id || (noLinkedin && noLinkedin[id])) continue;
     const local = localFields?.[id];
     const company = String((local && typeof local._companyOverride === 'string' && local._companyOverride) || c.company || '').trim();
-    const name = [c.firstname, c.lastname].filter(Boolean).join(' ').trim() || c.email || 'Unknown';
+    const fullName = [c.firstname, c.lastname].filter(Boolean).join(' ').trim();
+    const name = fullName || c.email || 'Unknown';
     const prospect = company ? findProspectByCompany(prospects, company) : null;
     const title = String(c.jobtitle || '').trim();
     out.push({
@@ -42,13 +43,24 @@ export function keyContactLinkedinIssues(contacts, { localFields = {}, noLinkedi
       prospectId: prospect?.id ?? null,
       daysUntil: null,
       expirationDate: null,
-      resolve: { kind: 'keyContactLinkedin', contactId: id, name, email: String(c.email || '').trim() },
+      resolve: { kind: 'keyContactLinkedin', contactId: id, name, email: String(c.email || '').trim(), linkedinSearchUrl: linkedinPeopleSearchUrl(fullName, company) },
       detail: `${name}${title ? ` (${title})` : ''} is a Key Contact with no LinkedIn URL, so the Job Descriptions agent leaves them out of its prompt`,
     });
   }
   out.sort((a, b) => a.company.localeCompare(b.company, undefined, { sensitivity: 'base' })
     || a.resolve.name.localeCompare(b.resolve.name, undefined, { sensitivity: 'base' }));
   return out;
+}
+
+/**
+ * LinkedIn people search for a person's name plus company, or '' when there
+ * is no name to search on (an email alone finds nothing useful there).
+ */
+export function linkedinPeopleSearchUrl(name, company) {
+  const who = String(name || '').trim();
+  if (!who) return '';
+  const keywords = [who, String(company || '').trim()].filter(Boolean).join(' ');
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`;
 }
 
 /** A pasted LinkedIn URL tidied, or '' when it isn't one. */
