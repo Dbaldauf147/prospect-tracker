@@ -7,7 +7,7 @@ register('./stubs/idbLoader.mjs', import.meta.url);
 register('./stubs/loader.mjs', import.meta.url);
 const { setDbUserId } = await import('../src/utils/db.js');
 const { saveOpps2Cache, loadOpps2Cache } = await import('../src/utils/opps2Store.js');
-const { mapOppsToCompany, aliasesWith, mapManyOppsToCompanies } = await import('../src/utils/oppCompanyMap.js');
+const { mapOppsToCompany, aliasesWith, mapManyOppsToCompanies, createCompaniesForOpps } = await import('../src/utils/oppCompanyMap.js');
 
 let passed = 0, failed = 0;
 function ok(cond, name) {
@@ -77,6 +77,40 @@ ok(JSON.stringify(many) === JSON.stringify([['bf', { companyAliases: ['Brookfiel
 threw = '';
 try { await mapManyOppsToCompanies([{ resolve: { oppIds: ['a1'] }, record: null }], {}, {}); } catch (e) { threw = e.message; }
 ok(/Nothing to approve/.test(threw), 'nothing valid, nothing saved');
+
+// Bulk create as Hold Off.
+{
+  await saveOpps2Cache({ records: [
+    { _id: 'o1', Account: 'Barnes & Noble' },
+    { _id: 'o2', Account: 'Best Buy' },
+    { _id: 'o3', Account: 'Best Buy Stores' },
+    { _id: 'o4', Account: 'Apollo' },
+  ], _updatedAt: Date.now() });
+  const roster = [{ id: 'ap', company: 'Apollo' }];
+  const adds = [];
+  const ups = [];
+  const addProspect = async (rec) => {
+    adds.push(rec);
+    if (rec.company === 'Apollo') return 'ap';
+    if (rec.company === 'Broken') throw new Error('boom');
+    return `new-${adds.length}`;
+  };
+  const res = await createCompaniesForOpps([
+    { resolve: { account: 'Barnes & Noble', accounts: ['Barnes & Noble'], oppIds: ['o1'] } },
+    { resolve: { account: 'Best Buy', accounts: ['Best Buy', 'Best Buy Stores'], oppIds: ['o2', 'o3'] } },
+    { resolve: { account: 'Apollo', accounts: ['Apollo'], oppIds: ['o4'] } },
+    { resolve: { account: 'Broken', accounts: ['Broken'], oppIds: [] } },
+    { resolve: { account: '  ', oppIds: ['x'] } },
+  ], { status: 'Hold Off' }, { prospects: roster, addProspect, updateProspect: async (id, patch) => ups.push([id, patch]) });
+  ok(adds.every(a => a.status === 'Hold Off') && adds.map(a => a.company).join('|') === 'Barnes & Noble|Best Buy|Apollo|Broken', 'each named row added at Hold Off, a blank one skipped');
+  ok(res.created === 2 && res.existing === 1 && res.failed.length === 1 && res.failed[0].startsWith('Broken'), 'counts created, already there, and failures');
+  ok(JSON.stringify(await accounts()) === JSON.stringify(['Barnes & Noble', 'Best Buy', 'Best Buy', 'Apollo']), 'only the other spelling is rewritten');
+  ok(res.opps === 2, 'the opps of a company with two spellings are re-pointed together');
+  ok(JSON.stringify(ups) === JSON.stringify([['new-2', { companyAliases: ['Best Buy Stores'] }]]), 'the other spelling kept as an alias');
+  let threw = false;
+  try { await createCompaniesForOpps([], {}, {}); } catch { threw = true; }
+  ok(threw, 'refuses without addProspect');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

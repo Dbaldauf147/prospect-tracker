@@ -17,7 +17,7 @@ import { buildOppNumberMap } from '../../utils/oppNumbers';
 import { buildResolution, resolutionKind } from './issueResolutionSpecs';
 import { IssueResolutionModal } from './IssueResolution';
 import { OppCompanyMapModal } from './OppCompanyMapModal';
-import { mapOppsToCompany, mapManyOppsToCompanies } from '../../utils/oppCompanyMap';
+import { mapOppsToCompany, mapManyOppsToCompanies, createCompaniesForOpps } from '../../utils/oppCompanyMap';
 import { rankCompanyChoices } from '../../utils/oppCompanyMissing';
 
 // Issues tab — a running list of outstanding items that need to be
@@ -905,6 +905,41 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
   function tickAllMatches() {
     setMatchTicked(new Set(matchRows.filter(r => !r.snoozed && matchRecord(r)).map(r => r.id)));
   }
+  // The other way to settle a row: the Account is a real company Table View
+  // doesn't have yet. Any ticked row can be created, matched or not, so
+  // "Tick all with no match" is the usual start.
+  const tickedCreate = matchRows.filter(r => matchTicked.has(r.id));
+  const [creating, setCreating] = useState(false);
+  function tickAllNoMatch() {
+    setMatchTicked(new Set(matchRows.filter(r => !r.snoozed && !matchRecord(r)).map(r => r.id)));
+  }
+  async function createTickedHoldOff() {
+    const items = tickedCreate.map(row => ({ row, resolve: row.resolve }));
+    if (!items.length || creating || !addProspect) return;
+    const lines = items.slice(0, 15).map(it => it.resolve.account);
+    if (items.length > 15) lines.push(`and ${items.length - 15} more`);
+    const withMatch = items.filter(it => matchRecord(it.row)).length;
+    const ok = window.confirm(
+      `Add ${items.length} new compan${items.length === 1 ? 'y' : 'ies'} to Table View with status Hold Off, named as the opps have them?\n\n${lines.join('\n')}`
+      + (withMatch ? `\n\n${withMatch} of these ${withMatch === 1 ? 'has' : 'have'} a Best Match. They'll be created as new companies anyway; untick ${withMatch === 1 ? 'it' : 'them'} to map instead.` : ''),
+    );
+    if (!ok) return;
+    setCreating(true);
+    try {
+      const res = await createCompaniesForOpps(items, { status: 'Hold Off', keepAlias: true }, { uid: user?.uid, prospects, addProspect, updateProspect });
+      setMatchTicked(new Set());
+      setMatchEdits(new Map());
+      window.alert(
+        `Added ${res.created} compan${res.created === 1 ? 'y' : 'ies'} as Hold Off.`
+        + (res.existing ? ` ${res.existing} ${res.existing === 1 ? 'was' : 'were'} already on Table View, so the opps point to ${res.existing === 1 ? 'it' : 'them'}.` : '')
+        + (res.failed.length ? `\n\nCould not add:\n${res.failed.join('\n')}` : ''),
+      );
+    } catch (err) {
+      window.alert(`Could not create the companies: ${err?.message || err}`);
+    } finally {
+      setCreating(false);
+    }
+  }
   async function approveMatches() {
     const items = tickedReady.map(row => ({ row, resolve: row.resolve, record: matchRecord(row) }));
     if (!items.length || approving) return;
@@ -1084,11 +1119,12 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }} onClick={(e) => e.stopPropagation()}>
             <input
               type="checkbox"
-              checked={matchTicked.has(row.id) && valid}
-              disabled={!valid}
+              checked={matchTicked.has(row.id)}
               onChange={() => toggleMatchTick(row)}
-              aria-label={`Approve ${row.company} as ${value || 'no match'}`}
-              title={valid ? `Tick to approve: the opps' Account becomes "${matchRecord(row).company}"` : 'Pick a Table View company first'}
+              aria-label={`Tick ${row.company}`}
+              title={valid
+                ? `Tick to approve: the opps' Account becomes "${matchRecord(row).company}" (or create it as a new Hold Off company)`
+                : `Tick to create "${row.company}" as a new Hold Off company`}
             />
             <input
               type="text"
@@ -1261,6 +1297,19 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
                 onClick: approveMatches,
                 disabled: approving || tickedReady.length === 0,
               },
+              {
+                key: 'tick-no-match',
+                label: 'Tick all with no match',
+                title: 'Tick every "Opp company not in Table View" row with no Table View match, to create them',
+                onClick: tickAllNoMatch,
+              },
+              ...(addProspect ? [{
+                key: 'create-hold-off',
+                label: creating ? 'Creating...' : `Create ticked as Hold Off (${tickedCreate.length})`,
+                title: 'Add each ticked row\'s company to Table View with status Hold Off, named as its opps have it, and point the opps there',
+                onClick: createTickedHoldOff,
+                disabled: creating || approving || tickedCreate.length === 0,
+              }] : []),
             ] : undefined}
           />
           <datalist id="issues-table-view-companies">
