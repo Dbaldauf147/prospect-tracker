@@ -44,6 +44,7 @@ import { findLostRecipients } from '../../utils/recipientRecovery';
 import { findLostCompanyPins, recoverChangedJobsFlags, COMPANY_PIN_FLAG } from '../../utils/changedJobsRecovery';
 import { useRelationshipData } from '../../hooks/useRelationshipStrength';
 import { RelationshipBadge } from '../Relationship/RelationshipBadge';
+import { jobDescriptionUpdate } from '../../utils/contactJobDescription';
 
 // The By Company rollup's columns, in order. Company is always shown; the
 // rest are the user's to hide, star as their standard view, and resize.
@@ -6077,6 +6078,8 @@ function KeyContactsViewInner({
               if (v) next[cid] = v; else delete next[cid];
               updateSettings({ contactSentiment: next });
             }}
+            contactJobDescriptions={settings?.contactJobDescriptions || {}}
+            onSaveJobDescription={(cid, v) => updateSettings?.(jobDescriptionUpdate(cid, v))}
             contactLeadSource={settings?.contactLeadSource || {}}
             onSaveLeadSource={(cid, v) => {
               if (cid == null) return;

@@ -32,6 +32,7 @@ import {
 } from '../../utils/marketingLeadsImport';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { LEAD_MAPPING_LEDGER_KEY } from '../../utils/leadMappings';
+import { jobDescriptionUpdate } from '../../utils/contactJobDescription';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -2925,6 +2926,8 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
             if (v) next[cid] = v; else delete next[cid];
             updateSettings({ contactSentiment: next });
           }}
+          contactJobDescriptions={settings?.contactJobDescriptions || {}}
+          onSaveJobDescription={(cid, v) => updateSettings?.(jobDescriptionUpdate(cid, v))}
           contactLeadSource={settings?.contactLeadSource || {}}
           onSaveLeadSource={(cid, v) => {
             if (cid == null) return;

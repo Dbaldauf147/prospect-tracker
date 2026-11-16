@@ -165,6 +165,7 @@ import {
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
+import { JOB_DESCRIPTION_NA, jobDescriptionFor, jobDescriptionUpdate } from '../../utils/contactJobDescription';
 import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
 import { bucketServiceState, isClosingStatus, setServiceBucket, categoryNaServices as categoryNaServiceMap } from '../../utils/bucketServices';
 import { DM_STEPS, bucketStepsLeft, dmBucketAnswer, contactNaByBucket } from '../../utils/dmSteps.js';
@@ -1228,7 +1229,7 @@ function findPortfolioProspect(row, byName, byId) {
 // can share the exact same auto-fill behavior as this modal.
 
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, onAddContactEvent = null, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactJobDescriptions = {}, onSaveJobDescription, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, onAddContactEvent = null, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [] }) {
   const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -1346,6 +1347,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // Where this contact came from (Marketing Lead, Event, ...). Local-only,
   // see utils/contactLeadSource.js.
   const [leadSource, setLeadSource] = useState(() => leadSourceFor(contactLeadSource, metCid));
+  // The job description pasted in for this contact, or JOB_DESCRIPTION_NA
+  // when there isn't one to find. Local-only (settings.contactJobDescriptions),
+  // saved on blur, on the N/A button and when the popup closes, rather than
+  // per keystroke: a pasted description is long, and the map is written whole.
+  const [jobDescription, setJobDescription] = useState(() => jobDescriptionFor(contactJobDescriptions, metCid));
+  const jobDescriptionSavedRef = useRef(jobDescriptionFor(contactJobDescriptions, metCid));
+  const jobDescriptionRef = useRef(jobDescription);
+  jobDescriptionRef.current = jobDescription;
   // Per-tag records: { tag: { answer, status } }. The tag itself is still
   // where a Yes lives, so a stored answer of "yes" only counts while it's
   // backed by the tag or held off by a Not sold — see tagStateFrom.
@@ -2024,6 +2033,27 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     });
   }
 
+  function saveJobDescription(value = jobDescriptionRef.current) {
+    const cid = contact.id || contact.vid;
+    if (cid == null || !onSaveJobDescription) return;
+    if (value === jobDescriptionSavedRef.current) return;
+    jobDescriptionSavedRef.current = value;
+    onSaveJobDescription(cid, value);
+  }
+  // N/A on: there's no description to paste. Clicking it again clears it.
+  // A description already pasted is only replaced once the user says so.
+  function toggleJobDescriptionNa() {
+    const isNa = jobDescription === JOB_DESCRIPTION_NA;
+    if (!isNa && jobDescription.trim() && !window.confirm('Replace the pasted job description with N/A?')) return;
+    const next = isNa ? '' : JOB_DESCRIPTION_NA;
+    setJobDescription(next);
+    saveJobDescription(next);
+  }
+  const saveJobDescriptionRef = useRef(saveJobDescription);
+  saveJobDescriptionRef.current = saveJobDescription;
+  // Closing the popup without leaving the box (Esc) still keeps what was pasted.
+  useEffect(() => () => saveJobDescriptionRef.current(), []);
+
   function chooseLeadSource(value) {
     setLeadSource(value);
     const cid = contact.id || contact.vid;
@@ -2244,6 +2274,11 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       }
       if (savedCid && onSaveLeadSource) {
         onSaveLeadSource(savedCid, latest.leadSource);
+      }
+      // Same for the job description, on a contact that had no id until now.
+      if (savedCid && onSaveJobDescription && jobDescriptionRef.current) {
+        jobDescriptionSavedRef.current = jobDescriptionRef.current;
+        onSaveJobDescription(savedCid, jobDescriptionRef.current);
       }
       // Company edits behave the same here as on the HubSpot Contacts
       // page: the API renames the Company record this contact is linked to,
@@ -3029,6 +3064,33 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             })()}
           </div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
+          <div style={{ gridColumn: 'span 4' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+              <label style={{ ...labelStyle, marginBottom: 0 }} htmlFor="contact-job-description">Job Description</label>
+              <button
+                type="button"
+                onClick={toggleJobDescriptionNa}
+                aria-pressed={jobDescription === JOB_DESCRIPTION_NA}
+                title={jobDescription === JOB_DESCRIPTION_NA ? 'Marked N/A: no job description to find. Click to clear.' : 'Mark N/A: there is no job description to find for this contact'}
+                style={{
+                  fontSize: '0.62rem', fontWeight: 700, padding: '0.05rem 0.45rem', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
+                  border: `1px solid ${jobDescription === JOB_DESCRIPTION_NA ? '#94A3B8' : '#E2E8F0'}`,
+                  background: jobDescription === JOB_DESCRIPTION_NA ? '#E2E8F0' : '#fff',
+                  color: jobDescription === JOB_DESCRIPTION_NA ? '#334155' : '#64748B',
+                }}
+              >{jobDescription === JOB_DESCRIPTION_NA ? '\u2713 N/A' : 'N/A'}</button>
+            </div>
+            <textarea
+              id="contact-job-description"
+              style={{ ...inputStyle, resize: 'vertical', minHeight: '60px', lineHeight: 1.4, ...(jobDescription === JOB_DESCRIPTION_NA ? { background: '#F8FAFC', color: '#94A3B8' } : null) }}
+              value={jobDescription === JOB_DESCRIPTION_NA ? '' : jobDescription}
+              disabled={jobDescription === JOB_DESCRIPTION_NA}
+              placeholder={jobDescription === JOB_DESCRIPTION_NA ? 'N/A: no job description for this contact' : 'Paste the job description here'}
+              onChange={e => setJobDescription(e.target.value)}
+              onBlur={() => saveJobDescription()}
+              rows={3}
+            />
+          </div>
           <div style={{ gridColumn: 'span 2', position: 'relative' }} ref={companyBoxRef}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
@@ -8165,6 +8227,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [settings.contactSentiment, updateSettings]);
 
   // Where the contact came from. Blank removes the key, like sentiment.
+  const handleSaveContactJobDescription = useCallback((contactId, value) => {
+    updateSettings(jobDescriptionUpdate(contactId, value));
+  }, [updateSettings]);
+
   const handleSaveContactLeadSource = useCallback((contactId, value) => {
     const current = settings.contactLeadSource || {};
     const next = { ...current };
@@ -15695,6 +15761,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveSentiment={handleSaveContactSentiment}
           contactLeadSource={settings.contactLeadSource || {}}
           onSaveLeadSource={handleSaveContactLeadSource}
+          contactJobDescriptions={settings.contactJobDescriptions || {}}
+          onSaveJobDescription={handleSaveContactJobDescription}
           contactTagReview={settings.contactTagReview || {}}
           onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings: settingsRef.current, updateSettings, updateSettingsPath })}
           tagPresets={settings?.tagPresets || []}
