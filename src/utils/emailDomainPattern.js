@@ -250,3 +250,57 @@ export function estimateEmailDomain(contacts = []) {
     reason: '',
   };
 }
+
+/**
+ * The company card's "tier by contacts" list: one tier per work domain the
+ * contacts use, the domain with the most contacts first. Unlike the
+ * candidate ranking above (the most-used FORMAT first, whatever domain it is
+ * on), this answers "which address does this company mostly use": a
+ * company whose people are mostly at invitationhomes.com and a few at an
+ * acquired brand gets invitationhomes.com as its 1st tier.
+ *
+ * Each domain's entry is, in order of preference:
+ *   - what is already recorded for that domain (every recorded entry on it,
+ *     in the recorded order), so a format typed by hand is kept;
+ *   - else its most-used format among the contacts (ties in
+ *     EMAIL_PATTERN_RULES order, the candidates' own order);
+ *   - else the bare domain, when nobody there shares a convention: it builds
+ *     no address but still pulls that domain's contacts onto the card.
+ * Recorded entries on domains no contact uses go last, in their order.
+ *
+ * `estimate` is estimateEmailDomainCandidates' result. Returns
+ * [{ entry, domain, domainCount, votes, recorded }].
+ */
+export function domainTierEntries(estimate, recorded = []) {
+  const lower = (s) => String(s || '').toLowerCase().trim();
+  const domainOfEntry = (e) => {
+    const s = lower(e);
+    const at = s.lastIndexOf('@');
+    return at >= 0 ? s.slice(at + 1) : s;
+  };
+  const rec = (recorded || []).map(s => String(s || '').trim()).filter(Boolean);
+  const out = [];
+  const used = new Set();
+  for (const d of estimate?.domains || []) {
+    const mine = rec.filter(e => domainOfEntry(e) === d.domain);
+    if (mine.length) {
+      for (const e of mine) {
+        if (used.has(lower(e))) continue;
+        used.add(lower(e));
+        out.push({ entry: e, domain: d.domain, domainCount: d.count, votes: 0, recorded: true });
+      }
+      continue;
+    }
+    const best = (estimate.candidates || []).filter(c => c.domain === d.domain)
+      .sort((a, b) => b.votes - a.votes)[0];
+    const entry = best ? best.entry : d.domain;
+    used.add(lower(entry));
+    out.push({ entry, domain: d.domain, domainCount: d.count, votes: best ? best.votes : 0, recorded: false });
+  }
+  for (const e of rec) {
+    if (used.has(lower(e))) continue;
+    used.add(lower(e));
+    out.push({ entry: e, domain: domainOfEntry(e), domainCount: 0, votes: 0, recorded: true });
+  }
+  return out;
+}
