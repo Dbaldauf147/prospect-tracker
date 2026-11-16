@@ -19,6 +19,7 @@ import { buildServiceBoard } from './serviceCategoriesStore.js';
 import { collectAutoNa, isSoldStatus } from './serviceAutoNa.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
 import { tagKey } from './contactTagReview.js';
+import { contactNaByBucket } from './dmSteps.js';
 
 // Not Sold and N/A are the two answers that say the service isn't on the
 // table at this company.
@@ -83,7 +84,9 @@ export function setServiceBucket(overrides, name, bucket, on) {
 // it out (the service's Auto-N/A list). The popup also reads an opp's stage
 // for a service with no manual status; these pages have no opps to hand.
 // `serviceBucketContext(settings)` once per render, then
-// `companyClosedBuckets(record, ctx, buckets)` per company.
+// `companyClosedBuckets(record, ctx, buckets, { contacts, tagReview })` per
+// company (the contacts are optional: a contact's N/A on a tag closes that
+// category too).
 export function serviceBucketContext(settings) {
   const solutions = getEffectiveDropdownLists(settings).find(l => l.key === 'solutions')?.options || [];
   const names = [...new Set(buildServiceBoard(settings, solutions).flatMap(c => c.items || []))];
@@ -94,8 +97,15 @@ export function serviceBucketContext(settings) {
   };
 }
 
-export function companyClosedBuckets(record, ctx, buckets) {
-  if (!ctx) return new Set((buckets || []).filter(b => record?.dmSearchSteps?.[b.key]?.na).map(b => b.key));
+export function companyClosedBuckets(record, ctx, buckets, { contacts = null, tagReview = null } = {}) {
+  // A contact at the company with the category's tag marked N/A closes it
+  // too (dmSteps contactNaByBucket); the caller passes the contacts it has.
+  const contactNa = contacts && tagReview ? contactNaByBucket(contacts, tagReview, buckets) : null;
+  if (!ctx) {
+    const out = new Set((buckets || []).filter(b => record?.dmSearchSteps?.[b.key]?.na).map(b => b.key));
+    if (contactNa) for (const k of contactNa.keys()) out.add(k);
+    return out;
+  }
   const svc = record?.servicesExplored || {};
   const manual = (n) => { const v = String(svc[n] ?? '').trim(); return v && v !== '-' ? v : ''; };
   const sold = ctx.names.filter(n => isSoldStatus(manual(n)));
@@ -109,5 +119,6 @@ export function companyClosedBuckets(record, ctx, buckets) {
   for (const bucket of buckets || []) {
     if (record?.dmSearchSteps?.[bucket.key]?.na) closed.add(bucket.key);
   }
+  if (contactNa) for (const k of contactNa.keys()) closed.add(k);
   return closed;
 }
