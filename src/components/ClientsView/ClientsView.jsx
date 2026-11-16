@@ -21,6 +21,7 @@ import {
   loadClientLouisvilleMap, setClientLouisville, CLIENT_LOUISVILLE_EVENT,
 } from '../../utils/clientManagerStore';
 import { ClientFieldsPasteModal } from './ClientFieldsPasteModal';
+import { ClientRetentionView } from './ClientRetentionView';
 import {
   asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy, isInactiveAgreement,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -745,6 +746,7 @@ const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
 const SUBTAB_KEYS = new Set([
   'clients', 'oldclients', 'deals', 'commissions', 'postsale',
   'dealsizing', 'serviceopportunity', 'contractservices', 'contractlanguage',
+  'retention',
 ]);
 
 function readSavedSubtab() {
@@ -1572,6 +1574,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       {[
         { key: 'clients', label: 'Clients' },
         { key: 'oldclients', label: 'Old Clients' },
+        { key: 'retention', label: 'Retention' },
         { key: 'deals', label: 'Deals' },
         { key: 'commissions', label: 'Commissions' },
         { key: 'postsale', label: 'Post-Sale Follow-Up' },
@@ -1605,6 +1608,22 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       })}
     </div>
   );
+
+  if (subtab === 'retention') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {subtabBar}
+        <ClientRetentionView
+          oppsRecords={oppsRecords}
+          prospects={prospects}
+          settings={settings}
+          updateSettings={updateSettings}
+          updateProspect={updateProspect}
+          onSelectProspect={onSelectProspect}
+        />
+      </div>
+    );
+  }
 
   if (subtab === 'deals') {
     return (
