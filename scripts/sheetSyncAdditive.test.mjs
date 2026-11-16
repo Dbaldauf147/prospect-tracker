@@ -120,5 +120,13 @@ const names = (rows) => rows.map((r) => r.company);
   eq(newSheetRows([row], [])[0], row, 'the full sheet row is returned, not just its name');
 }
 
+{
+  // The WSP bug: "WSP Global" was merged into "WSP", but the sheet still
+  // had a "WSP Global" row, and every tick re-created it.
+  const sheet = [{ company: 'WSP Global' }, { company: 'WSP' }, { company: 'Ara Partners' }];
+  const roster = [{ company: 'WSP', companyAliases: ['WSP Global'] }];
+  eq(names(newSheetRows(sheet, roster)), ['Ara Partners'], 'a name merged into a roster record is not re-imported');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

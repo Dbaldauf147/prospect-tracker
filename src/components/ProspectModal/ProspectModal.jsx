@@ -74,6 +74,7 @@ import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../uti
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { EQUIPMENT_ESTIMATE_TYPES, portfolioEquipmentEstimate, propertyTypeEquipment } from '../../data/propertyTypeEstimates';
 import { companyDedupeKey } from '../../utils/companyKey';
+import { ALIASES_FIELD, mergedCompanyAliases } from '../../utils/companyAliases';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
 import { pricedServiceRows } from '../../utils/serviceRows';
@@ -9795,9 +9796,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         merged[k] = vSrc;
       }
     }
+    // Remember the absorbed record's name on this one, so the sheet sync
+    // and the add-company paths treat it as this company from now on
+    // instead of re-creating it (utils/companyAliases).
+    merged[ALIASES_FIELD] = mergedCompanyAliases(fields, sourceProspect);
     try {
       await onUpdateProspect(prospect.id, merged);
       await onDeleteProspect(sourceProspect.id);
+      // The card autosaves its whole `fields`, so it must hold the merged
+      // record or the next edit would write the pre-merge copy back.
+      setFields(merged);
       setMergeOpen(false);
       // Both writes landed, but over HTTPS because the SDK had crashed: the
       // roster listener is dead, so the merge won't show until a reload.
@@ -9828,7 +9836,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       )}
       <div className={styles.modal} onClick={e => e.stopPropagation()}>
         <div className={styles.header}>
-          <h2 className={styles.title}>{isNew ? 'Add Prospect' : fields.company}</h2>
+          <div style={{ minWidth: 0 }}>
+            <h2 className={styles.title}>{isNew ? 'Add Prospect' : fields.company}</h2>
+            {/* Names merged into this record. The sheet sync and the
+                add-company paths read them as this company, so they are not
+                re-created (utils/companyAliases). x forgets one. */}
+            {!isNew && Array.isArray(fields[ALIASES_FIELD]) && fields[ALIASES_FIELD].length > 0 && (
+              <div data-company-aliases style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem', marginTop: 2, fontSize: '0.68rem', color: '#64748B' }}>
+                <span title="Names merged into this company. Imports and adds under these names land on this record instead of creating a new one.">Also known as:</span>
+                {fields[ALIASES_FIELD].map(name => (
+                  <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 0.35rem', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 999, color: '#334155', fontWeight: 600 }}>
+                    {name}
+                    <button
+                      type="button"
+                      aria-label={`Forget the name ${name}`}
+                      title={`Stop treating "${name}" as this company. A sheet row with that name would then be imported as its own company again.`}
+                      onClick={() => setFields(prev => ({ ...prev, [ALIASES_FIELD]: (prev[ALIASES_FIELD] || []).filter(n => n !== name) }))}
+                      style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: '#94A3B8', fontSize: '0.75rem', lineHeight: 1, fontFamily: 'inherit' }}
+                    >×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
           {/* Wraps rather than squashing: there are five of these now, and
               a header that runs the account's own name off the edge to keep
               them on one line has its priorities backwards. */}
