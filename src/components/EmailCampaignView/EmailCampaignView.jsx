@@ -71,6 +71,7 @@ import { campaignCategory, campaignCategoryOptions, normalizeCampaignCategory } 
 //
 // "Sent To" is the row's identity, so it can't be hidden; the remove (×)
 // button is table scaffolding rather than a column and isn't offered at all.
+// It sits at the left of each row, ahead of every column.
 const CONTACT_COLUMNS = [
   { key: 'email', label: 'Sent To', sortKey: 'email', width: 280 },
   {
@@ -3069,14 +3070,16 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                   simply overflows and the box scrolls. */}
               <table style={{ tableLayout: 'fixed', width: '100%', minWidth: `${tableWidth}px`, borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                 <colgroup>
-                  {visibleColumns.map(col => <col key={col.key} style={{ width: `${widthOf(col)}px` }} />)}
+                  {/* The remove (x) column leads each row, so it's in view without
+                      scrolling across a wide table. */}
                   <col style={{ width: `${ACTIONS_COL_WIDTH}px` }} />
+                  {visibleColumns.map(col => <col key={col.key} style={{ width: `${widthOf(col)}px` }} />)}
                   <col />
                 </colgroup>
                 <thead>
                   <tr ref={setHeaderRowEl} style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: 0, zIndex: 2 }}>
+                    <th style={{ padding: '0.45rem 0.3rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }} aria-label="Remove" />
                     {visibleColumns.map(col => <ColHeader key={col.key} col={col} />)}
-                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }} aria-label="Remove" />
                     <th style={{ borderBottom: '1px solid var(--color-border)' }} aria-hidden="true" />
                   </tr>
                   {/* A box under every heading: type to narrow the roster, or
@@ -3086,16 +3089,6 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                       which a heading that wraps or a different font size would
                       make wrong. */}
                   <tr style={{ background: 'var(--color-surface-alt)', position: 'sticky', top: headerHeight, zIndex: 1 }}>
-                    {visibleColumns.map(col => (
-                      <th key={col.key} style={{ padding: '0 0.35rem 0.35rem', background: 'var(--color-surface-alt)', borderBottom: '1px solid var(--color-border)', fontWeight: 400 }}>
-                        <ColumnFilterCombo
-                          value={liveFilters[col.key] || ''}
-                          onChange={v => setColFilter(col.key, v)}
-                          suggestions={filterSuggestions[col.key]}
-                          label={col.label}
-                        />
-                      </th>
-                    ))}
                     <th style={{ padding: '0 0.2rem 0.35rem', textAlign: 'center', background: 'var(--color-surface-alt)', borderBottom: '1px solid var(--color-border)' }}>
                       {filtersOn > 0 && (
                         <button
@@ -3106,6 +3099,16 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                         >&#8635;</button>
                       )}
                     </th>
+                    {visibleColumns.map(col => (
+                      <th key={col.key} style={{ padding: '0 0.35rem 0.35rem', background: 'var(--color-surface-alt)', borderBottom: '1px solid var(--color-border)', fontWeight: 400 }}>
+                        <ColumnFilterCombo
+                          value={liveFilters[col.key] || ''}
+                          onChange={v => setColFilter(col.key, v)}
+                          suggestions={filterSuggestions[col.key]}
+                          label={col.label}
+                        />
+                      </th>
+                    ))}
                     <th style={{ background: 'var(--color-surface-alt)', borderBottom: '1px solid var(--color-border)' }} aria-hidden="true" />
                   </tr>
                 </thead>
@@ -3151,11 +3154,6 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                         opacity: blocked === 'avoid' ? 0.72 : 1,
                       }}
                     >
-                      {visibleColumns.map(col => (
-                        <td key={col.key} style={{ padding: '0.4rem 0.6rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {renderContactCell(col.key, c, i, isDup)}
-                        </td>
-                      ))}
                       <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
                         <button
                           onClick={() => removeContact(i)}
@@ -3165,6 +3163,11 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                           title="Remove from list"
                         >&times;</button>
                       </td>
+                      {visibleColumns.map(col => (
+                        <td key={col.key} style={{ padding: '0.4rem 0.6rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {renderContactCell(col.key, c, i, isDup)}
+                        </td>
+                      ))}
                       <td aria-hidden="true" />
                     </tr>
                     );
@@ -3180,6 +3183,16 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                       title={`Nobody from ${t.company} is on this campaign yet`}
                       style={{ borderBottom: '1px solid var(--color-border-light)', background: '#FFFBEB' }}
                     >
+                      <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
+                        <button
+                          onClick={() => removeCompanyTarget(t.company)}
+                          aria-label={`Take ${t.company} off this campaign's company list`}
+                          style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                          onMouseEnter={e => e.target.style.color = '#EF4444'}
+                          onMouseLeave={e => e.target.style.color = '#CBD5E1'}
+                          title="Take this company off the campaign"
+                        >&times;</button>
+                      </td>
                       {visibleColumns.map(col => (
                         <td key={col.key} style={{ padding: '0.4rem 0.6rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {col.key === 'email' ? (
@@ -3208,16 +3221,6 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                           )}
                         </td>
                       ))}
-                      <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
-                        <button
-                          onClick={() => removeCompanyTarget(t.company)}
-                          aria-label={`Take ${t.company} off this campaign's company list`}
-                          style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
-                          onMouseEnter={e => e.target.style.color = '#EF4444'}
-                          onMouseLeave={e => e.target.style.color = '#CBD5E1'}
-                          title="Take this company off the campaign"
-                        >&times;</button>
-                      </td>
                       <td aria-hidden="true" />
                     </tr>
                   ))}
