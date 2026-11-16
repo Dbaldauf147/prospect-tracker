@@ -4,12 +4,16 @@
 // target years, which of Scopes 1, 2 and 3 it covers, and when its five-yearly
 // refresh falls due. Every cell edits in place and autosaves with the rest of
 // the card. See utils/companyTargets for the stored shape.
-import { useMemo } from 'react';
+// "Paste targets" takes a whole table at once, shaped like the SBTi target
+// dashboard's Targets / Commitments table (see parsePastedTargets).
+import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import {
   TARGET_SCOPES, REFRESH_CYCLE_YEARS, blankTarget, normalizeTargets,
-  updateTarget, removeTarget, refreshDue,
+  updateTarget, removeTarget, refreshDue, scopesLabel,
+  parsePastedTargets, mergePastedTargets,
 } from '../../utils/companyTargets';
+import { addTargetTypeOption } from '../../utils/targetTypeOptions';
 import { TargetTypeSelect } from './TargetTypeSelect';
 import { useTargetTypeOptions } from './useTargetTypeOptions';
 
@@ -21,6 +25,9 @@ const yearStyle = { ...inputStyle, fontVariantNumeric: 'tabular-nums' };
 const addBtn = {
   padding: '0.3rem 0.75rem', borderRadius: 6, border: '1px solid #2563EB', background: '#2563EB',
   color: '#fff', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+};
+const secondaryBtn = {
+  ...addBtn, background: '#fff', color: '#2563EB',
 };
 const rowBtn = {
   background: 'none', border: '1px solid transparent', borderRadius: 4, padding: '0 6px',
@@ -40,12 +47,95 @@ const YEAR_COLUMNS = [
   { key: 'targetYear2', label: 'Target Year 2' },
 ];
 const SCOPE_LABELS = { scope1: 'Scope 1', scope2: 'Scope 2', scope3: 'Scope 3' };
+const TEXT_COLUMNS = [
+  { key: 'classification', label: 'Classification', width: 130 },
+  { key: 'status', label: 'Status', width: 150 },
+];
+
+const previewCell = { padding: '0.25rem 0.5rem', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' };
+const previewHead = { ...previewCell, fontWeight: 600, color: '#475569', background: '#F8FAFC', textAlign: 'left' };
+
+// The paste box: a textarea, a preview of what it reads, and Add.
+function PasteTargetsPanel({ existing, onAdd, onClose }) {
+  const [text, setText] = useState('');
+  const parsed = useMemo(() => parsePastedTargets(text), [text]);
+  const merge = useMemo(() => mergePastedTargets(existing, parsed.rows), [existing, parsed]);
+  const add = () => {
+    if (!merge.added) return;
+    for (const t of new Set(parsed.rows.map(r => r.type).filter(Boolean))) addTargetTypeOption(t);
+    onAdd(merge.list);
+  };
+  return (
+    <div style={{ border: '1px solid #BFDBFE', background: '#F8FAFF', borderRadius: 8, padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: 1.5 }}>
+        Paste a targets table, header row optional. The SBTi dashboard's Targets / Commitments
+        table works as copied: Action, Commitment Type, Status, Target, Scope, Target Classification,
+        Base Year, Target Year, Date Published. The year it was published becomes the Year Set.
+      </div>
+      <textarea
+        autoFocus
+        value={text}
+        onChange={e => setText(e.target.value)}
+        placeholder="Paste the table here (Ctrl+V)"
+        aria-label="Pasted targets table"
+        rows={5}
+        style={{ ...inputStyle, fontSize: '0.75rem', fontFamily: 'ui-monospace, monospace', resize: 'vertical' }}
+      />
+      {parsed.rows.length > 0 && (
+        <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.75rem' }}>
+            <thead>
+              <tr>
+                {['Target Type', 'Year Set', 'Base Year', 'Target Year', 'Scopes', 'Classification', 'Status'].map(h => (
+                  <th key={h} style={previewHead}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {parsed.rows.map(r => (
+                <tr key={r.id}>
+                  <td style={previewCell}>{r.type || '-'}</td>
+                  <td style={previewCell}>{r.yearSet || '-'}</td>
+                  <td style={previewCell}>{r.baseYear || '-'}</td>
+                  <td style={previewCell}>{[r.targetYear1, r.targetYear2].filter(Boolean).join(', ') || '-'}</td>
+                  <td style={previewCell}>{scopesLabel(r) || '-'}</td>
+                  <td style={previewCell}>{r.classification || '-'}</td>
+                  <td style={previewCell}>{r.status || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={add}
+          disabled={!merge.added}
+          style={{ ...addBtn, opacity: merge.added ? 1 : 0.5, cursor: merge.added ? 'pointer' : 'default' }}
+        >
+          Add {merge.added || ''} target{merge.added === 1 ? '' : 's'}
+        </button>
+        <button type="button" onClick={onClose} style={secondaryBtn}>Cancel</button>
+        <span style={{ fontSize: '0.75rem', color: '#64748B' }}>
+          {!text.trim() ? ''
+            : !parsed.rows.length ? 'No targets found in what was pasted.'
+              : [
+                `${parsed.rows.length} row${parsed.rows.length === 1 ? '' : 's'} read`,
+                merge.duplicates ? `${merge.duplicates} already logged, skipped` : '',
+              ].filter(Boolean).join(', ')}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export function TargetsTab({ company = '', targets, onChange, settings, updateSettings }) {
   const rows = useMemo(() => normalizeTargets(targets), [targets]);
   const typeOptions = useTargetTypeOptions();
   const edit = (id, key, value) => onChange(updateTarget(rows, id, key, value));
   const add = () => onChange([...rows, blankTarget()]);
+  const [pasting, setPasting] = useState(false);
   const remove = (row) => {
     const named = row.type ? `the "${row.type}" target` : 'this target';
     if (window.confirm(`Delete ${named}?`)) onChange(removeTarget(rows, row.id));
@@ -106,6 +196,23 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
         </label>
       ),
     })),
+    ...TEXT_COLUMNS.map(c => ({
+      key: c.key,
+      label: c.label,
+      defaultWidth: c.width,
+      getSortValue: r => r[c.key].toLowerCase() || null,
+      getFilterValue: r => r[c.key],
+      exportValue: r => r[c.key],
+      render: r => (
+        <input
+          type="text"
+          value={r[c.key]}
+          aria-label={c.label}
+          onChange={e => edit(r.id, c.key, e.target.value)}
+          style={inputStyle}
+        />
+      ),
+    })),
     {
       key: 'refreshDue',
       label: 'Refresh Due',
@@ -148,12 +255,26 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
       <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
         The sustainability targets {company ? <strong>{company}</strong> : 'this company'} has set:
         the kind of target, the year it was set, its base year, up to two target years, and which
-        scopes it covers. Each target is due a refresh {REFRESH_CYCLE_YEARS} years after the year
+        scopes it covers. Paste targets takes a whole table at once, such as the SBTi
+        dashboard's. Each target is due a refresh {REFRESH_CYCLE_YEARS} years after the year
         it was set. Changes save as you type.
       </div>
-      <div>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
         <button type="button" onClick={add} style={addBtn}>+ Add target</button>
+        {!pasting && (
+          <button type="button" onClick={() => setPasting(true)} style={secondaryBtn}
+            title="Paste a table of targets, such as the SBTi dashboard's Targets / Commitments table">
+            Paste targets
+          </button>
+        )}
       </div>
+      {pasting && (
+        <PasteTargetsPanel
+          existing={rows}
+          onAdd={(next) => { onChange(next); setPasting(false); }}
+          onClose={() => setPasting(false)}
+        />
+      )}
       {/* DataTable fills a flex column, so it needs a box with a height.
           Sized to the rows so a company with one or two targets doesn't
           sit above a screen of empty table, capped so a long list scrolls. */}

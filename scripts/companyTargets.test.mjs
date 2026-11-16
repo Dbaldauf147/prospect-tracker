@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue } from '../src/utils/companyTargets.js';
+import { normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -21,7 +21,7 @@ function check(label, actual, expected) {
 
 check('normalize: not an array', normalizeTargets(null), []);
 check('normalize: fills blanks, drops junk', normalizeTargets([{ id: 'a', type: 'Net zero', baseYear: 2019 }, null, 'x']), [
-  { id: 'a', type: 'Net zero', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false },
+  { id: 'a', type: 'Net zero', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false, classification: '', status: '' },
 ]);
 check('cleanYear: digits only, four max', [cleanYear('20a305'), cleanYear(''), cleanYear(null)], ['2030', '', '']);
 const list = [{ id: 'a', type: '' }, { id: 'b', type: 'SBTi' }];
@@ -42,6 +42,43 @@ check('refresh: none on a half-typed year', refreshDue({ yearSet: '202' }, 2026)
 check('refresh: upcoming', refreshDue({ yearSet: '2023' }, 2026), { year: 2028, status: 'upcoming', label: 'Upcoming' });
 check('refresh: due this year', refreshDue({ yearSet: '2021' }, 2026), { year: 2026, status: 'due', label: 'Due this year' });
 check('refresh: overdue', refreshDue({ yearSet: '2019' }, 2026), { year: 2024, status: 'overdue', label: 'Overdue' });
+
+// Bulk paste: the SBTi dashboard's Targets / Commitments table.
+const SBTI = [
+  'ACTION\tCOMMITMENT TYPE\tSTATUS\tTARGET\tSCOPE\tTARGET CLASSIFICATION\tBASE YEAR\tTARGET YEAR\tDATE PUBLISHED',
+  'Target\tNA\tOther\tNet-zero\t1+2+3\t1.5°C\t2019\t2040\t2024-12-05',
+  'Target\tNA\tOther\tNear-term\t1+2\t1.5°C\t2019\t2030\t2024-12-05',
+  'Target\tNA\tOther\tNear-term\t3\tNA\t2019\t2030\t2024-12-05',
+  'Target\tNA\tOther\tLong-term\t1+2\t1.5°C\t2019\t2040\t2024-12-05',
+  'Target\tNA\tOther\tLong-term\t3\tNA\t2019\t2040\t2024-12-05',
+  'Commitment\tBA1.5 Option 2\tValidated Targets\tNA\tNA\tNA\tNA\tNA\t2021-07-01',
+].join('\r\n');
+const strip = rows => rows.map(({ id, ...r }) => r);
+const parsed = parsePastedTargets(SBTI);
+check('paste: six rows', parsed.rows.length, 6);
+check('paste: net-zero row', strip(parsed.rows)[0], {
+  type: 'Net zero', yearSet: '2024', baseYear: '2019', targetYear1: '2040', targetYear2: '',
+  scope1: true, scope2: true, scope3: true, classification: '1.5°C', status: 'Other',
+});
+check('paste: scope 3 alone, NA classification blank', strip(parsed.rows)[2], {
+  type: 'SBTi near-term', yearSet: '2024', baseYear: '2019', targetYear1: '2030', targetYear2: '',
+  scope1: false, scope2: false, scope3: true, classification: '', status: 'Other',
+});
+check('paste: commitment row', strip(parsed.rows)[5], {
+  type: 'SBTi commitment', yearSet: '2021', baseYear: '', targetYear1: '', targetYear2: '',
+  scope1: false, scope2: false, scope3: false, classification: 'BA1.5 Option 2', status: 'Validated Targets',
+});
+const noHeader = parsePastedTargets(SBTI.split('\r\n').slice(1).join('\n'));
+check('paste: without the header, same rows', strip(noHeader.rows), strip(parsed.rows));
+const perLine = parsePastedTargets(SBTI.split('\r\n').flatMap(l => l.split('\t')).join('\n'));
+check('paste: one cell per line, same rows', strip(perLine.rows), strip(parsed.rows));
+const perLineNoHeader = parsePastedTargets(SBTI.split('\r\n').slice(1).flatMap(l => l.split('\t')).join('\n'));
+check('paste: one cell per line without header', strip(perLineNoHeader.rows), strip(parsed.rows));
+check('paste: blank text', parsePastedTargets('  \n '), { rows: [], skipped: 0 });
+const merged = mergePastedTargets([], parsed.rows);
+check('merge: all added', [merged.added, merged.duplicates, merged.list.length], [6, 0, 6]);
+const again = mergePastedTargets(merged.list, parsePastedTargets(SBTI).rows);
+check('merge: pasting again adds nothing', [again.added, again.duplicates, again.list.length], [0, 6, 6]);
 
 // Target Type list.
 check('types: defaults before anything is saved', types.loadTargetTypeOptions(), types.DEFAULT_TARGET_TYPES);
