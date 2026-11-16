@@ -37,6 +37,28 @@ export function dmBucketAnswer(c, bucket, tagReview = null) {
   return tagStateFrom(contactHasTag(c, bucket.tag), stored).answer;
 }
 
+// The contacts whose tag for a category is marked N/A (the contact popup's
+// tag table, Status N/A), per category key: [{ c, name }]. One N/A means the
+// category doesn't apply to the company, so it closes out the way the
+// heading's own N/A does, naming who said so. Any contact counts, decision
+// maker or not.
+export function contactNaByBucket(contacts, tagReview = null, buckets = BUCKETS) {
+  const out = new Map();
+  for (const c of contacts || []) {
+    const cid = c?.id ?? c?.vid;
+    if (cid == null) continue;
+    const map = tagReview?.[cid];
+    if (!map) continue;
+    for (const b of buckets || []) {
+      if (tagStateFrom(contactHasTag(c, b.tag), findTagRecord(map, b.label)).status !== 'na') continue;
+      const name = [c.firstname, c.lastname].map(v => String(v || '').trim()).filter(Boolean).join(' ') || String(c.email || '').trim() || 'Unnamed contact';
+      if (!out.has(b.key)) out.set(b.key, []);
+      out.get(b.key).push({ c, name });
+    }
+  }
+  return out;
+}
+
 // Steps left for one category, read as how far down the ladder it has got:
 // a Yes decision maker means nothing is left (0); otherwise the furthest
 // step done says where it stands, so a category with no DM and nothing else

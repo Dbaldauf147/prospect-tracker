@@ -473,16 +473,29 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
     const recordOf = makeAccountRecordLookup(prospects);
     const closedByRecord = new Map();
     const bucketByTag = new Map(BUCKETS.map(b => [tagKey(b.label), b.key]));
+    // The contacts on the coverage per company record, so a contact's N/A
+    // on a tag closes it for everyone at that company.
+    const contactsByRecord = new Map();
+    for (const person of fullCoverage?.all?.people || []) {
+      const c = person?.contact || person;
+      const rec = recordOf(c);
+      if (!rec) continue;
+      if (!contactsByRecord.has(rec)) contactsByRecord.set(rec, []);
+      contactsByRecord.get(rec).push(c);
+    }
     return (person, tag) => {
       const bucketKey = bucketByTag.get(tagKey(tag));
       if (!bucketKey) return false;
       const rec = recordOf(person?.contact || person);
       if (!rec) return false;
       let closed = closedByRecord.get(rec);
-      if (!closed) { closed = companyClosedBuckets(rec, ctx, BUCKETS); closedByRecord.set(rec, closed); }
+      if (!closed) {
+        closed = companyClosedBuckets(rec, ctx, BUCKETS, { contacts: contactsByRecord.get(rec) || [], tagReview: tagReviewMap || {} });
+        closedByRecord.set(rec, closed);
+      }
       return closed.has(bucketKey);
     };
-  }, [prospects, settings]);
+  }, [prospects, settings, fullCoverage, tagReviewMap]);
   const rows = useMemo(() => {
     if (!fullCoverage || !fullCoverage.all?.contacts) return [];
     const map = tagReviewMap || {};

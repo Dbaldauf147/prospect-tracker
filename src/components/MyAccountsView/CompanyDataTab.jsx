@@ -114,10 +114,12 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       const row = { id: p.id, company: p.company || a.company || '', tier: a.tierLabel || a.myTier || a.tier || '', status: p.status || '', cdm: p.cdm || '', vertical: String(p.vertical || '').trim(), subVertical: String(p.subVertical || '').trim() };
       for (const f of COMPANY_DATA_FIELDS) row[f.key] = fieldValue(f, p[f.key]);
       row.zoomExcluded = isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId });
+      const accountDms = dmLookup ? dmLookup.forAccount(p) : [];
       const steps = dmLookup ? allMissingStepsFor({
-        dms: dmLookup.forAccount(p), record: p, tagReview,
+        dms: accountDms, record: p, tagReview,
         titleSearches: titleSearchesForCompany(zoomLog.searches, { company: p.company || a.company, zoomCompanyId: p.zoomCompanyId, zoomCompanyName: p.zoomCompanyName }),
-        closedBuckets: companyClosedBuckets(p, bucketCtx, BUCKETS),
+        // A decision maker's N/A on a category closes it for the company too.
+        closedBuckets: companyClosedBuckets(p, bucketCtx, BUCKETS, { contacts: accountDms, tagReview }),
       }) : null;
       // A decision maker on every tag waives the Zoom id (fieldNotNeeded).
       row.allDms = !!steps?.allDms;

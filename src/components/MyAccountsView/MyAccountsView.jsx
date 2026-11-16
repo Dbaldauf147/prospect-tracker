@@ -3200,12 +3200,13 @@ Fix that now?
         const entries = allAccounts.filter(a => !isInactive(a)).map((a) => {
           const p = byId.get(a.id);
           if (!p || isQualifyingCompany(p)) return null;
+          const dms = lookup.forAccount(p);
           return {
             record: p,
             zoomExcluded: isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId }),
-            dms: lookup.forAccount(p),
+            dms,
             titleSearches: titleSearchesForCompany(zoomSearches, { company: p.company || a.company, zoomCompanyId: p.zoomCompanyId, zoomCompanyName: p.zoomCompanyName }),
-            closedBuckets: companyClosedBuckets(p, bucketCtx, BUCKETS),
+            closedBuckets: companyClosedBuckets(p, bucketCtx, BUCKETS, { contacts: dms, tagReview: missingTagReview }),
           };
         }).filter(Boolean);
         const reading = missingStepsReading(entries, { tagReview: missingTagReview });
