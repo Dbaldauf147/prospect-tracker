@@ -22,6 +22,7 @@ import { newOppsMissingVertical } from './newOppsFilter.js';
 import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRows } from './postSaleFollowUp';
 import { incompleteHandoffDeals } from './dealHandoff';
 import { oppScopeOffList, suggestServiceMatch } from './oppScopeOffList';
+import { oppCompanyMissingIssues } from './oppCompanyMissing.js';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -902,6 +903,8 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects, oppNumbers }));
   issues.push(...detectOppScopeOffList({ oppsCache, knownServices, ignoredScopeServices, prospects, oppNumbers }));
   issues.push(...detectNewOppMissingVertical({ oppsCache, prospects, coverageSettings, oppNumbers }));
+  // Opp Accounts no Table View company answers to (utils/oppCompanyMissing).
+  issues.push(...oppCompanyMissingIssues(oppsCache?.records, prospects, oppNumbers));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides, oppNumbers }));
   issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects, oppNumbers }));
   issues.push(...detectAppDescriptionMissingContracting({ bfoActivity, oppsCache, prospects, oppNumbers }));
