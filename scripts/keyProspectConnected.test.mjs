@@ -22,8 +22,8 @@ eq('not connected: Key Prospect', plain.isKeyProspect(amy), true);
 
 const gates = makeRosterGates({ prospects, cdmName, oppsRecords: [], connected: { 101: true, 102: false } });
 eq('connected: still a Key Prospect', gates.isKeyProspect(amy), true);
-eq('connected: Key and Key Prospect', gates.categorize(amy), ['Key', 'Key Prospect']);
-eq('connected: nothing blocks it', gates.explain(amy).rosters.find(r => r.label === 'Key Prospect').why, '');
+eq('connected: Key and Key Prospect', gates.categorize(amy), ['Key', 'DM at Tier 1-3']);
+eq('connected: nothing blocks it', gates.explain(amy).rosters.find(r => r.label === 'DM at Tier 1-3').why, '');
 eq('unticked (false) stays a Key Prospect', gates.isKeyProspect(bo), true);
 eq('no map: same as before', makeRosterGates({ prospects, cdmName, oppsRecords: [], connected: null }).isKeyProspect(bo), true);
 

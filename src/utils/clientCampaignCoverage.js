@@ -68,7 +68,7 @@ const dateOf = (v) => {
 export const CAMPAIGN_AUDIENCE_VIEWS = [
   { key: 'clients', label: 'Clients', noun: 'current clients', one: 'client' },
   { key: 'keyContacts', label: 'Key Contacts', noun: 'Key Contact companies', one: 'company' },
-  { key: 'prospects', label: 'Prospects', noun: 'Key Prospect companies', one: 'company' },
+  { key: 'prospects', label: 'Prospects', noun: 'DM at Tier 1-3 companies', one: 'company' },
 ];
 
 /**

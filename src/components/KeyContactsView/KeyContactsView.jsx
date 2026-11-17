@@ -4049,7 +4049,7 @@ function KeyContactsViewInner({
             type="button"
             onClick={downloadCombinedContactsCsv}
             title={categorizeContact
-              ? 'Download a formatted Excel workbook of every contact on this page. Each row has a Categories column (Key / Active / Client / Key Prospect). The export covers the full page set: on-screen filters and search are NOT applied.'
+              ? 'Download a formatted Excel workbook of every contact on this page. Each row has a Categories column (Key / Active / Client / DM at Tier 1-3). The export covers the full page set: on-screen filters and search are NOT applied.'
               : 'Download a single workbook combining contacts from Key Contacts, Active Contacts, and Client Contacts. Each row has a Categories column listing every tab the contact qualifies for. Filters and search on this page are NOT applied: the export covers the full tag/CDM-derived sets.'}
             style={{
               padding: '0.35rem 0.75rem',
@@ -4882,7 +4882,7 @@ function KeyContactsViewInner({
                             Key:    { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
                             Active: { bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
                             Client: { bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A' },
-                            'Key Prospect': { bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6' },
+                            'DM at Tier 1-3': { bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6' },
                           };
                           return cats.map(cat => {
                             const k = COLORS[cat] || { bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' };

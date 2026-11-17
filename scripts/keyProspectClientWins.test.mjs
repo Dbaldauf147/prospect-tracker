@@ -24,7 +24,7 @@ const dm = (company, email) => ({ id: `${company}|${email}`, firstname: 'J', las
 const jon = dm('Piedmont Office Realty Trust', 'jon.kuskie@piedmontreit.com');
 check('near-name contact at a Client is not a Key Prospect', gates.isKeyProspect(jon), false);
 check('categorize leaves Key Prospect off', gates.categorize(jon).includes('keyProspect'), false);
-const why = gates.explain(jon).rosters.find(r => r.label === 'Key Prospect').why;
+const why = gates.explain(jon).rosters.find(r => r.label === 'DM at Tier 1-3').why;
 check('explain names the Client', why, 'They belong to "Piedmont Office Realty Trust Inc.", a Client, and Clients aren\'t prospects.');
 
 check('Client email domain alone rules it out',

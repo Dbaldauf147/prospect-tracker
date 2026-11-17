@@ -552,7 +552,7 @@ function CategoryCell({ categories, cellStyle }) {
   const cats = categories || [];
   if (cats.length === 0) {
     return (
-      <td style={cellStyle} title="On none of the Key / Active / Client / Key Prospect rosters">
+      <td style={cellStyle} title="On none of the Key / Active / Client / DM at Tier 1-3 rosters">
         <span style={{ color: '#CBD5E1' }}>-</span>
       </td>
     );
@@ -641,7 +641,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
     <>
       {titleRow(`Variable Coverage (${contacts.length})`)}
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
-        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / Key Prospect), and each column after it is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
+        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / DM at Tier 1-3), and each column after it is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
       </p>
       <div style={{
         // Grow with the viewport - leaves enough room for the page
@@ -660,7 +660,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
             <tr>
               <th style={headStyle}>Recipient</th>
               {categorize && (
-                <th style={headStyle} title="Which contact rosters this recipient is on - the same Key / Active / Client / Key Prospect gates the Contacts pages run">
+                <th style={headStyle} title="Which contact rosters this recipient is on - the same Key / Active / Client / DM at Tier 1-3 gates the Contacts pages run">
                   Category
                 </th>
               )}

@@ -6,7 +6,7 @@ import { readingFromRosterCounts, withRosterActivityReading, rosterActivityChart
 
 const counts = (kt = 26) => [
   { key: 'keyTarget', label: 'Dan Key Target', total: 76, windows: [{ days: 30, active: kt }, { days: 60, active: 36 }, { days: 90, active: 37 }, { days: 120, active: 38 }] },
-  { key: 'keyProspect', label: 'Dan Key Prospect', total: 29, windows: [{ days: 30, active: 4 }, { days: 60, active: 4 }, { days: 90, active: 5 }, { days: 120, active: 5 }] },
+  { key: 'keyProspect', label: 'DM at Tier 1-3', total: 29, windows: [{ days: 30, active: 4 }, { days: 60, active: 4 }, { days: 90, active: 5 }, { days: 120, active: 5 }] },
   { key: 'decisionMakers', label: 'Decision Makers', total: 172, windows: [{ days: 30, active: 55 }, { days: 60, active: 70 }, { days: 90, active: 80 }, { days: 120, active: 86 }] },
 ];
 

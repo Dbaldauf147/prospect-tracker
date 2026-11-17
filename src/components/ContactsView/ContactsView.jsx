@@ -21,7 +21,6 @@ const DedupeView = lazyView(() => import('../DedupeView/DedupeView'), 'DedupeVie
 const ZoomInfoView = lazyView(() => import('../ZoomInfoView/ZoomInfoView'), 'ZoomInfoView');
 const AllContactsView = lazyView(() => import('../AllContactsView/AllContactsView'), 'AllContactsView');
 const DecisionMakersView = lazyView(() => import('../DecisionMakersView/DecisionMakersView'), 'DecisionMakersView');
-const KeyProspectsView = lazyView(() => import('../KeyProspectsView/KeyProspectsView'), 'KeyProspectsView');
 const EventsView = lazyView(() => import('../EventsView/EventsView'), 'EventsView');
 const MarketingLeadsView = lazyView(() => import('../MarketingLeadsView/MarketingLeadsView'), 'MarketingLeadsView');
 const ContactTitlesView = lazyView(() => import('../ContactTitlesView/ContactTitlesView'), 'ContactTitlesView');
@@ -42,8 +41,10 @@ const ALL_SUBTABS = [
   // The same page over the one tag that decides who can sign, so it sits
   // next to All rather than at the end of the roster tabs.
   { key: 'dms',        label: 'DMs' },
+  // Key Prospects used to sit here. It was the DMs list narrowed to Tier
+  // 1-3 accounts, so it is now the DMs page's "DM at Tier 1-3" pill instead
+  // of a tab of its own (see LEGACY_SUBTABS).
   { key: 'key',        label: 'Key Contacts' },
-  { key: 'keyprospects', label: 'Key Prospects' },
   { key: 'active',     label: 'Active' },
   { key: 'clients',    label: 'Clients' },
   { key: 'changed',    label: 'Changed Jobs' },
@@ -61,6 +62,10 @@ const ALL_SUBTABS = [
 ];
 
 const STORAGE_KEY = 'contacts-view:active-subtab';
+
+// Tabs that have been folded into another, so a saved choice of one opens
+// where its contacts live now rather than falling back to the default.
+const LEGACY_SUBTABS = { keyprospects: 'dms' };
 
 // Bulk Add's own tabs: the contact import it has always been, and the log
 // of ZoomInfo pulls that feed it.
@@ -99,7 +104,8 @@ function BulkAddTabs({ view, onChange }) {
 
 function readSavedSubtab(visibleKeys) {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const saved = LEGACY_SUBTABS[raw] || raw;
     if (visibleKeys.includes(saved)) return saved;
   } catch {}
   return visibleKeys.includes('key') ? 'key' : visibleKeys[0];
@@ -276,16 +282,6 @@ export function ContactsView({
         )}
         {subtab === 'key' && (
           <KeyContactsView
-            prospects={prospects}
-            onSelectProspect={onSelectProspect}
-            settings={settings}
-            updateSettings={updateSettings}
-            updateSettingsPath={updateSettingsPath}
-            cdmName={cdmName}
-          />
-        )}
-        {subtab === 'keyprospects' && (
-          <KeyProspectsView
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             settings={settings}

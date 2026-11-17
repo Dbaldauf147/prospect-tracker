@@ -275,7 +275,7 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAu
                 {(cell.key === 'keyProspect' || cell.key === 'all') && person.keyProspectVia
                   && person.keyProspectVia.toLowerCase() !== person.company.toLowerCase() && (
                   <span
-                    title={`On the Key Prospect roster through the Table View company "${person.keyProspectVia}", which this contact's company "${person.company}" matched by name`}
+                    title={`On DM at Tier 1-3 through the Table View company "${person.keyProspectVia}", which this contact's company "${person.company}" matched by name`}
                     style={{ marginLeft: 6, color: '#6D28D9', fontStyle: 'italic' }}
                   >via {person.keyProspectVia}</span>
                 )}
