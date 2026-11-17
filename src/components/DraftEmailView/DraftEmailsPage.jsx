@@ -13,6 +13,10 @@
 // Client Campaigns turns a campaign around: pick one and see, client by
 // client, who at each of the user's current clients is on it.
 //
+// Recent Sends is the Drafts tab's "emailed in the last 3 weeks" warning run
+// over whole groups (Clients, Key Contacts, Prospects): who has been hearing
+// from Dan's campaigns, and how often.
+//
 // Email Tracking and Sent Log are hidden for now (Dan's call). Their views
 // are still in the repo (EmailTrackingView, SentLogView); add the tab
 // buttons, TABS entries and render lines back to bring them back.
@@ -25,9 +29,10 @@ import { DansDraftsView } from './DansDraftsView';
 import { DraftHistoryView } from './DraftHistoryView';
 import { MarketUpdatesView } from './MarketUpdatesView';
 import { ClientCampaignsView } from './ClientCampaignsView';
+import { RecentSendsView } from './RecentSendsView';
 import { primarySubject } from '../../utils/campaignSubjects';
 
-const TABS = ['drafts', 'drafthistory', 'dansdrafts', 'marketupdates', 'campaigns', 'clientcampaigns', 'sitelists'];
+const TABS = ['drafts', 'drafthistory', 'dansdrafts', 'marketupdates', 'campaigns', 'clientcampaigns', 'recentsends', 'sitelists'];
 
 export function DraftEmailsPage({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '', onSelectProspect, initialTab = 'drafts' }) {
   const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : 'drafts');
@@ -72,6 +77,7 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
         {tabBtn('marketupdates', 'Market Updates')}
         {tabBtn('campaigns', 'Email Campaigns')}
         {tabBtn('clientcampaigns', 'Client Campaigns')}
+        {tabBtn('recentsends', 'Recent Sends')}
         {tabBtn('sitelists', 'Site List Overview')}
       </div>
       {tab === 'drafts' && (
@@ -110,6 +116,15 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
           updateSettings={updateSettings}
           onSelectProspect={onSelectProspect}
           onOpenCampaign={openCampaign}
+        />
+      )}
+      {tab === 'recentsends' && (
+        <RecentSendsView
+          prospects={prospects}
+          cdmName={cdmName}
+          settings={settings}
+          updateSettings={updateSettings}
+          onSelectProspect={onSelectProspect}
         />
       )}
       {tab === 'sitelists' && (
