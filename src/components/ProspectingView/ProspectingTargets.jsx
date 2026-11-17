@@ -7,7 +7,7 @@
 // reads greyed out the way it does there.
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { allSavedTargets, soonestTargetPerCompany, refreshDue, scopesLabel, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
+import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
 import { reportingTier } from '../../utils/tierSource';
 
 const REFRESH_COLORS = {
@@ -172,8 +172,11 @@ export function ProspectingTargets({ prospects, settings, updateSettings, onSele
           alwaysVisible={['company']}
           defaultHidden={['scopes']}
           defaultSort={{ key: 'refreshDue', direction: 'asc' }}
-          rowGroup={r => (r.hidden ? 1 : 0)}
-          rowStyle={r => (r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
+          // Hidden targets sit below the rest and companies logged as having
+          // no target set at the very bottom, both whatever the sort.
+          rowGroup={r => (isNoTargetRow(r) ? 2 : r.hidden ? 1 : 0)}
+          rowStyle={r => (isNoTargetRow(r) ? { opacity: 0.3, background: '#F8FAFC', filter: 'grayscale(1)' }
+            : r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
           emptyMessage={all.length ? 'No targets match the filters.' : 'No targets saved yet. Add them on a company popup\'s Targets tab.'}
           exportFileName="Company targets"
           settings={settings}
