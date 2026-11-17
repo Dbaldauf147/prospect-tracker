@@ -20,6 +20,8 @@ import {
   moveStep,
   newStepKey,
   PROSPECTING_STEPS_SETTING,
+  PROSPECTING_STEP_FIXES_SETTING,
+  STEP_FIX_IDS,
   readSteps,
   serializeSteps,
   isCustomized,
@@ -128,7 +130,7 @@ check('both halves go red once the ladder reaches them',
 
 const preSplit = readSteps(withSteps([{ key: 'opps' }, { key: 'market-updates' }, { key: 'cold' }]));
 checkDeep('a ladder stored before the split gains the mapping step',
-  keys(preSplit), ['opps', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'visits', 'cold']);
+  keys(preSplit), ['opps', 'contact-mapping', 'changed-jobs', 'market-updates', 'dms-no-activity', 'visits', 'cold']);
 check('and it arrives whole, not as a bare key',
   byKey(preSplit, 'contact-mapping').title, stepByKey('contact-mapping').title);
 check('an edit to the step it split from is untouched',
@@ -136,7 +138,7 @@ check('an edit to the step it split from is untouched',
     .find(s => s.key === 'market-updates').title, 'Mine');
 checkDeep('a ladder that already has both is left alone',
   keys(readSteps(withSteps([{ key: 'contact-mapping' }, { key: 'market-updates' }]))),
-  ['contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'visits']);
+  ['contact-mapping', 'changed-jobs', 'market-updates', 'dms-no-activity', 'visits']);
 checkDeep('a ladder with neither gets neither: that step was deleted',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'cold' }]))), ['opps', 'visits', 'cold', 'changed-jobs', 'dms-no-activity']);
 checkDeep('an emptied ladder stays empty', keys(readSteps(withSteps([]))), []);
@@ -182,29 +184,41 @@ checkDeep('the original is not mutated', keys(three), ['a', 'b', 'c']);
 check('dms step: counted, not marked by hand', typeof stepByKey('dms-no-activity').workLabel, 'function');
 check('dms step: opens Prospecting', stepByKey('dms-no-activity').view, 'prospecting');
 check('dms step: names its count', stepByKey('dms-no-activity').workLabel(3), '3 DMs');
-checkDeep('dms step: a stored ladder gains it right ahead of the market updates',
+checkDeep('dms step: a stored ladder gains it right after the market updates',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }, { key: 'market-updates' }, { key: 'cold' }]))),
-  ['opps', 'renewals', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'visits', 'cold']);
+  ['opps', 'renewals', 'contact-mapping', 'changed-jobs', 'market-updates', 'dms-no-activity', 'visits', 'cold']);
 checkDeep('dms step: an emptied ladder stays empty', keys(readSteps(withSteps([]))), []);
 
 // --- the changed-jobs step -------------------------------------------------
 // New work, straight after the market updates (step 3 on the shipped ladder).
-checkDeep('the shipped ladder puts it ahead of the market updates',
-  keys(DEFAULT_STEPS).slice(1, 5), ['contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates']);
+checkDeep('the shipped ladder puts it, then the market updates, then the DMs',
+  keys(DEFAULT_STEPS).slice(1, 5), ['contact-mapping', 'changed-jobs', 'market-updates', 'dms-no-activity']);
 check('it is counted, not marked by hand', typeof stepByKey('changed-jobs').workLabel, 'function');
 check('it opens Contacts', stepByKey('changed-jobs').view, 'contacts');
 checkDeep('a stored ladder gains it right ahead of the market updates',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'contact-mapping' }, { key: 'market-updates' }, { key: 'renewals' }, { key: 'visits' }, { key: 'cold' }]))),
-  ['opps', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'renewals', 'visits', 'cold']);
+  ['opps', 'contact-mapping', 'changed-jobs', 'market-updates', 'dms-no-activity', 'renewals', 'visits', 'cold']);
 checkDeep('a ladder with an extra step of its own still gets it one place up',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'ps_mine', title: 'Mine' }, { key: 'contact-mapping' }, { key: 'market-updates' }, { key: 'renewals' }]))),
-  ['opps', 'ps_mine', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'renewals', 'visits']);
+  ['opps', 'ps_mine', 'contact-mapping', 'changed-jobs', 'market-updates', 'dms-no-activity', 'renewals', 'visits']);
 checkDeep('even when the market updates were moved down the ladder',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }, { key: 'market-updates' }, { key: 'visits' }, { key: 'cold' }]))),
-  ['opps', 'renewals', 'contact-mapping', 'changed-jobs', 'dms-no-activity', 'market-updates', 'visits', 'cold']);
+  ['opps', 'renewals', 'contact-mapping', 'changed-jobs', 'market-updates', 'dms-no-activity', 'visits', 'cold']);
 checkDeep('without the market updates it goes ahead of renewals',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }, { key: 'visits' }]))),
   ['opps', 'changed-jobs', 'dms-no-activity', 'renewals', 'visits']);
+
+// --- campaigns above the DMs (one-time fix for stored ladders) -------------
+const oldOrder = [{ key: 'opps' }, { key: 'changed-jobs' }, { key: 'dms-no-activity' }, { key: 'renewals' }, { key: 'market-updates' }, { key: 'cold' }];
+checkDeep('a stored ladder with the DMs above the campaigns gets the campaigns moved just above them',
+  keys(readSteps(withSteps(oldOrder))),
+  ['opps', 'changed-jobs', 'market-updates', 'dms-no-activity', 'renewals', 'contact-mapping', 'visits', 'cold']);
+checkDeep('once the fix is recorded, the user\'s own order wins again',
+  keys(readSteps({ [PROSPECTING_STEPS_SETTING]: oldOrder, [PROSPECTING_STEP_FIXES_SETTING]: STEP_FIX_IDS })),
+  ['opps', 'changed-jobs', 'dms-no-activity', 'renewals', 'contact-mapping', 'market-updates', 'visits', 'cold']);
+checkDeep('a ladder already in the new order is left alone',
+  keys(readSteps(withSteps([{ key: 'market-updates' }, { key: 'dms-no-activity' }, { key: 'opps' }]))),
+  ['contact-mapping', 'changed-jobs', 'market-updates', 'dms-no-activity', 'opps', 'visits']);
 
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failed.`);
 process.exit(failures === 0 ? 0 : 1);

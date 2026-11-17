@@ -34,6 +34,8 @@ import {
   moveStep,
   newStepKey,
   PROSPECTING_STEPS_SETTING,
+  PROSPECTING_STEP_FIXES_SETTING,
+  STEP_FIX_IDS,
   readSteps,
   serializeSteps,
   isCustomized,
@@ -1623,7 +1625,9 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
     // against a ladder the user's own settings produced.
     if (!canEdit) return;
     setDrafts({});
-    updateSettings?.({ [PROSPECTING_STEPS_SETTING]: serializeSteps(next) });
+    // The order fixes are folded into `next` already (readSteps), so the
+    // write records them as seen: a step the user moves back stays put.
+    updateSettings?.({ [PROSPECTING_STEPS_SETTING]: serializeSteps(next), [PROSPECTING_STEP_FIXES_SETTING]: STEP_FIX_IDS });
   };
   const draftFor = (step) => drafts[step.key] || { title: step.title, detail: step.detail || '' };
   const setDraft = (step, patch) => setDrafts(d => ({ ...d, [step.key]: { ...draftFor(step), ...patch } }));

@@ -124,22 +124,6 @@ export const DEFAULT_STEPS = [
     workTitle: n => `${n} ${n === 1 ? 'contact' : 'contacts'} on Changed Jobs > Other contacts ${n === 1 ? 'has' : 'have'} not been reached out to, snoozed or hidden (former Schneider Electric coworkers are not counted)`,
     clearTitle: 'Everyone on Changed Jobs > Other contacts has been reached out to, snoozed or hidden',
   },
-  // The decision makers at your accounts that nothing has reached yet: no
-  // HubSpot email or call, no Last Contacted date. Counted off the same list
-  // Prospecting > DMs Without Activity shows on its "No activity ever" chip
-  // (useDmsNoActivity). Just ahead of the campaign step (Dan's call): who
-  // has never heard from you is the question to answer before deciding
-  // what the next campaign goes to.
-  {
-    key: 'dms-no-activity',
-    title: 'Decision makers with no activity',
-    detail: 'Decision makers at your accounts that nothing has reached yet: no HubSpot email or call, and no Last Contacted date. Anyone already on an email campaign is not counted.',
-    view: 'prospecting',
-    viewLabel: 'Prospecting',
-    workLabel: n => `${n} DM${n === 1 ? '' : 's'}`,
-    workTitle: n => `${n} decision ${n === 1 ? 'maker at your accounts has' : 'makers at your accounts have'} had no activity ever and ${n === 1 ? 'is' : 'are'} on no email campaign (Prospecting > DMs Without Activity, "No activity ever")`,
-    clearTitle: 'Every decision maker at your accounts has had some activity or is on an email campaign',
-  },
   {
     key: 'market-updates',
     title: 'Reach out to contacts with market updates',
@@ -164,6 +148,22 @@ export const DEFAULT_STEPS = [
     // itself then, and this is what the Status pill says instead of the
     // undo hint a hand-marked step carries.
     clearTitle: 'Every active email campaign has finished sending - no market update is still going out',
+  },
+  // The decision makers at your accounts that nothing has reached yet: no
+  // HubSpot email or call, no Last Contacted date. Counted off the same list
+  // Prospecting > DMs Without Activity shows on its "No activity ever" chip
+  // (useDmsNoActivity). Just after the campaign step (Dan's call, which
+  // swapped the two): the campaigns already in flight get finished before
+  // the never-reached DMs are worked.
+  {
+    key: 'dms-no-activity',
+    title: 'Decision makers with no activity',
+    detail: 'Decision makers at your accounts that nothing has reached yet: no HubSpot email or call, and no Last Contacted date. Anyone already on an email campaign is not counted.',
+    view: 'prospecting',
+    viewLabel: 'Prospecting',
+    workLabel: n => `${n} DM${n === 1 ? '' : 's'}`,
+    workTitle: n => `${n} decision ${n === 1 ? 'maker at your accounts has' : 'makers at your accounts have'} had no activity ever and ${n === 1 ? 'is' : 'are'} on no email campaign (Prospecting > DMs Without Activity, "No activity ever")`,
+    clearTitle: 'Every decision maker at your accounts has had some activity or is on an email campaign',
   },
   {
     key: 'renewals',
@@ -287,20 +287,25 @@ const BACKFILLED_STEPS = [
   // ahead of the market-updates step, where the shipped ladder has it;
   // without that step, ahead of renewals; failing both, at the end.
   { key: 'changed-jobs', before: ['market-updates', 'renewals'] },
-  // "Decision makers with no activity" sits straight ahead of the campaign
+  // "Decision makers with no activity" sits straight after the campaign
   // step; without it, ahead of renewals; failing both, at the end.
-  { key: 'dms-no-activity', before: ['market-updates', 'renewals'] },
+  { key: 'dms-no-activity', after: 'market-updates', before: ['renewals'] },
 ];
 
 // `before` is one anchor or a list tried in order; the first one present
-// in the ladder wins.
-function insertBackfilled(entries, { key, before, onlyWithAnchor = false }) {
+// in the ladder wins. `after`, when given and present, wins over it and
+// puts the step straight below that anchor instead.
+function insertBackfilled(entries, { key, before = [], after, onlyWithAnchor = false }) {
   const keys = entries.map(e => e.key);
   if (keys.includes(key)) return entries;
   const base = DEFAULTS_BY_KEY.get(key);
   if (!base) return entries;
-  const anchor = [].concat(before).find(k => keys.includes(k));
-  const at = anchor ? keys.indexOf(anchor) : -1;
+  let at = -1;
+  if (after && keys.includes(after)) at = keys.indexOf(after) + 1;
+  else {
+    const anchor = [].concat(before).find(k => keys.includes(k));
+    at = anchor ? keys.indexOf(anchor) : -1;
+  }
   if (at === -1 && onlyWithAnchor) return entries;
   const next = [...entries];
   // The shipped step, whole: the user has never edited one that didn't
@@ -317,6 +322,37 @@ function applyBackfilledSteps(entries) {
   // but an unanchored one would append to it.
   if (!entries.length) return entries;
   return BACKFILLED_STEPS.reduce(insertBackfilled, entries);
+}
+
+// One-time order fixes for ladders stored before a shipped move. A stored
+// array is the user's order and normally wins outright, but these moves
+// were asked for after the user's own ladder already existed, so a stored
+// ladder that still has the old order gets the new one. Each fix applies
+// until the user next edits the ladder: commitSteps records it as seen
+// (PROSPECTING_STEP_FIXES_SETTING), so moving a step back afterwards
+// sticks.
+export const PROSPECTING_STEP_FIXES_SETTING = 'prospectingStepFixes';
+export const STEP_ORDER_FIXES = [
+  // Campaigns first, then the never-reached DMs (Dan's call). Moves the
+  // campaign step to just above the DMs step when it is stored below it.
+  { id: 'market-updates-above-dms', move: 'market-updates', above: 'dms-no-activity' },
+];
+export const STEP_FIX_IDS = STEP_ORDER_FIXES.map(f => f.id);
+
+function applyOrderFixes(entries, seen) {
+  const done = new Set(Array.isArray(seen) ? seen : []);
+  let out = entries;
+  for (const fix of STEP_ORDER_FIXES) {
+    if (done.has(fix.id)) continue;
+    const from = out.findIndex(e => e.key === fix.move);
+    const anchor = out.findIndex(e => e.key === fix.above);
+    if (from === -1 || anchor === -1 || from < anchor) continue;
+    const next = [...out];
+    const [step] = next.splice(from, 1);
+    next.splice(anchor, 0, step);
+    out = next;
+  }
+  return out;
 }
 
 export function readSteps(settings) {
@@ -347,7 +383,7 @@ export function readSteps(settings) {
     step.viewLabel = step.view ? viewLabelFor(step.view, base?.viewLabel) : '';
     out.push(step);
   }
-  return applyBackfilledSteps(out);
+  return applyOrderFixes(applyBackfilledSteps(out), settings?.[PROSPECTING_STEP_FIXES_SETTING]);
 }
 
 // The steps as they go into settings: the key, plus only the fields that
