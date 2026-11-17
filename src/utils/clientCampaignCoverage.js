@@ -15,7 +15,7 @@
 // (scripts/clientCampaignCoverage.test.mjs).
 
 import { makeAccountRecordLookup, contactDisplayName } from './contactRosters.js';
-import { tagKey } from './contactTagReview.js';
+import { tagKey, findTagRecord, tagStateFrom } from './contactTagReview.js';
 import { matchesCdm } from './cdmMatch.js';
 import { contactStatusLabel } from './campaignExport.js';
 import { withoutInternalRows, rowAddresses } from './campaignRoster.js';
@@ -117,6 +117,36 @@ export function contactHasAnyTag(contact, tags = []) {
   if (!tags.length) return true;
   const want = new Set(tags.map(tagKey));
   return contactTagList(contact).some(t => want.has(tagKey(t)));
+}
+
+/**
+ * Is this contact closed on the campaign's service: their own tag status
+ * (the contact popup's Sold / Not sold / N/A, settings.contactTagReview) is
+ * Not sold or N/A for one of the services' Contact Tags, and no other of
+ * those tags is still open for them? Dan has already settled the service
+ * with this person, so they come off the Key Contacts / Prospects lists.
+ *
+ * "Still open" is a service tag they carry with no Not sold / N/A on it,
+ * so somebody who owns Procurement (Not sold) and ESG (open) on a campaign
+ * covering both stays. With no service tags there is nothing to judge by.
+ */
+const CLOSED_TAG_STATUSES = new Set(['notsold', 'na']);
+export function contactClosedOnService(contact, reviewMap, tags = []) {
+  if (!tags.length) return false;
+  const cid = contact?.id ?? contact?.vid;
+  const answers = cid == null ? null : reviewMap?.[cid];
+  if (!answers || typeof answers !== 'object') return false;
+  const carried = new Set(contactTagList(contact).map(tagKey));
+  let closed = false;
+  for (const tag of tags) {
+    // Resolved the way the contact popup shows the row, so a stale Not sold
+    // under a tag that has since gone back on doesn't count.
+    const tagged = carried.has(tagKey(tag));
+    const { status } = tagStateFrom(tagged, findTagRecord(answers, tag));
+    if (CLOSED_TAG_STATUSES.has(status)) closed = true;
+    else if (tagged) return false;
+  }
+  return closed;
 }
 
 /**
