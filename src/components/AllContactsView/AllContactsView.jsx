@@ -433,7 +433,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
         {categoryCounts.key > KEY_CONTACTS_TARGET && (
           <span
             data-key-over-target
-            title={`Key Contacts is meant to be your top ${KEY_CONTACTS_TARGET} contacts by revenue potential. Sort by Biggest Deal with the Key pill lit to see who is worth the least, and take the Dan Key Target tag off them.`}
+            title={`Key Contacts is meant to be your top ${KEY_CONTACTS_TARGET} contacts by revenue potential. Light the Key pill and sort by Biggest Deal to see who is worth the least, and take the Dan Key Target tag off them.`}
             style={{
               padding: '1px 8px', borderRadius: 999,
               background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E',
