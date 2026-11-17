@@ -40,3 +40,40 @@ assert.equal(sendTone(2), 'yellow');
 assert.equal(sendTone(5), 'red');
 assert.deepEqual(RECENT_SENDS_GROUPS.map(g => g.label), ['Clients', 'Key Contacts', 'Prospects']);
 console.log('recentSends ok');
+
+// Company on each row, a Company typed in the app winning.
+{
+  const { recentSendsByGroup } = await import('../src/utils/recentSends.js');
+  const out = recentSendsByGroup({
+    contacts: [{ id: 9, firstname: 'Pat', lastname: 'Q', email: 'pat@q.com', company: 'HubSpot Co', g: ['key'] },
+      { id: 10, firstname: 'Ray', lastname: 'R', email: 'ray@r.com', company: 'Raw Name', g: ['key'] }],
+    gates, groupKeys: ['key'], nowMs: now,
+    campaigns: [{ title: 'X', contacts: [{ email: 'pat@q.com; ray@r.com', sentDate: day(1) }] }],
+    localFields: { 9: { _companyOverride: 'Typed Co' } },
+  });
+  assert.deepEqual(out.rows.map(r => r.company), ['Typed Co', 'Raw Name']);
+}
+
+// When people drop below three campaigns, and when most of the list does.
+{
+  const { belowThreeAt, threePlusClearDates } = await import('../src/utils/recentSends.js');
+  const D = 86400000;
+  const row = (...ago) => ({ campaigns: ago.map(n => ({ lastSentDate: new Date(now - n * D).toISOString() })) });
+  assert.equal(belowThreeAt(row(1, 2)), null, 'two campaigns: already below');
+  assert.equal(belowThreeAt(row(1, 5, 10), { nowMs: now }), now - 10 * D + 21 * D, 'three: when the oldest ages out');
+  assert.equal(belowThreeAt(row(10, 1, 5, 12), { nowMs: now }), now - 10 * D + 21 * D, 'four: when the third-newest ages out');
+  assert.equal(belowThreeAt({ campaigns: [{}, {}, {}] }, { nowMs: now }), now + 21 * D, 'no dates: as if sent today');
+
+  // 5 people: 1 under 3 now, so 2 more must drop for a majority (3 of 5).
+  const rows = [row(1), row(1, 2, 3), row(1, 2, 8), row(1, 2, 15), row(1, 2, 5)];
+  const d = threePlusClearDates(rows, { nowMs: now });
+  assert.equal(d.total, 5);
+  assert.equal(d.threePlus, 4);
+  assert.equal(d.majorityAt, now - 8 * D + 21 * D, 'the second person to drop: day-15 goes first, then day-8');
+  assert.equal(d.allClearAt, now - 3 * D + 21 * D, 'the last to drop is the newest third campaign');
+  const done = threePlusClearDates([row(1), row(1, 2), row(1, 2, 3)], { nowMs: now });
+  assert.equal(done.majorityAt, null, 'already a majority below three');
+  assert.equal(done.allClearAt, now - 3 * D + 21 * D);
+  assert.deepEqual(threePlusClearDates([], { nowMs: now }), { total: 0, threePlus: 0, majorityAt: null, allClearAt: null });
+}
+console.log('recentSends dates ok');
