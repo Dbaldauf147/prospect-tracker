@@ -35,6 +35,21 @@ assert.deepEqual(prospects.rows.map(r => r.name), ['Cy C'], 'only the picked gro
 assert.deepEqual(Object.keys(prospects.counts), ['prospect']);
 assert.deepEqual(recentSendsByGroup({ contacts, gates, groupKeys: [], campaigns, nowMs: now }), { rows: [], counts: {} });
 
+// Prospects leave out anybody who is also a Key Contact or a client.
+{
+  const extra = [
+    ...contacts,
+    { id: 8, firstname: 'Fay', lastname: 'F', email: 'fay@f.com', g: ['prospect', 'key'] },
+    { id: 9, firstname: 'Gus', lastname: 'G', email: 'gus@g.com', g: ['prospect', 'client'] },
+  ];
+  const sent = [...campaigns, { title: 'X', contacts: [{ email: 'fay@f.com', sentDate: day(1) }, { email: 'gus@g.com', sentDate: day(1) }] }];
+  const r = recentSendsByGroup({ contacts: extra, gates, groupKeys: ['prospect'], campaigns: sent, nowMs: now });
+  assert.deepEqual(r.rows.map(x => x.name), ['Cy C'], 'Key Contacts and clients are not Prospects');
+  assert.equal(r.counts.prospect.total, 1);
+  const k = recentSendsByGroup({ contacts: extra, gates, groupKeys: ['key'], campaigns: sent, nowMs: now });
+  assert.ok(k.rows.some(x => x.name === 'Fay F'), 'still listed under Key Contacts');
+}
+
 assert.equal(sendTone(1), 'green');
 assert.equal(sendTone(2), 'yellow');
 assert.equal(sendTone(5), 'red');

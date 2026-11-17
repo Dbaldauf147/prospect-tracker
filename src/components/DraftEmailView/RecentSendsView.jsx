@@ -34,7 +34,7 @@ const TONES = {
 const GROUP_TIPS = {
   client: 'Contacts at your current Clients (the Clients roster on Contacts)',
   key: 'Contacts tagged Dan Key Target (the Key Contacts roster)',
-  prospect: 'Decision Makers at your Tier 1-3 prospects (DM at Tier 1-3 on Contacts)',
+  prospect: 'Decision Makers at your Tier 1-3 prospects (DM at Tier 1-3 on Contacts), less anybody on Key Contacts or at a client',
 };
 
 const shortDate = d => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
