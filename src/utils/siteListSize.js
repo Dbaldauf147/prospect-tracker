@@ -52,19 +52,32 @@ export function oversizedSiteLists(lists) {
   return out.sort((a, b) => b.bytes - a.bytes);
 }
 
-/** Issues-tab rows for oversizedSiteLists' result. */
-export function siteListSizeIssues(oversized, { prospects = [] } = {}) {
+/** "845 / 1,024 KB", for the Issues tab's Resolution cell. */
+export function siteListSizeLabel(bytes) {
+  return `${Math.round(bytes / 1024).toLocaleString()} / ${kb(SITE_LIST_LIMIT_BYTES)}`;
+}
+
+/**
+ * Issues-tab rows for oversizedSiteLists' result. `ignored` is the slugs
+ * whose near-the-limit warning the user chose to Ignore (Settings
+ * `ignoredSiteListWarnings`); those lists drop off the tab until they go
+ * over, since a list past the cap is losing saves and can't be ignored.
+ */
+export function siteListSizeIssues(oversized, { prospects = [], ignored = [] } = {}) {
+  const ignoredSet = new Set((ignored || []).map(s => String(s || '').trim()).filter(Boolean));
   const prospectBySlug = new Map();
   for (const p of (prospects || [])) {
     const k = slugOf(p?.company);
     if (k && !prospectBySlug.has(k)) prospectBySlug.set(k, p);
   }
-  return (oversized || []).map((l) => {
+  const out = [];
+  for (const l of (oversized || [])) {
     const prospect = prospectBySlug.get(l.slug) || null;
     const over = l.bytes >= SITE_LIST_LIMIT_BYTES;
+    if (!over && ignoredSet.has(l.slug)) continue;
     const what = `The site list${l.fileName ? ` ("${l.fileName}")` : ''} is ${kb(l.bytes)}`
       + `${l.rows ? `, ${l.rows.toLocaleString()} rows` : ''}, against the ${kb(SITE_LIST_LIMIT_BYTES)} one site list can hold.`;
-    return {
+    out.push({
       // Keyed by state, so a snoozed "near" row comes back when the list
       // actually goes over.
       id: `site-list-size:${l.slug}:${over ? 'over' : 'near'}`,
@@ -77,6 +90,9 @@ export function siteListSizeIssues(oversized, { prospects = [] } = {}) {
       detail: over
         ? `${what} Saves to it will fail, and a change made now is lost on refresh. Remove columns or rows you don't need, or split the list.`
         : `${what} Once it is full, saving it will fail. Remove columns or rows you don't need before adding more.`,
-    };
-  });
+      // For the Resolution cell: the size readout and the Ignore button.
+      siteList: { slug: l.slug, bytes: l.bytes, over },
+    });
+  }
+  return out;
 }

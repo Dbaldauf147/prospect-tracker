@@ -15,6 +15,7 @@ import { normalizeBfoCompany } from '../../utils/newBfoOpps';
 import { scopeRemapPatches, serviceAliasNotePatches, serviceAliasNoteLine, suggestServiceMatch, rankServiceMatches, addIgnoredScopeServices, removeIgnoredScopeService } from '../../utils/oppScopeOffList';
 import { buildOppNumberMap } from '../../utils/oppNumbers';
 import { buildResolution, resolutionKind } from './issueResolutionSpecs';
+import { siteListSizeLabel } from '../../utils/siteListSize';
 import { IssueResolutionModal } from './IssueResolution';
 import { OppCompanyMapModal } from './OppCompanyMapModal';
 import { mapOppsToCompany, mapManyOppsToCompanies, createCompaniesForOpps } from '../../utils/oppCompanyMap';
@@ -663,7 +664,7 @@ function SnoozeMenu({ anchor, snoozed, until, onPick, onUnsnooze, onClose }) {
 export function IssuesView({ prospects = [], cdmName, settings, updateSettings, updateProspect, addProspect = null, onSelectProspect }) {
   // useIssues handles loading the source data + listening for cross-tab
   // refreshes, and tags each row with a `snoozed` flag.
-  const { issues, openCount, knownServices, ignoredScopeServices, oppsRecords } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
+  const { issues, openCount, knownServices, ignoredScopeServices, ignoredSiteListWarnings, oppsRecords } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
 
   // Client Manager is owned by the Clients tab; mirror it here (read-only)
   // and re-read when it changes there so the column stays in sync.
@@ -989,6 +990,24 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     if (next.length === 0) setShowIgnored(false);
   }
 
+  // Ignore on a "Site list near size limit" row: the list's slug goes on
+  // Settings `ignoredSiteListWarnings`, and the row drops off until the list
+  // actually goes over the cap (that row can't be ignored). Undone from the
+  // "Ignored site lists" link under the heading.
+  const [showIgnoredSites, setShowIgnoredSites] = useState(false);
+  function ignoreSiteList(slug) {
+    const prev = Array.isArray(settings?.ignoredSiteListWarnings) ? settings.ignoredSiteListWarnings : [];
+    if (!slug || prev.includes(slug)) return;
+    updateSettings?.({ ignoredSiteListWarnings: [...prev, slug] });
+  }
+  function unignoreSiteList(slug) {
+    const prev = Array.isArray(settings?.ignoredSiteListWarnings) ? settings.ignoredSiteListWarnings : [];
+    const next = prev.filter(s => s !== slug);
+    updateSettings?.({ ignoredSiteListWarnings: next });
+    if (next.length === 0) setShowIgnoredSites(false);
+  }
+  const siteListName = (slug) => String(settings?.companySiteLists?.[slug]?.company || '').trim() || slug;
+
   const columns = useMemo(() => [
     {
       key: 'source', label: 'Area', defaultWidth: 120,
@@ -1089,9 +1108,41 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       // Key Contact rows also get a LinkedIn people search for the person
       // and company, to find the profile URL the Resolve popup asks for.
       key: 'resolution', label: 'Resolution', defaultWidth: 190,
-      shownFor: (row) => canResolve(row),
-      getFilterValue: (row) => (canResolve(row) ? 'Resolve' : ''),
+      shownFor: (row) => canResolve(row) || !!row.siteList,
+      getFilterValue: (row) => (canResolve(row) ? 'Resolve' : row.siteList ? 'Trim site list' : ''),
       render: (row) => {
+        if (row.siteList) {
+          // Size readout plus what to do: trim the list. A list still under
+          // the cap can also be Ignored; one over it is losing saves.
+          const { slug, bytes, over } = row.siteList;
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+              <span
+                title={over
+                  ? 'Saves to this list fail until it is under the limit. Remove columns or rows you do not need, or split it.'
+                  : 'Still saving fine. Remove columns or rows you do not need before adding more, or Ignore this warning.'}
+                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.72rem', color: over ? '#B91C1C' : '#334155' }}
+              >
+                <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{siteListSizeLabel(bytes)}</strong>
+                {' · Trim it'}
+              </span>
+              {!over && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); ignoreSiteList(slug); }}
+                  title={'Stop showing this warning. It comes back as a new issue only if the list goes over the limit. Undo from "Ignored site lists" at the top of Issues.'}
+                  style={{
+                    flexShrink: 0, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+                    fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 600,
+                    border: '1px solid #CBD5E1', background: '#F8FAFC', color: '#475569',
+                  }}
+                >
+                  Ignore
+                </button>
+              )}
+            </span>
+          );
+        }
         if (!canResolve(row)) return <span style={{ color: '#94A3B8' }}>-</span>;
         const liSearch = row.resolve?.linkedinSearchUrl;
         return (
@@ -1281,6 +1332,18 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
               </button>
             </>
           )}
+          {ignoredSiteListWarnings.length > 0 && (
+            <>
+              {' '}
+              <button
+                type="button"
+                onClick={() => setShowIgnoredSites(v => !v)}
+                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', color: '#0A66C2', fontWeight: 600 }}
+              >
+                Ignored site lists ({ignoredSiteListWarnings.length}) {showIgnoredSites ? '▴' : '▾'}
+              </button>
+            </>
+          )}
         </div>
         {showIgnored && ignoredScopeServices.length > 0 && (
           <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#64748B' }}>
@@ -1293,6 +1356,25 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
                   onClick={() => unignoreService(name)}
                   title={`Stop ignoring ${name}: opps naming it are flagged again`}
                   aria-label={`Stop ignoring ${name}`}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px', color: '#64748B', fontSize: '0.8rem', lineHeight: 1 }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {showIgnoredSites && ignoredSiteListWarnings.length > 0 && (
+          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#64748B' }}>
+            <span>Not warned about being near the size limit (still flagged if they go over):</span>
+            {ignoredSiteListWarnings.map(slug => (
+              <span key={slug} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 4px 1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#334155', fontWeight: 600 }}>
+                {siteListName(slug)}
+                <button
+                  type="button"
+                  onClick={() => unignoreSiteList(slug)}
+                  title={`Stop ignoring ${siteListName(slug)}: warn again while its site list is near the limit`}
+                  aria-label={`Stop ignoring ${siteListName(slug)}`}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px', color: '#64748B', fontSize: '0.8rem', lineHeight: 1 }}
                 >
                   ×
