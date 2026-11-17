@@ -14,7 +14,8 @@
 // Pure: prospects and a campaign in, rows out
 // (scripts/clientCampaignCoverage.test.mjs).
 
-import { makeAccountRecordLookup } from './contactRosters.js';
+import { makeAccountRecordLookup, contactDisplayName } from './contactRosters.js';
+import { tagKey } from './contactTagReview.js';
 import { matchesCdm } from './cdmMatch.js';
 import { contactStatusLabel } from './campaignExport.js';
 import { withoutInternalRows, rowAddresses } from './campaignRoster.js';
@@ -75,9 +76,11 @@ export const CAMPAIGN_AUDIENCE_VIEWS = [
  * contact passing `gate` is resolved to its company record (near-name, then
  * email domain), one record per company. `accountOf(contact)` can name the
  * record to use instead (Key Prospects come in through their Tier account).
- * Don't Track companies are left off, as on the client list.
+ * Don't Track companies are left off, as on the client list. Pass a Map as
+ * `people` to also get each company's roster contacts (company key ->
+ * contacts), for the Key Contacts column.
  */
-export function rosterAccounts({ prospects, contacts, gate, accountOf = null, untrackedMap = null }) {
+export function rosterAccounts({ prospects, contacts, gate, accountOf = null, untrackedMap = null, people = null }) {
   const lookup = makeAccountRecordLookup(prospects);
   const byName = new Map((prospects || []).map(p => [nameKey(p?.company), p]));
   const out = new Map();
@@ -86,11 +89,49 @@ export function rosterAccounts({ prospects, contacts, gate, accountOf = null, un
     const named = accountOf ? accountOf(c) : '';
     const rec = (named && byName.get(nameKey(named))) || lookup(c);
     const k = nameKey(rec?.company);
-    if (!k || out.has(k)) continue;
+    if (!k) continue;
     if (untrackedMap && untrackedMap[k]) continue;
-    out.set(k, rec);
+    if (people) {
+      if (!people.has(k)) people.set(k, []);
+      people.get(k).push(c);
+    }
+    if (!out.has(k)) out.set(k, rec);
   }
   return [...out.values()];
+}
+
+// The area tags a contact can carry (utils/contactTagReview TAG_OPTIONS
+// less the roster / housekeeping ones), shown when a campaign's services
+// have no Contact Tags set to pick the relevant ones out.
+const AREA_TAGS = ['ESG', 'Procurement', 'Utilities', 'Climate Risk', 'Private Equity', 'Real Estate', 'Capital Planning'];
+
+const contactTagList = (c) => String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '')
+  .split(';').map(t => t.trim()).filter(Boolean);
+
+/**
+ * How one Key Contact reads in the Key Contacts column:
+ *   { name, email, tags, dm }
+ * `tags` are the contact's own tags among `serviceTags` (the campaign
+ * services' Contact Tags), or among the area tags when no service has any
+ * set. `dm` is the Decision Maker tag.
+ */
+export function keyContactSummary(contact, serviceTags = []) {
+  const want = new Set((serviceTags.length ? serviceTags : AREA_TAGS).map(tagKey));
+  const own = contactTagList(contact);
+  const tags = [];
+  const seen = new Set();
+  for (const t of own) {
+    const k = tagKey(t);
+    if (!want.has(k) || seen.has(k)) continue;
+    seen.add(k);
+    tags.push(t);
+  }
+  return {
+    name: contactDisplayName(contact),
+    email: String(contact?.email || '').trim(),
+    tags,
+    dm: own.some(t => tagKey(t) === tagKey('Decision Maker')),
+  };
 }
 
 /**
