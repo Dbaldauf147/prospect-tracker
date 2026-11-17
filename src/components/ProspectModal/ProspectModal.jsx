@@ -110,6 +110,7 @@ import {
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { OPPS2_EXTERNAL_UPDATE_EVENT } from '../../utils/serviceRenameRunner';
 import { companyOverrideUpdate, companyOverridesUpdate } from '../../utils/contactCompanyOverride';
+import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites, renameContactTargets } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
@@ -1231,7 +1232,7 @@ function findPortfolioProspect(row, byName, byId) {
 // can share the exact same auto-fill behavior as this modal.
 
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactJobDescriptions = {}, onSaveJobDescription, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, onAddContactEvent = null, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactJobDescriptions = {}, onSaveJobDescription, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, onAddContactEvent = null, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [], companyContactExclusions = null, onRestoreToCompany = null }) {
   const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -2527,6 +2528,52 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>{(!contact.id && !contact.vid) ? 'New HubSpot Contact' : 'Edit HubSpot Contact'}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
+        {/* Hidden status: why this person is off contact lists, each
+            reason with its undo. The Hide tag takes them off every
+            company's list; a removal (the roster's ⊘) takes them off one
+            company's only. Read live, so an undo clears its line. */}
+        {(() => {
+          const id = String(cid || '');
+          const tagged = [...checkedTags, ...extraTags].some(t => tagKey(t) === tagKey('Hide'));
+          const removedFrom = id && companyContactExclusions
+            ? Object.entries(companyContactExclusions)
+              .filter(([, ids]) => Array.isArray(ids) && ids.map(String).includes(id))
+              .map(([key]) => ({ key, name: (prospects || []).find(p => String(p?.company || '').trim().toLowerCase() === key)?.company || key }))
+            : [];
+          if (!tagged && !removedFrom.length) return null;
+          const unhide = () => {
+            const set = new Set([...checkedTagsRef.current].filter(t => tagKey(t) !== tagKey('Hide')));
+            applyCheckedTags(set);
+            queueDansTags(buildTagsStringFrom(set)).then(ok => {
+              if (ok) return;
+              applyCheckedTags(checkedTagsFrom(savedTagsRef.current));
+              editorBaseRef.current = editorViewOf(savedTagsRef.current);
+            });
+          };
+          const undoBtn = { flexShrink: 0, padding: '0.15rem 0.6rem', borderRadius: 6, border: '1px solid #FCA5A5', background: '#fff', color: '#991B1B', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' };
+          return (
+            <div data-contact-hidden-status role="status" style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#991B1B', fontSize: '0.78rem', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ padding: '1px 8px', borderRadius: 999, background: '#991B1B', color: '#fff', fontSize: '0.65rem', fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase' }}>Hidden</span>
+                <span style={{ fontWeight: 600 }}>This contact is left off {tagged ? 'every company\u2019s contact list' : `${removedFrom.length === 1 ? 'a company\u2019s' : 'some companies\u2019'} contact list`} until Show hidden is on.</span>
+              </div>
+              {tagged && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span>Why: tagged <strong>Hide</strong>, which takes them off every company{'\u2019'}s list.</span>
+                  <button type="button" onClick={unhide} style={undoBtn} title="Take the Hide tag off (saved to HubSpot)">Remove Hide tag</button>
+                </div>
+              )}
+              {removedFrom.map(r => (
+                <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span>Why: removed from <strong>{r.name}</strong>{'\u2019'}s contact list (the {'\u2298'} on its Contacts tab). They are still in HubSpot and on other lists.</span>
+                  {onRestoreToCompany && (
+                    <button type="button" onClick={() => onRestoreToCompany(r.key, id)} style={undoBtn} title={`Put this contact back on ${r.name}'s contact list`}>Re-add to {r.name}</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {(contact.id || contact.vid) && <RelationshipPanel contact={contact} />}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
           {/* Four answers rather than a tick: a checkbox recorded the same
@@ -15754,6 +15801,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSave={handleContactSaved}
           onClose={handleCloseContactEdit}
           onOpenCompany={openCompanyFromContact}
+          companyContactExclusions={settings.companyContactExclusions || {}}
+          onRestoreToCompany={(key, id) => updateSettings(companyContactRestoreUpdate(key, id))}
           tagOptions={allTagOptions}
           contactNotes={settings.contactNotes || {}}
           onSaveNote={handleSaveContactNote}

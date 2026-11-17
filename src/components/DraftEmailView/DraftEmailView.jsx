@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { CONTACT_FIELD_COLUMNS, contactFieldColumn, cleanFieldColumnKeys } from '../../utils/contactFieldColumns';
 import { contactConnectedUpdate } from '../../utils/contactConnected';
 import { toggleContactInEvents, addContactToNewEvent } from '../../utils/eventsStore';
@@ -3483,6 +3484,8 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
           contact={editingContact}
           onSave={handleContactSaved}
           onClose={() => setEditingContact(null)}
+          companyContactExclusions={settings?.companyContactExclusions || {}}
+          onRestoreToCompany={updateSettings ? (key, id) => updateSettings(companyContactRestoreUpdate(key, id)) : null}
           onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
           contactNotes={settings?.contactNotes || {}}
           onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}

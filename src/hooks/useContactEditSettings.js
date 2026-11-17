@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { companyContactRestoreUpdate } from '../utils/companyContactExclusions';
 import { companyOverrideUpdate } from '../utils/contactCompanyOverride';
 import { metInPersonUpdate } from '../utils/metInPerson';
 import { contactConnectedUpdate } from '../utils/contactConnected';
@@ -37,6 +38,10 @@ export function useContactEditSettings({ settings, updateSettings }) {
       updateSettings?.({ [mapKey]: next });
     };
     return {
+      // The companies this contact was taken off (the Hidden status at the
+      // top of the popup), and the undo for one.
+      companyContactExclusions: settings?.companyContactExclusions || {},
+      onRestoreToCompany: updateSettings ? (key, id) => updateSettings(companyContactRestoreUpdate(key, id)) : null,
       contactNotes: settings?.contactNotes || {},
       onSaveNote: (cid, v) => saveMap('contactNotes', cid, v),
       contactOldEmails: settings?.contactOldEmails || {},

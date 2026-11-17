@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { contactConnectedUpdate } from '../../utils/contactConnected';
 import { toggleContactInEvents, addContactToNewEvent } from '../../utils/eventsStore';
 import { createPortal } from 'react-dom';
@@ -2866,6 +2867,8 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
           contact={editContact}
           onSave={handleContactSaved}
           onClose={() => setEditingLead(null)}
+          companyContactExclusions={settings?.companyContactExclusions || {}}
+          onRestoreToCompany={updateSettings ? (key, id) => updateSettings(companyContactRestoreUpdate(key, id)) : null}
           onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
           contactNotes={settings?.contactNotes || {}}
           onSaveNote={(cid, v) => saveSettingsMap('contactNotes', cid, v)}
