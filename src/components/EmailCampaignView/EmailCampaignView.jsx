@@ -62,7 +62,7 @@ import { CampaignAudienceTicks } from './CampaignAudienceTicks';
 import { BounceForwardNote } from './BounceForwardNote';
 import { FailedEmailsPanel } from './FailedEmailsPanel';
 import { failedCampaignEmailRows, failedEmailCount } from '../../utils/failedCampaignEmails';
-import { withAudience, withSchedule } from '../../utils/campaignAudience';
+import { withAudience, withSchedule, campaignRowTone } from '../../utils/campaignAudience';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { CampaignLinkedDrafts } from './CampaignLinkedDrafts';
 import { CampaignServicesPicker } from './CampaignServicesPicker';
@@ -1357,6 +1357,18 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   // when it lists the ones still going out; two copies would eventually
   // call the same campaign Active on one page and Inactive on the other.
   const effectiveActive = isCampaignActive;
+
+  // Saved Campaigns row colours (campaignRowTone): green once every
+  // audience is ticked Sent To, yellow when paused or when every audience is
+  // ticked or has a date still to come. The active campaigns with neither
+  // colour are the ones still needing work, so they are listed first; the
+  // rest keep their saved order below them. Indexes stay the stored ones.
+  const todayIso = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+  const rowTone = (c) => campaignRowTone(c, todayIso, isCampaignPaused(c));
+  const savedOrder = savedCampaigns
+    .map((c, i) => ({ i, top: effectiveActive(c) && !rowTone(c) }))
+    .sort((a, b) => (b.top - a.top) || (a.i - b.i))
+    .map(x => x.i);
 
   // Flip a saved campaign's Active/Inactive status by hand and persist it.
   // Toggling always writes an explicit boolean, so a campaign the auto rule
@@ -3460,7 +3472,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                 </tr>
               </thead>
               <tbody>
-            {savedCampaigns.map((c, i) => {
+            {savedOrder.map(i => [savedCampaigns[i], i]).map(([c, i]) => {
               const isEditing = editingIndex === i;
               const subs = campaignSubjects(c);
               const sent = c.uniqueRecipients ?? 0;
@@ -3475,12 +3487,16 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
               const active = effectiveActive(c);
               const manualStatus = typeof c.manualActive === 'boolean';
               const pauseNote = paused ? `Paused - resumes ${pauseLeftLabel(c.pausedUntil)} (${fmtDate(c.pausedUntil)})` : '';
+              const tone = rowTone(c);
+              const restBg = tone === 'complete' ? '#F0FDF4' : tone === 'waiting' ? '#FEFCE8' : 'transparent';
               return (
               <tr
                 key={i}
+                data-row-tone={tone || 'none'}
                 style={{
                   borderTop: '1px solid var(--color-border)',
-                  background: viewingSaved === i ? '#EFF6FF' : 'transparent',
+                  boxShadow: tone === 'complete' ? 'inset 3px 0 0 #22C55E' : tone === 'waiting' ? 'inset 3px 0 0 #EAB308' : undefined,
+                  background: viewingSaved === i ? '#EFF6FF' : restBg,
                   cursor: isEditing ? 'default' : 'pointer',
                   opacity: active ? 1 : 0.55,
                 }}
@@ -3493,7 +3509,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                    Dimmed to 0.55 they read as switched off, so the hover says
                    otherwise. */
                 onMouseEnter={e => { if (!isEditing && viewingSaved !== i) e.currentTarget.style.background = 'var(--color-surface-alt)'; }}
-                onMouseLeave={e => { if (viewingSaved !== i) e.currentTarget.style.background = 'transparent'; }}
+                onMouseLeave={e => { if (viewingSaved !== i) e.currentTarget.style.background = restBg; }}
               >
                 <td style={{ padding: '0.5rem 0.6rem', maxWidth: '340px', verticalAlign: 'top' }}>
                   {isEditing ? (
