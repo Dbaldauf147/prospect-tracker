@@ -14,7 +14,7 @@
 // Pure: prospects and a campaign in, rows out
 // (scripts/clientCampaignCoverage.test.mjs).
 
-import { makeClientAccountLookup } from './contactRosters.js';
+import { makeAccountRecordLookup } from './contactRosters.js';
 import { matchesCdm } from './cdmMatch.js';
 import { contactStatusLabel } from './campaignExport.js';
 import { withoutInternalRows, rowAddresses } from './campaignRoster.js';
@@ -59,16 +59,53 @@ const dateOf = (v) => {
   return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : '';
 };
 
+// Which companies the page lists. Clients are the current-client roll
+// (currentClients). Key Contacts and Prospects are the companies of the
+// people on those contact rosters (contactRosters.makeRosterGates: isKey,
+// the Key Contacts page; isKeyProspect, the Key Prospects page), each
+// resolved to its Table View record, so the service statuses still read.
+export const CAMPAIGN_AUDIENCE_VIEWS = [
+  { key: 'clients', label: 'Clients', noun: 'current clients', one: 'client' },
+  { key: 'keyContacts', label: 'Key Contacts', noun: 'Key Contact companies', one: 'company' },
+  { key: 'prospects', label: 'Prospects', noun: 'Key Prospect companies', one: 'company' },
+];
+
+/**
+ * The Table View records behind the people on one contact roster: each
+ * contact passing `gate` is resolved to its company record (near-name, then
+ * email domain), one record per company. `accountOf(contact)` can name the
+ * record to use instead (Key Prospects come in through their Tier account).
+ * Don't Track companies are left off, as on the client list.
+ */
+export function rosterAccounts({ prospects, contacts, gate, accountOf = null, untrackedMap = null }) {
+  const lookup = makeAccountRecordLookup(prospects);
+  const byName = new Map((prospects || []).map(p => [nameKey(p?.company), p]));
+  const out = new Map();
+  for (const c of contacts || []) {
+    if (!gate(c)) continue;
+    const named = accountOf ? accountOf(c) : '';
+    const rec = (named && byName.get(nameKey(named))) || lookup(c);
+    const k = nameKey(rec?.company);
+    if (!k || out.has(k)) continue;
+    if (untrackedMap && untrackedMap[k]) continue;
+    out.set(k, rec);
+  }
+  return [...out.values()];
+}
+
 /**
  * One row per current client:
  *   { id, company, client, people: [{ name, email, status, sentDate }],
  *     onCampaign, sent, replied, lastSent }
  * `people` is everyone on the campaign at that client, Replied first.
  */
-export function clientCampaignRows({ prospects, cdmName, campaign, untrackedMap = null }) {
-  const clients = currentClients(prospects, cdmName, untrackedMap);
-  // The lookup only knows Client records, and only these ones.
-  const lookup = makeClientAccountLookup(clients);
+export function clientCampaignRows({ prospects, cdmName, campaign, untrackedMap = null, accounts = null }) {
+  // `accounts` swaps the client list for another set of companies (the Key
+  // Contacts / Prospects views); otherwise it is the current clients.
+  const clients = accounts || currentClients(prospects, cdmName, untrackedMap);
+  // The lookup only knows these records, so a contact lands on one of them
+  // or on none.
+  const lookup = makeAccountRecordLookup(clients);
   const byName = new Map(clients.map(p => [nameKey(p.company), p]));
   const people = new Map(clients.map(p => [nameKey(p.company), []]));
 
@@ -77,10 +114,10 @@ export function clientCampaignRows({ prospects, cdmName, campaign, untrackedMap 
     const hits = new Set();
     // The contact's own company first, then each address's domain.
     const first = lookup({ company: c.company, email: addresses[0] || '' });
-    if (first) hits.add(nameKey(first));
+    if (first) hits.add(nameKey(first.company));
     for (const email of addresses.slice(1)) {
       const hit = lookup({ company: '', email });
-      if (hit) hits.add(nameKey(hit));
+      if (hit) hits.add(nameKey(hit.company));
     }
     for (const k of hits) {
       const list = people.get(k);

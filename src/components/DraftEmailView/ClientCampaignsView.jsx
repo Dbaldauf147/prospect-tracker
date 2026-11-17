@@ -14,7 +14,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
-import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket } from '../../utils/clientCampaignCoverage';
+import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket, currentClients, rosterAccounts, CAMPAIGN_AUDIENCE_VIEWS } from '../../utils/clientCampaignCoverage';
+import { makeRosterGates } from '../../utils/contactRosters';
 import { campaignServices } from '../../utils/campaignServices';
 import { buildOppStagesByClient, effectiveServiceStatus } from '../../utils/serviceCoverage';
 import { buildAutoNaByClient } from '../../utils/serviceAutoNaByClient';
@@ -37,6 +38,7 @@ const prospectTag = (service) => (
 );
 
 const PICK_KEY = 'client-campaigns-pick';
+const AUDIENCE_KEY = 'client-campaigns-audience';
 
 const STATUS_COLORS = {
   Replied: { background: '#DCFCE7', color: '#166534' },
@@ -67,7 +69,7 @@ const fmtDate = (iso) => {
 export function ClientCampaignsView({ prospects, cdmName = '', settings, updateSettings, onSelectProspect, onOpenCampaign }) {
   const campaigns = useEmailCampaigns();
   // Clients ticked "Don't Track" on the Clients tab are left off this list.
-  const { clientUntrackedMap } = useClientFlagMaps();
+  const { clientStatusMap, clientUntrackedMap } = useClientFlagMaps();
   const choices = useMemo(() => campaignChoices(campaigns), [campaigns]);
   // Remembered by the campaign's name, so a new campaign saved above it
   // doesn't move the pick to a different one.
@@ -77,12 +79,9 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   const picked = choices.find(c => c.label === pickedLabel) || choices[0] || null;
   const campaign = picked?.campaign || null;
 
-  const allRows = useMemo(
-    () => clientCampaignRows({ prospects, cdmName, campaign, untrackedMap: clientUntrackedMap }),
-    [prospects, cdmName, campaign, clientUntrackedMap],
-  );
   // Opps and HubSpot contacts feed the service statuses (an opp naming the
-  // service, and the auto N/A rules), as on the company popup.
+  // service, and the auto N/A rules), as on the company popup, and the
+  // contact rosters behind the Key Contacts / Prospects views.
   const [oppsRecords, setOppsRecords] = useState([]);
   const [contacts, setContacts] = useState([]);
   useEffect(() => {
@@ -91,6 +90,30 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     getHubspotContacts().then(c => { if (!cancelled) setContacts(c || []); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
+
+  // Which companies are listed: current clients (the default), or the
+  // companies of the people on the Key Contacts or Key Prospects roster.
+  const [audienceKey, setAudienceKey] = useState(() => {
+    const saved = userLsGet(AUDIENCE_KEY);
+    return CAMPAIGN_AUDIENCE_VIEWS.some(a => a.key === saved) ? saved : 'clients';
+  });
+  const audience = CAMPAIGN_AUDIENCE_VIEWS.find(a => a.key === audienceKey) || CAMPAIGN_AUDIENCE_VIEWS[0];
+  const pickAudience = (key) => { setAudienceKey(key); userLsSet(AUDIENCE_KEY, key); };
+  const rosterGates = useMemo(
+    () => (audienceKey === 'clients' ? null : makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap })),
+    [audienceKey, prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
+  );
+  const accounts = useMemo(() => {
+    if (audienceKey === 'clients' || !rosterGates) return currentClients(prospects, cdmName, clientUntrackedMap);
+    return audienceKey === 'keyContacts'
+      ? rosterAccounts({ prospects, contacts, gate: rosterGates.isKey, untrackedMap: clientUntrackedMap })
+      : rosterAccounts({ prospects, contacts, gate: rosterGates.isKeyProspect, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap });
+  }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap]);
+
+  const allRows = useMemo(
+    () => clientCampaignRows({ prospects, cdmName, campaign, accounts }),
+    [prospects, cdmName, campaign, accounts],
+  );
 
   const services = useMemo(() => campaignServices(campaign), [campaign]);
   const clients = useMemo(() => allRows.map(r => r.client).filter(Boolean), [allRows]);
@@ -119,7 +142,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   // Clicking a bucket narrows the table to its clients; again clears it.
   const [bucketPick, setBucketPick] = useState(null); // { service, key }
   const pickedName = picked?.label || '';
-  useEffect(() => { setBucketPick(null); }, [pickedName]);
+  useEffect(() => { setBucketPick(null); }, [pickedName, audienceKey]);
   const bucketIds = useMemo(() => {
     if (!bucketPick) return null;
     const b = serviceBuckets.find(x => x.service === bucketPick.service)?.buckets.find(x => x.key === bucketPick.key);
@@ -140,7 +163,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   const columns = [
     {
       key: 'company',
-      label: 'Client',
+      label: audience.key === 'clients' ? 'Client' : 'Company',
       defaultWidth: 220,
       getSortValue: r => r.company.toLowerCase(),
       getFilterValue: r => r.company,
@@ -179,7 +202,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
             </div>
           ))}
         </div>
-      ) : <span style={{ color: '#94A3B8' }}>Nobody at this client is on it</span>),
+      ) : <span style={{ color: '#94A3B8' }}>Nobody at this {audience.one} is on it</span>),
     },
     {
       key: 'sent',
@@ -263,13 +286,38 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
         )}
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: '#475569', cursor: 'pointer' }}>
           <input type="checkbox" checked={onlyReached} onChange={e => setOnlyReached(e.target.checked)} />
-          Only clients on this campaign
+          Only {audience.key === 'clients' ? 'clients' : 'companies'} on this campaign
         </label>
+        <div role="group" aria-label="Which companies to list" style={{ display: 'inline-flex', border: '1px solid #CBD5E1', borderRadius: 6, overflow: 'hidden' }}>
+          {CAMPAIGN_AUDIENCE_VIEWS.map((a, i) => {
+            const on = a.key === audience.key;
+            return (
+              <button
+                key={a.key}
+                type="button"
+                aria-pressed={on}
+                onClick={() => pickAudience(a.key)}
+                title={a.key === 'clients'
+                  ? 'Your current clients (status Client, you as CDM, not Don\'t Track)'
+                  : a.key === 'keyContacts'
+                    ? 'Companies of the people on your Key Contacts roster (tagged Dan Key Target)'
+                    : 'Companies of the people on your Key Prospects roster (Decision Makers at your Tier 1-3 accounts)'}
+                style={{
+                  padding: '0.25rem 0.7rem', border: 'none', borderLeft: i ? '1px solid #CBD5E1' : 'none',
+                  font: 'inherit', fontSize: '0.78rem', fontWeight: on ? 700 : 500, cursor: 'pointer',
+                  background: on ? '#1D4ED8' : '#fff', color: on ? '#fff' : '#334155',
+                }}
+              >
+                {a.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {campaign && !noClients && (
         <div style={{ fontSize: '0.8rem', color: '#475569' }}>
-          <strong style={{ color: '#1E293B' }}>{reached}</strong> of {allRows.length} current clients are on this campaign
+          <strong style={{ color: '#1E293B' }}>{reached}</strong> of {allRows.length} {audience.noun} are on this campaign
           ({peopleCount} {peopleCount === 1 ? 'person' : 'people'}); {repliedClients} replied.
           {refreshedOn ? ` As of the campaign's last refresh, ${refreshedOn}.` : ''}
         </div>
@@ -279,7 +327,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
         <div key={service} data-service-buckets style={{ border: '1px solid #E2E8F0', borderRadius: 8, background: '#fff', padding: '0.6rem 0.75rem' }}>
           <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.45rem' }}>
             {service}
-            <span style={{ fontWeight: 400, color: '#64748B' }}> - where this service stands at each client. Click a heading to filter the table.</span>
+            <span style={{ fontWeight: 400, color: '#64748B' }}> - where this service stands at each {audience.one}. Click a heading to filter the table.</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.5rem' }}>
             {buckets.map(b => {
@@ -292,7 +340,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
                   <button
                     type="button"
                     onClick={() => setBucketPick(active ? null : { service, key: b.key })}
-                    title={active ? 'Show every client again' : `Show only the clients where ${service} is ${b.label}`}
+                    title={active ? `Show every ${audience.one} again` : `Show only the ${audience.one === 'client' ? 'clients' : 'companies'} where ${service} is ${b.label}`}
                     style={{
                       width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       background: b.bg === '#FFFFFF' ? '#F8FAFC' : b.bg, color: b.color, border: 'none',
@@ -303,7 +351,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>{b.clients.length}</span>
                   </button>
                   <div style={{ padding: '0.3rem 0.55rem', display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 140, overflowY: 'auto' }}>
-                    {b.clients.length === 0 && <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>No clients</span>}
+                    {b.clients.length === 0 && <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{audience.one === 'client' ? 'No clients' : 'No companies'}</span>}
                     {b.clients.map(({ row, status }) => (
                       <div key={row.id} style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: '0.75rem', minWidth: 0 }}>
                         {onSelectProspect && row.client
@@ -336,12 +384,16 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           defaultSort={{ key: 'onCampaign', direction: 'desc' }}
           variableRowHeight
           emptyMessage={noClients
-            ? 'No current clients found. Clients are the Table View companies with status Client and you as CDM, less any ticked Don\'t Track on the Clients tab.'
+            ? (audience.key === 'clients'
+              ? 'No current clients found. Clients are the Table View companies with status Client and you as CDM, less any ticked Don\'t Track on the Clients tab.'
+              : audience.key === 'keyContacts'
+                ? 'No Key Contact companies found. These are the Table View companies of the people tagged Dan Key Target in HubSpot.'
+                : 'No Key Prospect companies found. These are your Tier 1-3 accounts with a Decision Maker on the Key Prospects roster.')
             : bucketIds && rows.length === 0
-              ? 'No clients in that bucket match the filters.'
+              ? 'Nothing in that bucket matches the filters.'
               : onlyReached && reached === 0
-              ? 'None of your current clients are on this campaign.'
-              : 'No clients match the filters.'}
+              ? `None of the ${audience.noun} are on this campaign.`
+              : 'Nothing matches the filters.'}
           exportFileName={`Client campaigns - ${picked?.label || 'campaign'}`}
           settings={settings}
           updateSettings={updateSettings}
