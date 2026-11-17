@@ -4,7 +4,7 @@
 // page last heard is written back over.
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { listWithAudience } from './campaignAudience.js';
+import { listWithAudience, listWithSchedule } from './campaignAudience.js';
 
 export async function saveCampaignAudience(uid, campaign, key, on) {
   if (!uid) throw new Error('Not signed in.');
@@ -12,5 +12,16 @@ export async function saveCampaignAudience(uid, campaign, key, on) {
   const snap = await getDoc(ref);
   const stored = snap.exists() ? (snap.data().campaigns || []) : [];
   const campaigns = listWithAudience(stored, campaign, key, on);
+  await setDoc(ref, { campaigns, updatedAt: new Date().toISOString() });
+}
+
+// The same, for an audience's planned send date (campaignAudience
+// scheduledFor). `day` '' clears it.
+export async function saveCampaignSchedule(uid, campaign, key, day) {
+  if (!uid) throw new Error('Not signed in.');
+  const ref = doc(db, 'emailCampaigns', uid);
+  const snap = await getDoc(ref);
+  const stored = snap.exists() ? (snap.data().campaigns || []) : [];
+  const campaigns = listWithSchedule(stored, campaign, key, day);
   await setDoc(ref, { campaigns, updatedAt: new Date().toISOString() });
 }
