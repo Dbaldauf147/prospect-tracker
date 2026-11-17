@@ -16,6 +16,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { isLocalTagVerdict, tagAnswerFrom, tagKey, findTagRecord } from '../../utils/contactTagReview';
 import { makeRosterGates, rosterTagCoverage } from '../../utils/contactRosters';
 import { WhyMissingLookup } from './WhyMissingLookup';
+import { KEY_CONTACTS_TARGET } from '../../utils/keyTop50';
 
 // A contact's Dan's Tags as individual values. Stored as one ';'-joined
 // string (the separator the tag picker and the bulk tag editor write), so
@@ -426,6 +427,22 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
             </button>
           );
         })}
+        {/* Key is meant to be the top 50 by revenue (utils/keyTop50), so
+            the pill says so when it has grown past that. A warning only:
+            nothing stops a 51st tag. */}
+        {categoryCounts.key > KEY_CONTACTS_TARGET && (
+          <span
+            data-key-over-target
+            title={`Key Contacts is meant to be your top ${KEY_CONTACTS_TARGET} contacts by revenue potential. Sort by Biggest Deal with the Key pill lit to see who is worth the least, and take the Dan Key Target tag off them.`}
+            style={{
+              padding: '1px 8px', borderRadius: 999,
+              background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E',
+              fontSize: '0.68rem', fontWeight: 700,
+            }}
+          >
+            Key is {categoryCounts.key - KEY_CONTACTS_TARGET} over your top {KEY_CONTACTS_TARGET}
+          </span>
+        )}
         {/* Said out loud rather than silently dropped: the flag lives on the
             Clients tab, so the note names what to change to get those people
             back. (Don't Track no longer leaves anyone out here.) */}
