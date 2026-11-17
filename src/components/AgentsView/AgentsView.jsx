@@ -144,7 +144,7 @@ const DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY = `1.  When you are on this page cli
 // Activity > All Team Activity, twice a month (due the 1st and the 15th,
 // utils/teamOpps). That subtab flags the rows on Dan's own accounts and what
 // changed since the pull before.
-const DEFAULT_AI_PROMPT_TEAM_ACTIVITY = `1.  In BFO (https://se.lightning.force.com/), open the Reports tab, search for the report "SB NAM Sales - Open Opportunities" and open it.
+const DEFAULT_AI_PROMPT_TEAM_ACTIVITY = `1.  Open the report "SB NAM Sales - Open Opportunities" in BFO: https://se.lightning.force.com/lightning/r/Report/00O1H000006k29xUAA/view?0.sfdcIFrameOrigin=https%3A%2F%2Fse.lightning.force.com
 2.  Scroll to the very bottom of the report so every row has loaded, and note the total record count the report shows.
 3.  Transcribe every opportunity row into one tab-separated table, header line first, exactly:
 ${TEAM_OPPS_HEADER.join('\t')}
