@@ -33,8 +33,9 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { useAuth } from '../../contexts/AuthContext';
 import { campaignStatus } from '../../utils/campaignOutreach';
-import { CAMPAIGN_AUDIENCES, campaignAudience, campaignIdentity } from '../../utils/campaignAudience';
-import { saveCampaignAudience } from '../../utils/campaignAudienceStore';
+import { CAMPAIGN_AUDIENCES, campaignAudience, campaignIdentity, campaignSchedule } from '../../utils/campaignAudience';
+import { saveCampaignAudience, saveCampaignSchedule } from '../../utils/campaignAudienceStore';
+import { AudienceScheduleDate } from '../EmailCampaignView/AudienceScheduleDate';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
 import { prospectsAnyway } from '../../utils/serviceProspectAnyway';
 
@@ -222,6 +223,29 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
       .catch(err => {
         setAudienceOverride(prev => { const n = { ...prev }; delete n[k]; return n; });
         window.alert(`Could not save Sent To: ${err?.message || err}`);
+      });
+  };
+  // Planned send dates per audience, shown and saved the same way.
+  const [scheduleOverride, setScheduleOverride] = useState({}); // `${identity}|${key}` -> 'YYYY-MM-DD' | ''
+  const schedule = useMemo(() => {
+    const out = campaignSchedule(campaign);
+    if (!campaign) return out;
+    const id = campaignIdentity(campaign);
+    for (const a of CAMPAIGN_AUDIENCES) {
+      const o = scheduleOverride[`${id}|${a.key}`];
+      if (typeof o === 'string') out[a.key] = o;
+    }
+    return out;
+  }, [campaign, scheduleOverride]);
+  const setSchedule = (key, day) => {
+    if (!campaign) return;
+    const k = `${campaignIdentity(campaign)}|${key}`;
+    setScheduleOverride(prev => ({ ...prev, [k]: day }));
+    saveCampaignSchedule(user?.uid, campaign, key, day)
+      .then(() => window.dispatchEvent(new Event(EMAIL_CAMPAIGNS_UPDATED_EVENT)))
+      .catch(err => {
+        setScheduleOverride(prev => { const n = { ...prev }; delete n[k]; return n; });
+        window.alert(`Could not save the date: ${err?.message || err}`);
       });
   };
   const statusStyle = campaign ? CAMPAIGN_STATUS_STYLE[campaignStatus(campaign)] : null;
@@ -739,7 +763,8 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }} title="Which audiences this campaign has gone to. The same ticks as Email Campaigns > Saved Campaigns.">
             <span style={{ fontWeight: 600, color: '#334155' }}>Sent to</span>
             {CAMPAIGN_AUDIENCES.map(a => (
-              <label key={a.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', color: sentTo[a.key] ? '#166534' : '#475569', fontWeight: sentTo[a.key] ? 700 : 500 }}>
+              <span key={a.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', color: sentTo[a.key] ? '#166534' : '#475569', fontWeight: sentTo[a.key] ? 700 : 500 }}>
                 <input
                   type="checkbox"
                   checked={sentTo[a.key]}
@@ -749,6 +774,8 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
                 />
                 {a.label}
               </label>
+              {!sentTo[a.key] && <AudienceScheduleDate value={schedule[a.key]} label={a.label} onChange={day => setSchedule(a.key, day)} />}
+              </span>
             ))}
           </span>
         </div>

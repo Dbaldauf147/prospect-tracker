@@ -42,3 +42,43 @@ export function listWithAudience(campaigns, target, key, on) {
   if (i < 0) throw new Error('That campaign is no longer in the saved list. Reload and try again.');
   return campaigns.map((c, j) => (j === i ? withAudience(c, key, on) : c));
 }
+
+// Planned dates: when the campaign is meant to go to each audience. Stored
+// as `scheduledFor: { clients: 'YYYY-MM-DD', ... }` (set dates only), next
+// to `sentTo`, so the plan and the tick that says it happened sit together.
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** { clients, keyContacts, prospects } as 'YYYY-MM-DD' or ''. */
+export function campaignSchedule(c) {
+  const s = c?.scheduledFor && typeof c.scheduledFor === 'object' ? c.scheduledFor : {};
+  return Object.fromEntries(CAMPAIGN_AUDIENCES.map(a => [a.key, ISO_DAY.test(String(s[a.key] || '')) ? s[a.key] : '']));
+}
+
+/** The campaign with one audience's date set, or cleared with ''. */
+export function withSchedule(c, key, day) {
+  const next = { ...(c?.scheduledFor && typeof c.scheduledFor === 'object' ? c.scheduledFor : {}) };
+  if (ISO_DAY.test(String(day || ''))) next[key] = day; else delete next[key];
+  const out = { ...c };
+  if (Object.keys(next).length) out.scheduledFor = next; else delete out.scheduledFor;
+  return out;
+}
+
+/** The stored list with `target`'s date for `key` changed (see listWithAudience). */
+export function listWithSchedule(campaigns, target, key, day) {
+  const id = campaignIdentity(target);
+  const i = (campaigns || []).findIndex(c => campaignIdentity(c) === id);
+  if (i < 0) throw new Error('That campaign is no longer in the saved list. Reload and try again.');
+  return campaigns.map((c, j) => (j === i ? withSchedule(c, key, day) : c));
+}
+
+/**
+ * Where a planned date stands against today ('YYYY-MM-DD', local):
+ * 'overdue', 'today', 'soon' (within 7 days) or 'later'; '' with no date.
+ */
+export function scheduleState(day, today) {
+  if (!day) return '';
+  if (day < today) return 'overdue';
+  if (day === today) return 'today';
+  const ms = Date.parse(`${day}T00:00:00`) - Date.parse(`${today}T00:00:00`);
+  return ms <= 7 * 86400000 ? 'soon' : 'later';
+}

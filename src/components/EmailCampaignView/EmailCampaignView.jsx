@@ -62,7 +62,7 @@ import { CampaignAudienceTicks } from './CampaignAudienceTicks';
 import { BounceForwardNote } from './BounceForwardNote';
 import { FailedEmailsPanel } from './FailedEmailsPanel';
 import { failedCampaignEmailRows, failedEmailCount } from '../../utils/failedCampaignEmails';
-import { withAudience } from '../../utils/campaignAudience';
+import { withAudience, withSchedule } from '../../utils/campaignAudience';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { CampaignLinkedDrafts } from './CampaignLinkedDrafts';
 import { CampaignServicesPicker } from './CampaignServicesPicker';
@@ -693,6 +693,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     if (prev?.pausedUntil) kept.pausedUntil = prev.pausedUntil;
     // The hand-set Sent To ticks and Category are the user's too.
     if (prev?.sentTo && typeof prev.sentTo === 'object' && Object.keys(prev.sentTo).length) kept.sentTo = prev.sentTo;
+    if (prev?.scheduledFor && typeof prev.scheduledFor === 'object' && Object.keys(prev.scheduledFor).length) kept.scheduledFor = prev.scheduledFor;
     if (prev?.category) kept.category = prev.category;
     if (!campaignServices(campaign).length && campaignServices(prev).length) kept.services = campaignServices(prev);
     // Same story for the event link: a search result carries one only if it
@@ -1402,6 +1403,13 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   function setCampaignAudience(index, key, on) {
     if (!savedCampaigns[index]) return;
     saveCampaigns(savedCampaigns.map((x, i) => (i === index ? withAudience(x, key, on) : x)));
+  }
+
+  // Scheduled: the date one audience of one saved campaign is planned for
+  // ('' clears it).
+  function setCampaignSchedule(index, key, day) {
+    if (!savedCampaigns[index]) return;
+    saveCampaigns(savedCampaigns.map((x, i) => (i === index ? withSchedule(x, key, day) : x)));
   }
 
   // Park a campaign for `days` days (the picker's X days or X weeks,
@@ -3444,7 +3452,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700 }}>Campaign</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="Type a category for the campaign, or pick one already in use.">Category</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="The services this campaign is about. Click to pick them off the Services list.">Services</th>
-                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="Who this campaign went to: tick Clients, Key Contacts and / or Prospects">Sent To</th>
+                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="Who this campaign went to: tick Clients, Key Contacts and / or Prospects. Schedule sets the date you plan to send to an audience not ticked yet.">Sent To</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>% Sent</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>Response Rate</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'center', whiteSpace: 'nowrap' }}>Status</th>
@@ -3605,7 +3613,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                     hand (utils/campaignAudience). Its own click, like the
                     category, so a tick doesn't open the row. */}
                 <td style={{ padding: '0.4rem 0.6rem', verticalAlign: 'top', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
-                  <CampaignAudienceTicks campaign={c} onToggle={(key, on) => setCampaignAudience(i, key, on)} />
+                  <CampaignAudienceTicks campaign={c} onToggle={(key, on) => setCampaignAudience(i, key, on)} onSchedule={(key, day) => setCampaignSchedule(i, key, day)} />
                 </td>
                 {isEditing ? (
                   <td colSpan={3} />
