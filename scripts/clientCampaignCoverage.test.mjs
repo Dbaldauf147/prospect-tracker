@@ -55,11 +55,12 @@ check('choices: newest first', campaignChoices([
 
 {
   const rows = clientCampaignRows({ prospects, cdmName: 'Dan Baldauf', campaign: null });
-  const status = { 'Acme Holdings': 'Sold', 'Globex Corp': 'N/A' };
+  const status = { 'Acme Holdings': 'Sold', 'Globex Corp': 'N/A', Hooli: 'Renewal' };
   const out = clientServiceBuckets({ rows, services: ['Advisory'], statusOf: (c, svc) => (svc === 'Advisory' ? status[c.company] : '') });
   check('buckets: one block per service', out.map(o => o.service), ['Advisory']);
   check('buckets: every bucket listed, empty ones too', out[0].buckets.map(b => `${b.label}:${b.clients.map(x => x.row.company).join('|')}`),
     ['Sold:Acme Holdings', 'In progress:', 'Not sold:', 'N/A:Globex Corp', 'Not explored:Hooli']);
+  check('buckets: Renewal shows under Not explored', out[0].buckets.find(b => b.key === 'none').clients.map(x => x.status), ['Renewal']);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }

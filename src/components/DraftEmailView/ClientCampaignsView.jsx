@@ -14,11 +14,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
-import { campaignChoices, clientCampaignRows, clientServiceBuckets } from '../../utils/clientCampaignCoverage';
+import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket } from '../../utils/clientCampaignCoverage';
 import { campaignServices } from '../../utils/campaignServices';
 import { buildOppStagesByClient, effectiveServiceStatus } from '../../utils/serviceCoverage';
 import { buildAutoNaByClient } from '../../utils/serviceAutoNaByClient';
-import { serviceStatusBucket, serviceStatusColor, SERVICE_BUCKETS } from '../../utils/serviceStatusColors';
+import { serviceStatusColor, SERVICE_BUCKETS } from '../../utils/serviceStatusColors';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { userLsGet, userLsSet } from '../../utils/userLs';
@@ -212,7 +212,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
       key: `svc:${service.toLowerCase()}`,
       label: service,
       defaultWidth: 175,
-      getSortValue: r => SERVICE_BUCKETS.findIndex(b => b.key === serviceStatusBucket(r.client ? statusOf(r.client, service) : '')),
+      getSortValue: r => SERVICE_BUCKETS.findIndex(b => b.key === campaignServiceBucket(r.client ? statusOf(r.client, service) : '')),
       getFilterValue: r => statusLabel(r, service) || 'Not explored',
       exportValue: r => statusLabel(r, service),
       render: r => {

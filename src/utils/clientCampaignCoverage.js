@@ -115,6 +115,18 @@ export function clientCampaignRows({ prospects, cdmName, campaign, untrackedMap 
 }
 
 /**
+ * The bucket a service status lands in on this board. Same as everywhere
+ * else (serviceStatusBucket), except Renewal: the client already has the
+ * service and is only up for renewal, so for a campaign pitching it there
+ * is nothing being explored and it reads as Not explored. Kept to this
+ * board; the PE Overview report still counts Renewal as in progress.
+ */
+export function campaignServiceBucket(status) {
+  if (String(status || '').trim().toLowerCase() === 'renewal') return 'none';
+  return serviceStatusBucket(status);
+}
+
+/**
  * The campaign's services, each with the current clients split by where
  * that service stands at them (utils/serviceStatusColors SERVICE_BUCKETS:
  * Sold, In progress, Not sold, N/A, Not explored). Every bucket is listed,
@@ -130,7 +142,7 @@ export function clientServiceBuckets({ rows, services, statusOf }) {
     const by = new Map(buckets.map(b => [b.key, []]));
     for (const row of rows || []) {
       const status = String((row.client && statusOf(row.client, service)) || '').trim();
-      const key = serviceStatusBucket(status);
+      const key = campaignServiceBucket(status);
       (by.get(key) || by.get('none'))?.push({ row, status });
     }
     return {
