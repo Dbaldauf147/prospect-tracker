@@ -49,8 +49,12 @@ export function noTargetRow() {
   return { ...blankTarget(), action: '', type: NO_TARGET_TYPE };
 }
 
+export function isNoTargetRow(row) {
+  return String(row?.type || '').trim().toLowerCase() === NO_TARGET_TYPE.toLowerCase();
+}
+
 export function hasNoTargetRow(list) {
-  return normalizeTargets(list).some(r => r.type.trim().toLowerCase() === NO_TARGET_TYPE.toLowerCase());
+  return normalizeTargets(list).some(isNoTargetRow);
 }
 
 // Digits only, at most four: the year boxes accept nothing else.
@@ -325,7 +329,8 @@ export function allSavedTargets(prospects) {
 // One row per company: the target whose refresh falls due soonest (an
 // overdue one first, since its year is earliest). A target with no year set
 // has no refresh date and is picked only when none of the company's targets
-// has one. Ties go to the target listed first on the company's tab.
+// has one, and a "No target set" row only when the company has nothing else.
+// Ties go to the target listed first on the company's tab.
 // Each row also carries `targetCount`, how many targets were in the running.
 export function soonestTargetPerCompany(targets) {
   const best = new Map();
@@ -334,9 +339,10 @@ export function soonestTargetPerCompany(targets) {
     const cur = best.get(key);
     if (!cur) { best.set(key, { row: t, count: 1 }); continue; }
     cur.count += 1;
-    const a = refreshDue(t)?.year ?? Infinity;
-    const b = refreshDue(cur.row)?.year ?? Infinity;
-    if (a < b) cur.row = t;
+    const rank = r => [isNoTargetRow(r) ? 1 : 0, refreshDue(r)?.year ?? Infinity];
+    const [na, ya] = rank(t);
+    const [nb, yb] = rank(cur.row);
+    if (na < nb || (na === nb && ya < yb)) cur.row = t;
   }
   return [...best.values()].map(({ row, count }) => ({ ...row, targetCount: count }));
 }
