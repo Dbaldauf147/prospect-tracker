@@ -16,6 +16,7 @@ import { parseTSV, compareValues, cleanHeader } from '../../utils/tsvTable';
 import { LastUpdatedLine } from './LastUpdatedLine';
 import { useAuth } from '../../contexts/AuthContext';
 import { PasteTableView } from './PasteTableView';
+import { TeamOppsView } from './TeamOppsView';
 import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
 import {
   autoDetectLeadMapping, leadRowsFromTable, planLeadImport, summariseLeadNames,
@@ -65,10 +66,10 @@ function bfoOppName(r) {
   return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
 }
 
-export function BFOActivityView({ prospects = [], settings, updateSettings } = {}) {
+export function BFOActivityView({ prospects = [], cdmName = '', settings, updateSettings } = {}) {
   // Which subtab is showing: the rich BFO Activity table, or the generic
   // Leads-list paste table.
-  const [subtab, setSubtab] = useState('bfo'); // 'bfo' | 'leads'
+  const [subtab, setSubtab] = useState('bfo'); // 'bfo' | 'leads' | 'team'
   const [data, setData] = useState({ headers: [], rows: [] });
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState(null); // { col, dir: 'asc'|'desc' }
@@ -489,9 +490,18 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
           className={subtab === 'leads' ? styles.subtabActive : styles.subtab}
           onClick={() => setSubtab('leads')}
         >Leads</button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={subtab === 'team'}
+          className={subtab === 'team' ? styles.subtabActive : styles.subtab}
+          onClick={() => setSubtab('team')}
+        >All Team Activity</button>
       </div>
 
-      {subtab === 'leads' ? (
+      {subtab === 'team' ? (
+        <TeamOppsView prospects={prospects} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
+      ) : subtab === 'leads' ? (
         <PasteTableView
           title="Leads"
           subtitle="Paste rows from the Salesforce Leads printable view (⌘V / Ctrl+V) anywhere on this page. First row is the header."

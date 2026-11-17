@@ -41,6 +41,7 @@ import { useDmsNoActivity, readDmsWindow, dmsWindowLabel } from '../../hooks/use
 import { bfoHistoryTargets, BFO_HISTORY_HEADER, BFO_HISTORY_FRESH_DAYS } from '../../utils/bfoHistory';
 import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
 import { DataTable } from '../common/DataTable';
+import { TEAM_OPPS_HEADER, teamOppsDue } from '../../utils/teamOpps';
 import { jobDescriptionTargets, jobDescriptionPromptBlock, parseJobDescriptionPaste, jobDescriptionsPasteUpdate, locationUpdatesFor, DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS } from '../../utils/jobDescriptionAgent';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
@@ -71,6 +72,7 @@ const MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-market
 const DUPLICATE_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-duplicate-leads';
 const BFO_HISTORY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-history';
 const JOB_DESCRIPTIONS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-job-descriptions';
+const TEAM_ACTIVITY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-team-activity';
 
 // The BFO Activity page's "Leads" subtab (pasted Salesforce Leads
 // printable view) persists under its own key in the same store. The
@@ -137,6 +139,19 @@ const DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY = `1.  When you are on this page cli
 2.  A new tab will pop up, go to that tab and change the number of records to 250
 3.  Copy all data in the table on that page starting with Account Name going all the way down to the bottom righthand corner of that table in the final row of data in the final column.
 4.  Navigate to this website https://prospect-tracker-ashen.vercel.app/ and then paste the data from the previous page into the BFO Activity tab .`;
+
+// All Team Activity: pull the team's open opportunities report into BFO
+// Activity > All Team Activity, twice a month (due the 1st and the 15th,
+// utils/teamOpps). That subtab flags the rows on Dan's own accounts and what
+// changed since the pull before.
+const DEFAULT_AI_PROMPT_TEAM_ACTIVITY = `1.  In BFO (https://se.lightning.force.com/), open the Reports tab, search for the report "SB NAM Sales - Open Opportunities" and open it.
+2.  Scroll to the very bottom of the report so every row has loaded, and note the total record count the report shows.
+3.  Transcribe every opportunity row into one tab-separated table, header line first, exactly:
+${TEAM_OPPS_HEADER.join('\t')}
+    The report groups its rows by Opportunity Leader, Stage Group and Sales Stage and prints each of those only on the first row of its group: write the leader, stage group and sales stage on EVERY row. Leave out the "(16)" style counts after them, every Subtotal and "Avg:" line, and the grand total. Copy the full text of each cell, amounts as shown (for example USD 70,000.00), and write a dash cell as -. One line per opportunity, no blank lines.
+4.  Check your row count matches the report's total record count.
+5.  Go to https://prospect-tracker-ashen.vercel.app/, open the BFO Activity tab, click the All Team Activity subtab and paste the table anywhere on the page (if the page shows an empty box, paste into the box and click Save). Check the green "Saved N opportunities" message matches your row count.
+6.  When done, give me a summary: the number of rows pasted, then every row the All Team Activity subtab shows under My accounts marked New, Changed or Off report, with its Opportunity Leader, Opportunity Name, Account Name and what changed.`;
 
 // BFO History: walk the DMs Without Activity companies through BFO's
 // Oppty 360 tab and paste each one's full opportunity list into the
@@ -974,6 +989,19 @@ function readBfoHistoryPrompt() {
 
 function writeBfoHistoryPrompt(next) {
   try { writeWorkKey(BFO_HISTORY_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
+function readTeamActivityPrompt() {
+  try {
+    const raw = userLsGet(TEAM_ACTIVITY_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_TEAM_ACTIVITY : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_TEAM_ACTIVITY;
+  }
+}
+
+function writeTeamActivityPrompt(next) {
+  try { writeWorkKey(TEAM_ACTIVITY_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
 function readJobDescriptionsPrompt() {
@@ -1849,6 +1877,8 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [appDescriptionPrompt, setAppDescriptionPrompt] = useState(readAppDescriptionPrompt);
   const [closeNotSoldsPrompt, setCloseNotSoldsPrompt] = useState(readCloseNotSoldsPrompt);
   const [updateBfoActivityPrompt, setUpdateBfoActivityPrompt] = useState(readUpdateBfoActivityPrompt);
+  const [teamActivityPrompt, setTeamActivityPrompt] = useState(readTeamActivityPrompt);
+  const [teamActivityCopyFlash, setTeamActivityCopyFlash] = useState('');
   const [bfoPrepPrompt, setBfoPrepPrompt] = useState(readBfoPrepPrompt);
   const [importMarketingLeadsPrompt, setImportMarketingLeadsPrompt] = useState(readImportMarketingLeadsPrompt);
   const [marketingLeadsPrompt, setMarketingLeadsPrompt] = useState(readMarketingLeadsPrompt);
@@ -2051,6 +2081,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     writeUpdateBfoActivityPrompt(next);
   };
   const resetUpdateBfoActivityPrompt = () => updateUpdateBfoActivityPrompt(DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY);
+  const updateTeamActivityPrompt = (next) => {
+    setTeamActivityPrompt(next);
+    writeTeamActivityPrompt(next);
+  };
 
   const updateBfoPrepPrompt = (next) => {
     setBfoPrepPrompt(next);
@@ -5400,6 +5434,58 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 />
               </div>
             )}
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+      {(() => {
+        const fullPrompt = teamActivityPrompt;
+        const lastMs = settings?.teamOppsLastPulledAt ? Date.parse(settings.teamOppsLastPulledAt) : null;
+        const { due, nextDueMs } = teamOppsDue(Number.isFinite(lastMs) ? lastMs : null);
+        const day = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(fullPrompt);
+            setTeamActivityCopyFlash('Copied!');
+          } catch {
+            setTeamActivityCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setTeamActivityCopyFlash(''), 1500);
+        };
+        return (
+          <section className={styles.section} data-agent="team-activity">
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (All Team Activity)
+              <span style={{
+                marginLeft: 8, padding: '1px 8px', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, verticalAlign: 'middle',
+                ...(due
+                  ? { background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5' }
+                  : { background: '#DCFCE7', color: '#15803D', border: '1px solid #86EFAC' }),
+              }}>{due ? 'Due now' : `Next due ${day(nextDueMs)}`}</span>
+            </h2>
+            <p className={styles.subnote}>
+              Runs twice a month, due on the 1st and the 15th. Pulls the SB NAM Sales - Open Opportunities report into BFO Activity &gt; All Team Activity, which flags the opportunities on your accounts and what changed since the last pull.
+              {lastMs ? ` Last pulled ${day(lastMs)}.` : ' Not pulled yet.'}
+            </p>
+            {revealedPrompts.teamActivity && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={teamActivityPrompt}
+                onChange={(e) => updateTeamActivityPrompt(e.target.value)}
+                rows={10}
+                spellCheck={false}
+              />
+            )}
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('teamActivity')}>
+                {revealedPrompts.teamActivity ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.teamActivity && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={() => updateTeamActivityPrompt(DEFAULT_AI_PROMPT_TEAM_ACTIVITY)}>Reset to default</button>
+              )}
+              {teamActivityCopyFlash && <span className={styles.copyFlash}>{teamActivityCopyFlash}</span>}
+            </div>
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
         );
