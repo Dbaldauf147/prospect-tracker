@@ -11,7 +11,7 @@
 // a panel above the table splits the clients by where each service stands
 // at them: Sold, In progress, Not sold, N/A, Not explored, read the way the
 // company popup reads it (manual status, then a matching opp, then auto N/A).
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
 import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket, currentClients, rosterAccounts, keyContactSummary, CAMPAIGN_AUDIENCE_VIEWS } from '../../utils/clientCampaignCoverage';
@@ -40,6 +40,8 @@ const prospectTag = (service) => (
 
 const PICK_KEY = 'client-campaigns-pick';
 const AUDIENCE_KEY = 'client-campaigns-audience';
+// Shown as a small pill each rather than a card: nobody works from them.
+const PILL_BUCKETS = new Set(['sold', 'na']);
 const KEY_CONTACTS_CLIENTS_KEY = 'client-campaigns-key-contacts-include-clients';
 
 // A Table View company whose status is Client.
@@ -70,6 +72,87 @@ const fmtDate = (iso) => {
   const d = new Date(`${iso}T12:00:00`);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
+
+// A cell that lists people one line high: the first one, then "+N more",
+// which opens the rest in place (and "Show less" folds them back).
+function OneLine({ items, renderItem, open, onToggle }) {
+  const shown = open ? items : items.slice(0, 1);
+  const more = items.length - 1;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+      {shown.map((it, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          {renderItem(it)}
+          {i === 0 && more > 0 && !open && (
+            <button type="button" onClick={(e) => { e.stopPropagation(); onToggle(); }} title="Show everyone" style={moreBtn}>+{more} more</button>
+          )}
+        </div>
+      ))}
+      {open && more > 0 && (
+        <button type="button" onClick={(e) => { e.stopPropagation(); onToggle(); }} style={{ ...moreBtn, alignSelf: 'flex-start' }}>Show less</button>
+      )}
+    </div>
+  );
+}
+const moreBtn = {
+  flexShrink: 0, background: 'none', border: '1px solid #CBD5E1', borderRadius: 999, padding: '0 7px',
+  font: 'inherit', fontSize: '0.65rem', fontWeight: 700, color: '#475569', cursor: 'pointer', whiteSpace: 'nowrap',
+};
+
+// Sold and N/A, the buckets nobody works from, as a small pill each: the
+// count shows, and a click opens the companies in a pop-over.
+function BucketPill({ bucket, active, noun, onFilter, renderList }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  return (
+    <span ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        type="button"
+        data-bucket-pill={bucket.key}
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+        title={`${bucket.clients.length} ${noun} where this is ${bucket.label}. Click to see them.`}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '0.15rem 0.55rem', borderRadius: 999,
+          border: `1px solid ${active ? bucket.color : '#CBD5E1'}`, background: bucket.bg === '#FFFFFF' ? '#F8FAFC' : bucket.bg,
+          color: bucket.color, font: 'inherit', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
+        }}
+      >
+        <span aria-hidden="true">{bucket.key === 'sold' ? '\u2713' : '\u2298'}</span>
+        {bucket.label}
+        <span style={{ fontVariantNumeric: 'tabular-nums' }}>{bucket.clients.length}</span>
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={`${bucket.label} ${noun}`}
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 20, width: 300,
+            background: '#fff', border: '1px solid #E2E8F0', borderRadius: 8, boxShadow: '0 8px 24px rgba(15,23,42,0.15)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.35rem 0.6rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.75rem', fontWeight: 700, color: bucket.color }}>
+            {bucket.label} ({bucket.clients.length})
+            {bucket.clients.length > 0 && (
+              <button type="button" onClick={() => { onFilter(); setOpen(false); }} style={{ ...linkBtn, marginLeft: 'auto', fontSize: '0.7rem' }}>
+                {active ? 'Show all in the table' : 'Filter the table to these'}
+              </button>
+            )}
+          </div>
+          {renderList()}
+        </div>
+      )}
+    </span>
+  );
+}
 
 export function ClientCampaignsView({ prospects, cdmName = '', settings, updateSettings, onSelectProspect, onOpenCampaign }) {
   const campaigns = useEmailCampaigns();
@@ -112,8 +195,8 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   // out unless this is ticked: the Clients view is where they are covered.
   const [keyContactsIncludeClients, setKeyContactsIncludeClients] = useState(() => userLsGet(KEY_CONTACTS_CLIENTS_KEY) === '1');
   const pickKeyContactsIncludeClients = (on) => { setKeyContactsIncludeClients(on); userLsSet(KEY_CONTACTS_CLIENTS_KEY, on ? '1' : ''); };
-  // keyPeople: company key -> the Key Contacts there, for the Key Contacts
-  // column (Key Contacts view only).
+  // keyPeople: company key -> the roster people there (Key Contacts or Key
+  // Prospects), listed whether or not the campaign reached them.
   const { accounts, keyPeople } = useMemo(() => {
     if (audienceKey === 'clients' || !rosterGates) return { accounts: currentClients(prospects, cdmName, clientUntrackedMap), keyPeople: null };
     if (audienceKey === 'keyContacts') {
@@ -121,7 +204,8 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
       const list = rosterAccounts({ prospects, contacts, gate: rosterGates.isKey, untrackedMap: clientUntrackedMap, people });
       return { accounts: keyContactsIncludeClients ? list : list.filter(p => !isClientCompany(p)), keyPeople: people };
     }
-    return { accounts: rosterAccounts({ prospects, contacts, gate: rosterGates.isKeyProspect, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap }), keyPeople: null };
+    const people = new Map();
+    return { accounts: rosterAccounts({ prospects, contacts, gate: rosterGates.isKeyProspect, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap, people }), keyPeople: people };
   }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap, keyContactsIncludeClients]);
 
   const allRows = useMemo(
@@ -168,6 +252,15 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   const reached = allRows.filter(r => r.onCampaign > 0).length;
   const peopleCount = allRows.reduce((n, r) => n + r.onCampaign, 0);
   const repliedClients = allRows.filter(r => r.replied > 0).length;
+  // Rows kept one person high; "+N more" opens one (by column).
+  const [openCells, setOpenCells] = useState(() => new Set());
+  const cellOpen = (r, col) => openCells.has(`${col}|${r.id}`);
+  const toggleCell = (r, col) => setOpenCells(prev => {
+    const next = new Set(prev);
+    const k = `${col}|${r.id}`;
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
 
   // The campaign services' Contact Tags (Dropdowns > service), the tags the
   // Key Contacts column picks out of each person's tags.
@@ -180,12 +273,37 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     }
     return out;
   }, [services, settings?.serviceOverrides]);
+  // Each roster person, with how far the campaign got with them ('' when
+  // they aren't on it): the ones it reached first, then Decision Makers.
   const keyContactsOf = (r) => {
     const list = keyPeople?.get(String(r.company || '').trim().toLowerCase()) || [];
-    return list.map(c => keyContactSummary(c, serviceTags))
-      .sort((a, b) => (b.dm - a.dm) || a.name.localeCompare(b.name));
+    const onCampaign = new Map(r.people.map(p => [String(p.email || '').toLowerCase(), p.status]));
+    const seen = new Set();
+    return list.map(c => ({ ...keyContactSummary(c, serviceTags), status: onCampaign.get(String(c.email || '').toLowerCase()) || '' }))
+      .filter(k => { const id = (k.email || k.name).toLowerCase(); if (seen.has(id)) return false; seen.add(id); return true; })
+      .sort((a, b) => (!!b.status - !!a.status) || (b.dm - a.dm) || a.name.localeCompare(b.name));
   };
   const keyContactText = (k) => `${k.name}${k.tags.length ? ` (${k.tags.join(', ')})` : ''}${k.dm ? ' DM' : ''}`;
+
+  // The companies in one bucket, as the cards and the Sold / N/A pop-overs
+  // list them.
+  const bucketList = (service, b, maxHeight = 140) => (
+    <div style={{ padding: '0.3rem 0.55rem', display: 'flex', flexDirection: 'column', gap: 2, maxHeight, overflowY: 'auto' }}>
+      {b.clients.length === 0 && <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{audience.one === 'client' ? 'No clients' : 'No companies'}</span>}
+      {b.clients.map(({ row, status }) => (
+        <div key={row.id} style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: '0.75rem', minWidth: 0 }}>
+          {onSelectProspect && row.client
+            ? <button type="button" style={{ ...linkBtn, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${row.company}${status && b.key === 'inProgress' ? ` (${status})` : ''}. Open the company popup`} onClick={() => onSelectProspect(row.client)}>{row.company}</button>
+            : <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company}</span>}
+          {row.client && prospectsAnyway(row.client, service, status) && prospectTag(service)}
+          <span
+            style={{ marginLeft: 'auto', flexShrink: 0, fontSize: '0.68rem', color: row.onCampaign ? '#3730A3' : '#94A3B8', fontWeight: row.onCampaign ? 700 : 400 }}
+            title={row.onCampaign ? `${row.onCampaign} ${row.onCampaign === 1 ? 'person' : 'people'} here on this campaign` : 'Nobody here is on this campaign'}
+          >{row.onCampaign ? `${row.onCampaign} on` : 'not on'}</span>
+        </div>
+      ))}
+    </div>
+  );
 
   const pick = (label) => {
     setPickedLabel(label);
@@ -223,47 +341,60 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
       getFilterValue: r => r.people.map(p => p.name || p.email).join(', '),
       exportValue: r => r.people.map(p => `${p.name ? `${p.name} <${p.email}>` : p.email} (${p.status})`).join('; '),
       render: r => (r.people.length ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '3px 0' }}>
-          {r.people.map(p => (
-            <div key={`${p.email}|${p.name}`} style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <OneLine
+          items={r.people}
+          open={cellOpen(r, 'people')}
+          onToggle={() => toggleCell(r, 'people')}
+          renderItem={p => (
+            <>
               {chip(p.status)}
               <span style={{ fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>{p.name || p.email}</span>
               {p.name && (
                 <span style={{ color: '#64748B', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.email}</span>
               )}
-            </div>
-          ))}
-        </div>
+            </>
+          )}
+        />
       ) : <span style={{ color: '#94A3B8' }}>Nobody at this {audience.one} is on it</span>),
     },
     // Key Contacts view: the Key Contacts at the company, each with their
     // tags for the campaign's service and a check if tagged Decision Maker.
-    ...(audience.key === 'keyContacts' ? [{
-      key: 'keyContacts',
-      label: 'Key Contacts',
-      defaultWidth: 300,
+    // Key Contacts / Prospects views: the roster people at the company,
+    // reached or not, each with a check if tagged Decision Maker, their
+    // tags for the campaign's service, and where the campaign got with them.
+    ...(keyPeople ? [{
+      key: audience.key === 'keyContacts' ? 'keyContacts' : 'keyProspects',
+      label: audience.key === 'keyContacts' ? 'Key Contacts' : 'Key Prospects',
+      defaultWidth: 360,
       getSortValue: r => keyContactsOf(r).filter(k => k.dm).length,
       getFilterValue: r => keyContactsOf(r).map(keyContactText).join(', '),
-      exportValue: r => keyContactsOf(r).map(keyContactText).join('; '),
+      exportValue: r => keyContactsOf(r).map(k => `${keyContactText(k)} [${k.status || 'Not on campaign'}]`).join('; '),
       render: r => {
         const list = keyContactsOf(r);
         if (!list.length) return <span style={{ color: '#94A3B8' }}>-</span>;
+        const col = audience.key === 'keyContacts' ? 'keyContacts' : 'keyProspects';
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '3px 0' }}>
-            {list.map(k => (
-              <div key={k.email || k.name} title={k.email} style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+          <OneLine
+            items={list}
+            open={cellOpen(r, col)}
+            onToggle={() => toggleCell(r, col)}
+            renderItem={k => (
+              <>
                 <span
                   aria-label={k.dm ? 'Decision Maker' : 'Not tagged Decision Maker'}
                   title={k.dm ? 'Tagged Decision Maker' : 'Not tagged Decision Maker'}
                   style={{ width: 14, flexShrink: 0, textAlign: 'center', fontWeight: 800, color: '#16A34A' }}
-                >{k.dm ? '✓' : ''}</span>
-                <span style={{ fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{k.name}</span>
+                >{k.dm ? '\u2713' : ''}</span>
+                {k.status
+                  ? chip(k.status)
+                  : <span title="Not on this campaign" style={{ flexShrink: 0, padding: '0 7px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, border: '1px dashed #CBD5E1', color: '#94A3B8', whiteSpace: 'nowrap' }}>Not on</span>}
+                <span title={k.email} style={{ fontWeight: 600, color: k.status ? '#1E293B' : '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{k.name}</span>
                 {k.tags.map(t => (
                   <span key={t} style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, padding: '0 6px', borderRadius: 999, background: '#EDE9FE', color: '#5B21B6', border: '1px solid #C4B5FD', whiteSpace: 'nowrap' }}>{t}</span>
                 ))}
-              </div>
-            ))}
-          </div>
+              </>
+            )}
+          />
         );
       },
     }] : []),
@@ -397,12 +528,29 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
 
       {campaign && !noClients && serviceBuckets.map(({ service, buckets }) => (
         <div key={service} data-service-buckets style={{ border: '1px solid #E2E8F0', borderRadius: 8, background: '#fff', padding: '0.6rem 0.75rem' }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.45rem' }}>
-            {service}
-            <span style={{ fontWeight: 400, color: '#64748B' }}> - where this service stands at each {audience.one}. Click a heading to filter the table.</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.45rem' }}>
+            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B' }}>
+              {service}
+              <span style={{ fontWeight: 400, color: '#64748B' }}> - where this service stands at each {audience.one}. Click a heading to filter the table.</span>
+            </div>
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: '0.4rem' }}>
+              {buckets.filter(b => PILL_BUCKETS.has(b.key)).map(b => {
+                const active = bucketPick?.service === service && bucketPick?.key === b.key;
+                return (
+                  <BucketPill
+                    key={b.key}
+                    bucket={b}
+                    active={active}
+                    noun={audience.one === 'client' ? 'clients' : 'companies'}
+                    onFilter={() => setBucketPick(active ? null : { service, key: b.key })}
+                    renderList={() => bucketList(service, b, 260)}
+                  />
+                );
+              })}
+            </span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.5rem' }}>
-            {buckets.map(b => {
+            {buckets.filter(b => !PILL_BUCKETS.has(b.key)).map(b => {
               const active = bucketPick?.service === service && bucketPick?.key === b.key;
               return (
                 <div key={b.key} style={{
@@ -422,21 +570,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
                     <span>{b.label}</span>
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>{b.clients.length}</span>
                   </button>
-                  <div style={{ padding: '0.3rem 0.55rem', display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 140, overflowY: 'auto' }}>
-                    {b.clients.length === 0 && <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{audience.one === 'client' ? 'No clients' : 'No companies'}</span>}
-                    {b.clients.map(({ row, status }) => (
-                      <div key={row.id} style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: '0.75rem', minWidth: 0 }}>
-                        {onSelectProspect && row.client
-                          ? <button type="button" style={{ ...linkBtn, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${row.company}${status && b.key === 'inProgress' ? ` (${status})` : ''}. Open the company popup`} onClick={() => onSelectProspect(row.client)}>{row.company}</button>
-                          : <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company}</span>}
-                        {row.client && prospectsAnyway(row.client, service, status) && prospectTag(service)}
-                        <span
-                          style={{ marginLeft: 'auto', flexShrink: 0, fontSize: '0.68rem', color: row.onCampaign ? '#3730A3' : '#94A3B8', fontWeight: row.onCampaign ? 700 : 400 }}
-                          title={row.onCampaign ? `${row.onCampaign} ${row.onCampaign === 1 ? 'person' : 'people'} here on this campaign` : 'Nobody here is on this campaign'}
-                        >{row.onCampaign ? `${row.onCampaign} on` : 'not on'}</span>
-                      </div>
-                    ))}
-                  </div>
+                  {bucketList(service, b)}
                 </div>
               );
             })}
