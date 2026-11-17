@@ -21,7 +21,7 @@ function check(label, actual, expected) {
 
 check('normalize: not an array', normalizeTargets(null), []);
 check('normalize: fills blanks, drops junk', normalizeTargets([{ id: 'a', type: 'Net zero', baseYear: 2019 }, null, 'x']), [
-  { id: 'a', type: 'Net zero', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false, classification: '', status: '', hidden: false },
+  { id: 'a', action: 'Target', type: 'Net zero', commitmentType: '', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false, classification: '', status: '', datePublished: '', hidden: false },
 ]);
 check('cleanYear: digits only, four max', [cleanYear('20a305'), cleanYear(''), cleanYear(null)], ['2030', '', '']);
 const list = [{ id: 'a', type: '' }, { id: 'b', type: 'SBTi' }];
@@ -57,16 +57,16 @@ const strip = rows => rows.map(({ id, ...r }) => r);
 const parsed = parsePastedTargets(SBTI);
 check('paste: six rows', parsed.rows.length, 6);
 check('paste: net-zero row', strip(parsed.rows)[0], {
-  type: 'Net zero', yearSet: '2024', baseYear: '2019', targetYear1: '2040', targetYear2: '',
-  scope1: true, scope2: true, scope3: true, classification: '1.5°C', status: 'Other', hidden: false,
+  action: 'Target', type: 'Net zero', commitmentType: '', yearSet: '2024', baseYear: '2019', targetYear1: '2040', targetYear2: '',
+  scope1: true, scope2: true, scope3: true, classification: '1.5°C', status: 'Other', datePublished: '2024-12-05', hidden: false,
 });
 check('paste: scope 3 alone, NA classification blank', strip(parsed.rows)[2], {
-  type: 'SBTi near-term', yearSet: '2024', baseYear: '2019', targetYear1: '2030', targetYear2: '',
-  scope1: false, scope2: false, scope3: true, classification: '', status: 'Other', hidden: false,
+  action: 'Target', type: 'SBTi near-term', commitmentType: '', yearSet: '2024', baseYear: '2019', targetYear1: '2030', targetYear2: '',
+  scope1: false, scope2: false, scope3: true, classification: '', status: 'Other', datePublished: '2024-12-05', hidden: false,
 });
 check('paste: commitment row', strip(parsed.rows)[5], {
-  type: 'SBTi commitment', yearSet: '2021', baseYear: '', targetYear1: '', targetYear2: '',
-  scope1: false, scope2: false, scope3: false, classification: 'BA1.5 Option 2', status: 'Validated Targets', hidden: false,
+  action: 'Commitment', type: 'SBTi commitment', commitmentType: 'BA1.5 Option 2', yearSet: '2021', baseYear: '', targetYear1: '', targetYear2: '',
+  scope1: false, scope2: false, scope3: false, classification: '', status: 'Validated Targets', datePublished: '2021-07-01', hidden: false,
 });
 const noHeader = parsePastedTargets(SBTI.split('\r\n').slice(1).join('\n'));
 check('paste: without the header, same rows', strip(noHeader.rows), strip(parsed.rows));
@@ -78,7 +78,30 @@ check('paste: blank text', parsePastedTargets('  \n '), { rows: [], skipped: 0 }
 const merged = mergePastedTargets([], parsed.rows);
 check('merge: all added', [merged.added, merged.duplicates, merged.list.length], [6, 0, 6]);
 const again = mergePastedTargets(merged.list, parsePastedTargets(SBTI).rows);
-check('merge: pasting again adds nothing', [again.added, again.duplicates, again.list.length], [0, 6, 6]);
+check('merge: pasting again adds nothing', [again.added, again.duplicates, again.updated, again.list.length], [0, 6, 0, 6]);
+
+// Two commitments on the same date (Net-zero and Standard) are two rows.
+{
+  const two = [
+    'Commitment\tNet-zero\tValidated Targets\tNA\tNA\tNA\tNA\tNA\t2022-06-23',
+    'Commitment\tStandard\tValidated Targets\tNA\tNA\tNA\tNA\tNA\t2022-06-23',
+  ].join('\n');
+  const p2 = parsePastedTargets(two).rows;
+  check('paste: both commitments kept', mergePastedTargets([], p2).added, 2);
+  check('paste: commitment types', p2.map(r => [r.action, r.commitmentType]), [['Commitment', 'Net-zero'], ['Commitment', 'Standard']]);
+  // Rows logged before these fields existed: one commitment row, no details.
+  const old = [{ id: 'o1', type: 'SBTi commitment', yearSet: '2022', status: 'Validated Targets' },
+    { id: 'o2', type: 'Net zero', yearSet: '2024', baseYear: '2019', targetYear1: '2040', scope1: true, scope2: true, scope3: true, classification: '1.5°C', status: 'Other' }];
+  const re = mergePastedTargets(old, [...p2, ...parsePastedTargets(SBTI.replace(/2024-12-05/g, '2024-04-25')).rows.slice(0, 1)]);
+  check('re-paste: fills the old rows, adds the second commitment', [re.added, re.updated, re.list.length], [1, 2, 3]);
+  check('re-paste: old commitment gains its type and date', [re.list[0].action, re.list[0].commitmentType, re.list[0].datePublished], ['Commitment', 'Net-zero', '2022-06-23']);
+  check('re-paste: old target gains its action and date', [re.list[1].action, re.list[1].datePublished], ['Target', '2024-04-25']);
+  check('re-paste: second commitment added', re.list[2].commitmentType, 'Standard');
+}
+check('normalize: old commitment classification becomes its commitment type',
+  normalizeTargets([{ id: 'c', type: 'SBTi commitment', classification: 'BA1.5 Option 2' }]).map(r => [r.action, r.commitmentType, r.classification])[0],
+  ['Commitment', 'BA1.5 Option 2', '']);
+check('normalize: an action that was cleared stays cleared', normalizeTargets([{ id: 'c', type: 'Net zero', action: '' }])[0].action, '');
 
 // Target Type list.
 check('types: defaults before anything is saved', types.loadTargetTypeOptions(), types.DEFAULT_TARGET_TYPES);

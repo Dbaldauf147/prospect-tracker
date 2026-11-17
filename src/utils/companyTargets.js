@@ -1,11 +1,17 @@
 // A company's sustainability targets, logged by hand on the company popup's
 // Targets tab. Stored on the company record as `climateTargets`: an array of
-//   { id, type, yearSet, baseYear, targetYear1, targetYear2, scope1, scope2, scope3,
-//     classification, status, hidden }
+//   { id, action, type, commitmentType, yearSet, baseYear, targetYear1, targetYear2,
+//     scope1, scope2, scope3, classification, status, datePublished, hidden }
+// `action` is SBTi's Action column, "Target" or "Commitment"; a row saved
+// before it existed reads as a Commitment when its type is SBTi commitment,
+// else as a Target. `commitmentType` is a commitment's kind ("Net-zero",
+// "Standard", "BA1.5 Option 2"); `datePublished` is the date SBTi lists,
+// as given ("2024-04-25"), and its year is the Year Set a paste fills in.
 // `hidden` greys the row out on the tab (kept, not deleted: an old target
 // worth remembering but not worth reading past).
 // `classification` is the target's ambition (SBTi's "1.5°C", "Well-below
-// 2°C", or for a commitment its type, "BA1.5 Option 2"); `status` is free
+// 2°C"). Commitments pasted before commitmentType existed carried their
+// commitment type here; normalize moves it across. `status` is free
 // text ("Validated Targets", "Committed"). Both arrive mostly by pasting the
 // SBTi dashboard's table, see parsePastedTargets.
 // `yearSet` is the year the company set (or last refreshed) the target; the
@@ -24,10 +30,12 @@ function newId() {
   return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
 
+export const TARGET_ACTIONS = ['Target', 'Commitment'];
+
 export function blankTarget() {
   return {
-    id: newId(), type: '', yearSet: '', baseYear: '', targetYear1: '', targetYear2: '',
-    scope1: false, scope2: false, scope3: false, classification: '', status: '', hidden: false,
+    id: newId(), action: 'Target', type: '', commitmentType: '', yearSet: '', baseYear: '', targetYear1: '', targetYear2: '',
+    scope1: false, scope2: false, scope3: false, classification: '', status: '', datePublished: '', hidden: false,
   };
 }
 
@@ -43,20 +51,34 @@ export function normalizeTargets(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter(r => r && typeof r === 'object')
-    .map(r => ({
-      id: String(r.id || newId()),
-      type: String(r.type || ''),
-      yearSet: cleanYear(r.yearSet),
-      baseYear: cleanYear(r.baseYear),
-      targetYear1: cleanYear(r.targetYear1),
-      targetYear2: cleanYear(r.targetYear2),
-      scope1: !!r.scope1,
-      scope2: !!r.scope2,
-      scope3: !!r.scope3,
-      classification: String(r.classification || ''),
-      status: String(r.status || ''),
-      hidden: !!r.hidden,
-    }));
+    .map(r => {
+      const type = String(r.type || '');
+      const isCommitment = type === COMMITMENT_TYPE;
+      let commitmentType = String(r.commitmentType || '');
+      let classification = String(r.classification || '');
+      // A commitment saved before commitmentType existed held it in classification.
+      if (r.commitmentType === undefined && isCommitment && classification) {
+        commitmentType = classification;
+        classification = '';
+      }
+      return {
+        id: String(r.id || newId()),
+        action: r.action === undefined ? (isCommitment ? 'Commitment' : type ? 'Target' : '') : String(r.action || ''),
+        type,
+        commitmentType,
+        yearSet: cleanYear(r.yearSet),
+        baseYear: cleanYear(r.baseYear),
+        targetYear1: cleanYear(r.targetYear1),
+        targetYear2: cleanYear(r.targetYear2),
+        scope1: !!r.scope1,
+        scope2: !!r.scope2,
+        scope3: !!r.scope3,
+        classification,
+        status: String(r.status || ''),
+        datePublished: String(r.datePublished || ''),
+        hidden: !!r.hidden,
+      };
+    });
 }
 
 // The list with one row's field changed. Year fields are cleaned on the way in.
@@ -148,6 +170,12 @@ const TYPE_ALIASES = {
 };
 export const COMMITMENT_TYPE = 'SBTi commitment';
 
+function rowAction(action, target) {
+  if (/^commit/i.test(action)) return 'Commitment';
+  if (/^target/i.test(action)) return 'Target';
+  return action || (target ? 'Target' : '');
+}
+
 function rowType(action, target) {
   if (/^commit/i.test(action) && !target) return COMMITMENT_TYPE;
   return TYPE_ALIASES[target.toLowerCase().replace(/[^a-z0-9]/g, '')] || target;
@@ -200,7 +228,9 @@ export function parsePastedTargets(text) {
     const commitmentType = pasteValue(rec.commitmentType);
     const row = {
       ...blankTarget(),
+      action: rowAction(action, target),
       type,
+      commitmentType,
       yearSet: pasteYear(rec.yearSet) || pasteYear(rec.datePublished),
       baseYear: pasteYear(rec.baseYear),
       targetYear1: pasteYear(rec.targetYear),
@@ -208,39 +238,57 @@ export function parsePastedTargets(text) {
       scope1: /1/.test(scope),
       scope2: /2/.test(scope),
       scope3: /3/.test(scope),
-      // A commitment has no target classification; its commitment type
-      // ("BA1.5 Option 2") is the ambition it signed up to.
-      classification: pasteValue(rec.classification) || (type === COMMITMENT_TYPE ? commitmentType : ''),
+      classification: pasteValue(rec.classification),
       status: pasteValue(rec.status),
+      datePublished: pasteValue(rec.datePublished),
     };
-    const anything = row.type || row.baseYear || row.targetYear1 || row.yearSet || row.classification;
+    const anything = row.type || row.baseYear || row.targetYear1 || row.yearSet || row.classification || row.commitmentType;
     if (anything) rows.push(row); else skipped += 1;
   }
   return { rows, skipped };
 }
 
-// Two rows describe the same target when everything but the id matches.
+// Two rows describe the same target when their core fields match and the
+// detail fields (filled in by later versions of the paste) don't disagree:
+// blank on either side counts as agreeing, so re-pasting a table onto rows
+// logged before Action / Commitment Type / Date Published existed matches
+// them and fills those in, rather than adding the targets a second time.
+const DETAIL_KEYS = ['action', 'commitmentType', 'datePublished'];
+const norm = v => String(v ?? '').trim().toLowerCase();
 function targetKey(r) {
   return [r.type, r.yearSet, r.baseYear, r.targetYear1, r.targetYear2, scopesLabel(r), r.classification, r.status]
-    .map(v => String(v).trim().toLowerCase()).join('|');
+    .map(norm).join('|');
+}
+function sameTarget(a, b) {
+  return targetKey(a) === targetKey(b)
+    && DETAIL_KEYS.every(k => !norm(a[k]) || !norm(b[k]) || norm(a[k]) === norm(b[k]));
 }
 
 // The list with the pasted rows appended, leaving out any that are already
 // on it (pasting the same table twice adds nothing) or repeated in the paste.
-//   { list, added, duplicates }
+// A pasted row matching one already logged fills in that row's blank detail
+// fields; `updated` counts the rows that gained something.
+//   { list, added, duplicates, updated }
 export function mergePastedTargets(existing, pasted) {
   const list = normalizeTargets(existing);
-  const seen = new Set(list.map(targetKey));
+  const matched = new Set();
   let added = 0;
   let duplicates = 0;
+  let updated = 0;
   for (const r of normalizeTargets(pasted)) {
-    const k = targetKey(r);
-    if (seen.has(k)) { duplicates += 1; continue; }
-    seen.add(k);
-    list.push(r);
-    added += 1;
+    // Each logged row absorbs at most one pasted row, so two commitments
+    // that differ only in commitment type don't both land on one old row.
+    // Rows added by this paste stay matchable, so a repeat in the paste is
+    // skipped.
+    const i = list.findIndex(x => !matched.has(x.id) && sameTarget(x, r));
+    if (i === -1) { list.push(r); added += 1; continue; }
+    const cur = list[i];
+    matched.add(cur.id);
+    duplicates += 1;
+    const fill = Object.fromEntries(DETAIL_KEYS.filter(k => !cur[k] && r[k]).map(k => [k, r[k]]));
+    if (Object.keys(fill).length) { list[i] = { ...cur, ...fill }; updated += 1; }
   }
-  return { list, added, duplicates };
+  return { list, added, duplicates, updated };
 }
 
 // ---- Every company's targets, as one list ------------------------------

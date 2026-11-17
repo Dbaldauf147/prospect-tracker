@@ -1,5 +1,6 @@
 // Company popup > Targets: the company's sustainability targets, logged by
-// hand. One row per target: what kind it is (off the user's own list of
+// hand. One row per target: its Action (Target or Commitment, as SBTi lists
+// it), what kind it is (off the user's own list of
 // types, see TargetTypeSelect), the year it was set, its base year, up to two
 // target years, which of Scopes 1, 2 and 3 it covers, and when its five-yearly
 // refresh falls due. Every cell edits in place and autosaves with the rest of
@@ -9,7 +10,7 @@
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import {
-  TARGET_SCOPES, REFRESH_CYCLE_YEARS, blankTarget, normalizeTargets,
+  TARGET_SCOPES, TARGET_ACTIONS, REFRESH_CYCLE_YEARS, blankTarget, normalizeTargets,
   updateTarget, removeTarget, refreshDue, scopesLabel,
   parsePastedTargets, mergePastedTargets,
 } from '../../utils/companyTargets';
@@ -50,6 +51,7 @@ const SCOPE_LABELS = { scope1: 'Scope 1', scope2: 'Scope 2', scope3: 'Scope 3' }
 const TEXT_COLUMNS = [
   { key: 'classification', label: 'Classification', width: 130 },
   { key: 'status', label: 'Status', width: 150 },
+  { key: 'datePublished', label: 'Date Published', width: 130 },
 ];
 
 const previewCell = { padding: '0.25rem 0.5rem', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' };
@@ -60,8 +62,9 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
   const [text, setText] = useState('');
   const parsed = useMemo(() => parsePastedTargets(text), [text]);
   const merge = useMemo(() => mergePastedTargets(existing, parsed.rows), [existing, parsed]);
+  const changes = merge.added + merge.updated;
   const add = () => {
-    if (!merge.added) return;
+    if (!changes) return;
     for (const t of new Set(parsed.rows.map(r => r.type).filter(Boolean))) addTargetTypeOption(t);
     onAdd(merge.list);
   };
@@ -86,7 +89,7 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.75rem' }}>
             <thead>
               <tr>
-                {['Target Type', 'Year Set', 'Base Year', 'Target Year', 'Scopes', 'Classification', 'Status'].map(h => (
+                {['Action', 'Target Type', 'Commitment Type', 'Year Set', 'Base Year', 'Target Year', 'Scopes', 'Classification', 'Status', 'Date Published'].map(h => (
                   <th key={h} style={previewHead}>{h}</th>
                 ))}
               </tr>
@@ -94,13 +97,16 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
             <tbody>
               {parsed.rows.map(r => (
                 <tr key={r.id}>
+                  <td style={previewCell}>{r.action || '-'}</td>
                   <td style={previewCell}>{r.type || '-'}</td>
+                  <td style={previewCell}>{r.commitmentType || '-'}</td>
                   <td style={previewCell}>{r.yearSet || '-'}</td>
                   <td style={previewCell}>{r.baseYear || '-'}</td>
                   <td style={previewCell}>{[r.targetYear1, r.targetYear2].filter(Boolean).join(', ') || '-'}</td>
                   <td style={previewCell}>{scopesLabel(r) || '-'}</td>
                   <td style={previewCell}>{r.classification || '-'}</td>
                   <td style={previewCell}>{r.status || '-'}</td>
+                  <td style={previewCell}>{r.datePublished || '-'}</td>
                 </tr>
               ))}
             </tbody>
@@ -111,10 +117,12 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
         <button
           type="button"
           onClick={add}
-          disabled={!merge.added}
-          style={{ ...addBtn, opacity: merge.added ? 1 : 0.5, cursor: merge.added ? 'pointer' : 'default' }}
+          disabled={!changes}
+          style={{ ...addBtn, opacity: changes ? 1 : 0.5, cursor: changes ? 'pointer' : 'default' }}
         >
-          Add {merge.added || ''} target{merge.added === 1 ? '' : 's'}
+          {!merge.added && merge.updated
+            ? `Fill in ${merge.updated} target${merge.updated === 1 ? '' : 's'}`
+            : `Add ${merge.added || ''} target${merge.added === 1 ? '' : 's'}`}
         </button>
         <button type="button" onClick={onClose} style={secondaryBtn}>Cancel</button>
         <span style={{ fontSize: '0.75rem', color: '#64748B' }}>
@@ -122,7 +130,8 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
             : !parsed.rows.length ? 'No targets found in what was pasted.'
               : [
                 `${parsed.rows.length} row${parsed.rows.length === 1 ? '' : 's'} read`,
-                merge.duplicates ? `${merge.duplicates} already logged, skipped` : '',
+                merge.duplicates - merge.updated ? `${merge.duplicates - merge.updated} already logged, skipped` : '',
+                merge.updated ? `${merge.updated} already logged, missing details filled in` : '',
               ].filter(Boolean).join(', ')}
         </span>
       </div>
@@ -143,6 +152,26 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
 
   const columns = [
     {
+      key: 'action',
+      label: 'Action',
+      defaultWidth: 130,
+      getSortValue: r => r.action.toLowerCase() || null,
+      getFilterValue: r => r.action,
+      exportValue: r => r.action,
+      render: r => (
+        <select
+          value={r.action}
+          aria-label="Action"
+          onChange={e => edit(r.id, 'action', e.target.value)}
+          style={inputStyle}
+        >
+          <option value="">-</option>
+          {TARGET_ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+          {r.action && !TARGET_ACTIONS.includes(r.action) && <option value={r.action}>{r.action}</option>}
+        </select>
+      ),
+    },
+    {
       key: 'type',
       label: 'Target Type',
       defaultWidth: 260,
@@ -154,6 +183,23 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
           value={r.type}
           options={typeOptions}
           onChange={v => edit(r.id, 'type', v)}
+        />
+      ),
+    },
+    {
+      key: 'commitmentType',
+      label: 'Commitment Type',
+      defaultWidth: 150,
+      getSortValue: r => r.commitmentType.toLowerCase() || null,
+      getFilterValue: r => r.commitmentType,
+      exportValue: r => r.commitmentType,
+      render: r => (
+        <input
+          type="text"
+          value={r.commitmentType}
+          aria-label="Commitment Type"
+          onChange={e => edit(r.id, 'commitmentType', e.target.value)}
+          style={inputStyle}
         />
       ),
     },
