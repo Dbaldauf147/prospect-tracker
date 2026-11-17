@@ -10,8 +10,9 @@ import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
 import { campaignSendStats, campaignOutreachLabel, isCampaignActive, isCampaignPaused } from '../../utils/campaignOutreach';
 import { campaignSubjects } from '../../utils/campaignSubjects';
 import { campaignCategory } from '../../utils/campaignCategory';
-import { CAMPAIGN_AUDIENCES, campaignAudience, campaignIdentity } from '../../utils/campaignAudience';
-import { saveCampaignAudience } from '../../utils/campaignAudienceStore';
+import { CAMPAIGN_AUDIENCES, campaignAudience, campaignIdentity, campaignSchedule } from '../../utils/campaignAudience';
+import { saveCampaignAudience, saveCampaignSchedule } from '../../utils/campaignAudienceStore';
+import { AudienceScheduleDate } from '../EmailCampaignView/AudienceScheduleDate';
 import { fmtDate } from '../../utils/dealsFormat';
 import { campaignWarnings } from '../../utils/campaignWarnings';
 
@@ -49,6 +50,11 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
 
   const toggle = (c, key, on) => {
     saveCampaignAudience(user?.uid, c, key, on).catch(err => window.alert(`Could not save Sent To: ${err?.message || err}`));
+  };
+  // The audience's planned send date (set on Email Campaigns), changed or
+  // cleared from here.
+  const reschedule = (c, key, day) => {
+    saveCampaignSchedule(user?.uid, c, key, day).catch(err => window.alert(`Could not save the date: ${err?.message || err}`));
   };
 
   const columns = useMemo(() => [
@@ -94,8 +100,9 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
       getSortValue: (r) => (campaignAudience(r.campaign)[a.key] ? 1 : 0),
       render: (r) => {
         const on = !!campaignAudience(r.campaign)[a.key];
+        const day = on ? '' : campaignSchedule(r.campaign)[a.key];
         return (
-          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'center' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
             <input
               type="checkbox"
               checked={on}
@@ -105,6 +112,7 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
               title={`Sent to ${a.label}`}
               style={{ margin: 0, width: 15, height: 15, accentColor: '#16A34A', cursor: user?.uid ? 'pointer' : 'default' }}
             />
+            {day && <AudienceScheduleDate value={day} label={a.label} hideEmpty compact disabled={!user?.uid} onChange={(next) => reschedule(r.campaign, a.key, next)} />}
           </div>
         );
       },
