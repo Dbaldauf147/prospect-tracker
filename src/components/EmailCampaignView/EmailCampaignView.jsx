@@ -1360,14 +1360,15 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
 
   // Saved Campaigns row colours (campaignRowTone): green once every
   // audience is ticked Sent To, yellow when paused or when every audience is
-  // ticked or has a date still to come. The active campaigns with neither
-  // colour are the ones still needing work, so they are listed first; the
-  // rest keep their saved order below them. Indexes stay the stored ones.
+  // ticked or has a date still to come. Every active campaign sits above the
+  // inactive and paused ones; within the active ones, those with neither
+  // colour (still needing work) come first. Each tier keeps its saved order.
+  // Indexes stay the stored ones.
   const todayIso = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
   const rowTone = (c) => campaignRowTone(c, todayIso, isCampaignPaused(c));
   const savedOrder = savedCampaigns
-    .map((c, i) => ({ i, top: effectiveActive(c) && !rowTone(c) }))
-    .sort((a, b) => (b.top - a.top) || (a.i - b.i))
+    .map((c, i) => ({ i, rank: !effectiveActive(c) ? 2 : rowTone(c) ? 1 : 0 }))
+    .sort((a, b) => (a.rank - b.rank) || (a.i - b.i))
     .map(x => x.i);
 
   // Flip a saved campaign's Active/Inactive status by hand and persist it.
