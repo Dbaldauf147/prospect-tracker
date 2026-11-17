@@ -1,7 +1,9 @@
 // A company's sustainability targets, logged by hand on the company popup's
 // Targets tab. Stored on the company record as `climateTargets`: an array of
 //   { id, type, yearSet, baseYear, targetYear1, targetYear2, scope1, scope2, scope3,
-//     classification, status }
+//     classification, status, hidden }
+// `hidden` greys the row out on the tab (kept, not deleted: an old target
+// worth remembering but not worth reading past).
 // `classification` is the target's ambition (SBTi's "1.5°C", "Well-below
 // 2°C", or for a commitment its type, "BA1.5 Option 2"); `status` is free
 // text ("Validated Targets", "Committed"). Both arrive mostly by pasting the
@@ -25,7 +27,7 @@ function newId() {
 export function blankTarget() {
   return {
     id: newId(), type: '', yearSet: '', baseYear: '', targetYear1: '', targetYear2: '',
-    scope1: false, scope2: false, scope3: false, classification: '', status: '',
+    scope1: false, scope2: false, scope3: false, classification: '', status: '', hidden: false,
   };
 }
 
@@ -53,13 +55,14 @@ export function normalizeTargets(raw) {
       scope3: !!r.scope3,
       classification: String(r.classification || ''),
       status: String(r.status || ''),
+      hidden: !!r.hidden,
     }));
 }
 
 // The list with one row's field changed. Year fields are cleaned on the way in.
 export function updateTarget(list, id, key, value) {
   const v = TARGET_YEAR_KEYS.includes(key) ? cleanYear(value)
-    : TARGET_SCOPES.includes(key) ? !!value
+    : (TARGET_SCOPES.includes(key) || key === 'hidden') ? !!value
       : String(value ?? '');
   return normalizeTargets(list).map(r => (r.id === id ? { ...r, [key]: v } : r));
 }

@@ -21,7 +21,7 @@ function check(label, actual, expected) {
 
 check('normalize: not an array', normalizeTargets(null), []);
 check('normalize: fills blanks, drops junk', normalizeTargets([{ id: 'a', type: 'Net zero', baseYear: 2019 }, null, 'x']), [
-  { id: 'a', type: 'Net zero', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false, classification: '', status: '' },
+  { id: 'a', type: 'Net zero', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false, classification: '', status: '', hidden: false },
 ]);
 check('cleanYear: digits only, four max', [cleanYear('20a305'), cleanYear(''), cleanYear(null)], ['2030', '', '']);
 const list = [{ id: 'a', type: '' }, { id: 'b', type: 'SBTi' }];
@@ -58,15 +58,15 @@ const parsed = parsePastedTargets(SBTI);
 check('paste: six rows', parsed.rows.length, 6);
 check('paste: net-zero row', strip(parsed.rows)[0], {
   type: 'Net zero', yearSet: '2024', baseYear: '2019', targetYear1: '2040', targetYear2: '',
-  scope1: true, scope2: true, scope3: true, classification: '1.5°C', status: 'Other',
+  scope1: true, scope2: true, scope3: true, classification: '1.5°C', status: 'Other', hidden: false,
 });
 check('paste: scope 3 alone, NA classification blank', strip(parsed.rows)[2], {
   type: 'SBTi near-term', yearSet: '2024', baseYear: '2019', targetYear1: '2030', targetYear2: '',
-  scope1: false, scope2: false, scope3: true, classification: '', status: 'Other',
+  scope1: false, scope2: false, scope3: true, classification: '', status: 'Other', hidden: false,
 });
 check('paste: commitment row', strip(parsed.rows)[5], {
   type: 'SBTi commitment', yearSet: '2021', baseYear: '', targetYear1: '', targetYear2: '',
-  scope1: false, scope2: false, scope3: false, classification: 'BA1.5 Option 2', status: 'Validated Targets',
+  scope1: false, scope2: false, scope3: false, classification: 'BA1.5 Option 2', status: 'Validated Targets', hidden: false,
 });
 const noHeader = parsePastedTargets(SBTI.split('\r\n').slice(1).join('\n'));
 check('paste: without the header, same rows', strip(noHeader.rows), strip(parsed.rows));
@@ -88,6 +88,15 @@ check('types: blank is not added', types.addTargetTypeOption('   '), false);
 check('types: a removed default stays removed', [types.removeTargetTypeOption('Net zero'), types.loadTargetTypeOptions().includes('Net zero')], [true, false]);
 check('types: removing what is not there', types.removeTargetTypeOption('Nope'), false);
 check('types: dedupe keeps first spelling', types.dedupeTypes(['A', 'a', ' b ', '', 3]), ['A', 'b']);
+
+// Hide: a flag on the row, kept through normalize and toggled like a scope.
+{
+  const hid = updateTarget([{ id: 'h', type: 'Net zero' }], 'h', 'hidden', true);
+  check('hide: sets the flag', hid[0].hidden, true);
+  check('hide: survives normalize', normalizeTargets(hid)[0].hidden, true);
+  check('hide: unhide', updateTarget(hid, 'h', 'hidden', false)[0].hidden, false);
+  check('hide: new targets start shown', blankTarget().hidden, false);
+}
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll company targets tests passed.');
