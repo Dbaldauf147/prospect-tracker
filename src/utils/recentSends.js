@@ -18,8 +18,14 @@ import { RECENT_CAMPAIGN_DAYS } from './recentCampaignWarning.js';
 export const RECENT_SENDS_GROUPS = [
   { key: 'client', label: 'Clients', gate: 'isClient' },
   { key: 'key', label: 'Key Contacts', gate: 'isKey' },
-  { key: 'prospect', label: 'Prospects', gate: 'isKeyProspect' },
+  // Prospects are only the Decision Makers the other two groups don't
+  // already hold: nobody on Key Contacts and nobody at a client.
+  { key: 'prospect', label: 'Prospects', gate: 'isKeyProspect', unless: ['isKey', 'isClient'] },
 ];
+
+// Is contact `c` in group `g`: its gate passes and none of its `unless` do.
+const inGroup = (g, gates, c) => gates[g.gate](c)
+  && !(g.unless || []).some(u => typeof gates[u] === 'function' && gates[u](c));
 
 const norm = (s) => String(s || '').trim().toLowerCase();
 
@@ -52,7 +58,7 @@ export function recentSendsByGroup({
   for (const c of contacts || []) {
     const email = norm(c?.email);
     if (!email || seen.has(email) || email.endsWith('@se.com')) continue;
-    const inGroups = groups.filter(g => gates[g.gate](c));
+    const inGroups = groups.filter(g => inGroup(g, gates, c));
     if (!inGroups.length) continue;
     seen.add(email);
     const entry = detail.get(email);
