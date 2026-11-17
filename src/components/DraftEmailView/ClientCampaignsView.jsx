@@ -23,6 +23,18 @@ import { loadOppsFromCache } from '../../utils/oppsCache';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
+import { prospectsAnyway } from '../../utils/serviceProspectAnyway';
+
+// The company popup's "Prospect" flag on a Not Sold service
+// (utils/serviceProspectAnyway): still being prospected for, so it is
+// called out wherever the Not Sold status shows here.
+const PROSPECT_TAG_STYLE = {
+  flexShrink: 0, fontSize: '0.6rem', fontWeight: 700, padding: '0 5px', borderRadius: 4,
+  border: '1px solid #16A34A', background: '#DCFCE7', color: '#166534', whiteSpace: 'nowrap',
+};
+const prospectTag = (service) => (
+  <span data-prospect-anyway style={PROSPECT_TAG_STYLE} title={`Not Sold, but still prospecting for ${service} (the Prospect button on the company popup)`}>Prospect</span>
+);
 
 const PICK_KEY = 'client-campaigns-pick';
 
@@ -91,6 +103,12 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     [services, clients, settings, contacts, oppStagesByClient],
   );
   const statusOf = (client, service) => effectiveServiceStatus(client, service, oppStagesByClient, autoNaByClient);
+  // The status as text, "Not Sold - Prospect" when it is flagged to keep
+  // prospecting, so the column's filter and export can tell the two apart.
+  const statusLabel = (r, service) => {
+    const status = (r.client && statusOf(r.client, service)) || '';
+    return status && prospectsAnyway(r.client, service, status) ? `${status} - Prospect` : status;
+  };
   const serviceBuckets = useMemo(
     () => clientServiceBuckets({ rows: allRows, services, statusOf }),
     // statusOf only reads the two maps below.
@@ -193,19 +211,22 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     ...services.map(service => ({
       key: `svc:${service.toLowerCase()}`,
       label: service,
-      defaultWidth: 130,
+      defaultWidth: 175,
       getSortValue: r => SERVICE_BUCKETS.findIndex(b => b.key === serviceStatusBucket(r.client ? statusOf(r.client, service) : '')),
-      getFilterValue: r => (r.client && statusOf(r.client, service)) || 'Not explored',
-      exportValue: r => (r.client && statusOf(r.client, service)) || '',
+      getFilterValue: r => statusLabel(r, service) || 'Not explored',
+      exportValue: r => statusLabel(r, service),
       render: r => {
         const status = r.client ? statusOf(r.client, service) : '';
         if (!status) return <span style={{ color: '#94A3B8' }}>Not explored</span>;
         const c = serviceStatusColor(status);
         return (
-          <span style={{
-            background: c.bg || '#F1F5F9', color: c.color || '#475569',
-            padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap',
-          }}>{status}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <span style={{
+              background: c.bg || '#F1F5F9', color: c.color || '#475569',
+              padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap',
+            }}>{status}</span>
+            {prospectsAnyway(r.client, service, status) && prospectTag(service)}
+          </span>
         );
       },
     })),
@@ -288,6 +309,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
                         {onSelectProspect && row.client
                           ? <button type="button" style={{ ...linkBtn, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${row.company}${status && b.key === 'inProgress' ? ` (${status})` : ''}. Open the company popup`} onClick={() => onSelectProspect(row.client)}>{row.company}</button>
                           : <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company}</span>}
+                        {row.client && prospectsAnyway(row.client, service, status) && prospectTag(service)}
                         <span
                           style={{ marginLeft: 'auto', flexShrink: 0, fontSize: '0.68rem', color: row.onCampaign ? '#3730A3' : '#94A3B8', fontWeight: row.onCampaign ? 700 : 400 }}
                           title={row.onCampaign ? `${row.onCampaign} ${row.onCampaign === 1 ? 'person' : 'people'} here on this campaign` : 'Nobody here is on this campaign'}
