@@ -2,7 +2,7 @@
 // clients a campaign reached, and who at each.
 // Plain Node, no framework. Run:
 //   node scripts/clientCampaignCoverage.test.mjs
-import { currentClients, campaignChoices, clientCampaignRows, clientServiceBuckets } from '../src/utils/clientCampaignCoverage.js';
+import { currentClients, campaignChoices, clientCampaignRows, clientServiceBuckets, rosterAccounts } from '../src/utils/clientCampaignCoverage.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -61,6 +61,29 @@ check('choices: newest first', campaignChoices([
   check('buckets: every bucket listed, empty ones too', out[0].buckets.map(b => `${b.label}:${b.clients.map(x => x.row.company).join('|')}`),
     ['Sold:Acme Holdings', 'In progress:', 'Not sold:', 'N/A:Globex Corp', 'Not explored:Hooli']);
   check('buckets: Renewal shows under Not explored', out[0].buckets.find(b => b.key === 'none').clients.map(x => x.status), ['Renewal']);
+}
+
+{
+  // Key Contacts / Prospects: the companies behind a contact roster.
+  const contacts = [
+    { email: 'kim@umbrella.com', company: 'Umbrella', key: true },
+    { email: 'lee@umbrella.com', company: 'Umbrella Corp', key: true },
+    { email: 'ann@acme.com', company: '', key: true },
+    { email: 'off@initech.com', company: 'Initech', key: false },
+    { email: 'who@nowhere.com', company: 'Nowhere LLC', key: true },
+    { email: 'via@sub.com', company: 'Sub Co', key: true, via: 'Hooli' },
+  ];
+  const gate = c => c.key;
+  check('roster accounts: gate passers, one per company, unmatched dropped',
+    rosterAccounts({ prospects, contacts, gate }).map(p => p.id), ['4', '1']);
+  check('roster accounts: accountOf names the record',
+    rosterAccounts({ prospects, contacts, gate, accountOf: c => c.via || '' }).map(p => p.id), ['4', '1', '6']);
+  check("roster accounts: Don't Track left off",
+    rosterAccounts({ prospects, contacts, gate, untrackedMap: { umbrella: true } }).map(p => p.id), ['1']);
+  const accounts = rosterAccounts({ prospects, contacts, gate });
+  const krows = clientCampaignRows({ prospects, campaign: { contacts: [{ email: 'kim@umbrella.com', name: 'Kim', company: 'Umbrella', sentDate: '2026-10-01' }, { email: 'jane@acme.com', name: 'Jane', company: 'Acme Holdings' }] }, accounts });
+  check('rows over other accounts: one per account, people matched to them',
+    krows.map(r => [r.company, r.people.map(p => p.name)]), [['Umbrella', ['Kim']], ['Acme Holdings', ['Jane']]]);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
