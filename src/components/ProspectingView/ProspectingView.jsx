@@ -58,6 +58,7 @@ import { COLD_OUTREACH_EXCLUDED_STATUSES } from '../../utils/decisionMakerCovera
 import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQueue';
 import { ProspectingHistory } from './ProspectingHistory';
 import { ProspectingCompanies } from './ProspectingCompanies';
+import { ProspectingTargets } from './ProspectingTargets';
 import { ProspectingTiered } from './ProspectingTiered';
 import { ProspectingDmsNoActivityTabs } from './ProspectingDmsNoActivity';
 import { ProspectingLogic } from './ProspectingLogic';
@@ -125,6 +126,7 @@ const SUBTABS = [
   { key: 'pcs', label: 'PCs' },
   { key: 'tiered', label: 'Tiered Activity' },
   { key: 'dmsNoActivity', label: 'DMs Without Activity' },
+  { key: 'targets', label: 'Targets' },
   { key: 'news', label: 'News' },
   { key: 'logic', label: 'Prospecting Logic' },
 ];
@@ -1734,6 +1736,13 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
         <ProspectingLogic steps={steps} settings={settings} updateSettings={updateSettings} canEdit={canEdit} maxWidth={PAGE_MAX} />
       ) : subtab === 'news' ? (
         <ProspectingNews />
+      ) : subtab === 'targets' ? (
+        <ProspectingTargets
+          prospects={prospects || []}
+          settings={settings}
+          updateSettings={updateSettings}
+          onSelectProspect={onSelectProspect}
+        />
       ) : subtab === 'dmsNoActivity' ? (
         <ProspectingDmsNoActivityTabs
           prospects={prospects}

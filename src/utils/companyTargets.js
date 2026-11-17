@@ -242,3 +242,20 @@ export function mergePastedTargets(existing, pasted) {
   }
   return { list, added, duplicates };
 }
+
+// ---- Every company's targets, as one list ------------------------------
+// Prospecting > Targets lists the targets saved on every company popup:
+// [{ ...target, id: '<prospect id>:<target id>', targetId, prospect, company }]
+// Companies with none add nothing. Hidden targets are included (the page
+// decides whether to show them).
+export function allSavedTargets(prospects) {
+  const out = [];
+  for (const p of prospects || []) {
+    const list = normalizeTargets(p?.climateTargets);
+    if (!list.length) continue;
+    for (const t of list) {
+      out.push({ ...t, id: `${p.id}:${t.id}`, targetId: t.id, prospect: p, company: String(p.company || '') });
+    }
+  }
+  return out;
+}
