@@ -6,7 +6,8 @@
 // refresh falls due. Every cell edits in place and autosaves with the rest of
 // the card. See utils/companyTargets for the stored shape.
 // "Paste targets" takes a whole table at once, shaped like the SBTi target
-// dashboard's Targets / Commitments table (see parsePastedTargets).
+// dashboard's Targets / Commitments table, or a target written as prose
+// (see parsePastedTargets / parseFreeTextTargets).
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import {
@@ -74,13 +75,15 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
         Paste a targets table, header row optional. The SBTi dashboard's Targets / Commitments
         table works as copied: Action, Commitment Type, Status, Target, Scope, Target Classification,
         Base Year, Target Year, Date Published. The year it was published becomes the Year Set.
+        Or paste a target written as text, such as a sentence from a sustainability report: each
+        sentence naming a target year or a kind of target becomes a row. Check the preview before adding.
       </div>
       <textarea
         autoFocus
         value={text}
         onChange={e => setText(e.target.value)}
-        placeholder="Paste the table here (Ctrl+V)"
-        aria-label="Pasted targets table"
+        placeholder="Paste the table or the text here (Ctrl+V)"
+        aria-label="Pasted targets"
         rows={5}
         style={{ ...inputStyle, fontSize: '0.75rem', fontFamily: 'ui-monospace, monospace', resize: 'vertical' }}
       />
@@ -321,7 +324,7 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
         The sustainability targets {company ? <strong>{company}</strong> : 'this company'} has set:
         the kind of target, the year it was set, its base year, up to two target years, and which
         scopes it covers. Paste targets takes a whole table at once, such as the SBTi
-        dashboard's. Each target is due a refresh {REFRESH_CYCLE_YEARS} years after the year
+        dashboard's, or a target written as text. Each target is due a refresh {REFRESH_CYCLE_YEARS} years after the year
         it was set. Changes save as you type.
       </div>
       <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -339,7 +342,7 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
         </button>
         {!pasting && (
           <button type="button" onClick={() => setPasting(true)} style={secondaryBtn}
-            title="Paste a table of targets, such as the SBTi dashboard's Targets / Commitments table">
+            title="Paste a table of targets or a target written as text, such as the SBTi dashboard's Targets / Commitments table">
             Paste targets
           </button>
         )}

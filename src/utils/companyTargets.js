@@ -222,9 +222,112 @@ function pasteGrid(text) {
   return grid;
 }
 
+// ---- Free text ----------------------------------------------------------
+// The paste box also reads a target written as prose, as copied out of a
+// sustainability report or a news story:
+//   "Realterm aims to achieve net-zero Scope 1 and Scope 2 emissions by 2050"
+// Each sentence that names a target year or a kind of target becomes a row.
+// It is read as prose when nothing is tab-separated and some line runs to
+// six words or more; the SBTi table copied one cell per line never does.
+
+// Kind of target, first match wins (net zero before the reductions, since a
+// net-zero sentence often mentions reducing on the way there).
+const FREE_TEXT_TYPES = [
+  [/\bnet[\s-]*zero\b/i, 'Net zero'],
+  [/\bcarbon[\s-]*neutral(ity)?\b|\bclimate[\s-]*neutral(ity)?\b/i, 'Carbon neutral'],
+  [/\bnet[\s-]*positive\b|\bcarbon[\s-]*negative\b|\bclimate[\s-]*positive\b/i, 'Net positive'],
+  [/\bRE100\b|\brenewable (electricity|energy|power)\b/i, 'Renewable electricity (RE100)'],
+  [/\bnear[\s-]*term\b/i, 'SBTi near-term'],
+  [/\blong[\s-]*term\b/i, 'SBTi long-term'],
+  [/\bintensity\b/i, 'Emissions intensity reduction'],
+  [/\b(reduc\w*|cut\w*|lower\w*|decreas\w*)\b[^.]*?\d+(\.\d+)?\s*(%|percent)|\d+(\.\d+)?\s*(%|percent)[^.]*?\b(reduc\w*|cut\w*|lower\w*|decreas\w*)\b/i, 'Absolute emissions reduction'],
+];
+
+const YEAR = '((?:19|20)\\d{2})(?!\\d)';
+
+export function looksLikeFreeText(text) {
+  const t = String(text ?? '');
+  if (!t.trim() || t.includes('\t')) return false;
+  return t.split(/\r?\n/).some(l => l.trim().split(/\s+/).length >= 6);
+}
+
+// Scopes named in a sentence: "Scope 1 and Scope 2", "Scopes 1, 2 and 3",
+// "Scope 1+2", "scope 1-3".
+function freeTextScopes(sentence) {
+  const found = new Set();
+  const re = /\bscopes?\s*((?:[123](?:\s*(?:,|and|&|\+|\/|-|–|to)\s*(?:scope\s*)?)?)+)/gi;
+  let m;
+  while ((m = re.exec(sentence))) {
+    const part = m[1];
+    const range = part.match(/([123])\s*(?:-|–|to)\s*([123])/);
+    if (range) for (let n = Number(range[1]); n <= Number(range[2]); n += 1) found.add(n);
+    for (const d of part.match(/[123]/g) || []) found.add(Number(d));
+  }
+  return { scope1: found.has(1), scope2: found.has(2), scope3: found.has(3) };
+}
+
+function freeTextRow(sentence) {
+  const s = sentence.replace(/\s+/g, ' ').trim();
+  const type = (FREE_TEXT_TYPES.find(([re]) => re.test(s)) || [])[1] || '';
+  const baseYear = (s.match(new RegExp(`\\b(?:base(?:line)?(?: year)?(?: of)?|from|against|vs\\.?|versus|relative to|compared (?:to|with))\\s+(?:a |the |its |fiscal |FY ?)?${YEAR}`, 'i'))
+    || s.match(new RegExp(`${YEAR}\\s+(?:base(?:line)?|levels?)\\b`, 'i')) || [])[1] || '';
+  const yearSet = (s.match(new RegExp(`\\b(?:set|announced|committed|pledged|published|adopted|launched)\\b[^.]{0,30}?\\b(?:in|during)\\s+${YEAR}`, 'i'))
+    || s.match(new RegExp(`\\b(?:in|during)\\s+${YEAR},`, 'i')) || [])[1] || '';
+  const targetYears = [];
+  const re = new RegExp(`\\b(?:by|before|in|until|through|no later than|ahead of|to)\\s+(?:the end of |end of |year[- ]end |FY ?|fiscal (?:year )?)?${YEAR}`, 'gi');
+  let m;
+  while ((m = re.exec(s))) {
+    const y = m[1];
+    if (y !== baseYear && y !== yearSet && !targetYears.includes(y)) targetYears.push(y);
+  }
+  const classification = /well[\s-]*below\s*2\s*°?\s*C/i.test(s) ? 'Well-below 2°C'
+    : /1\.5\s*°?\s*C/i.test(s) ? '1.5°C'
+      : /\b2\s*°\s*C/i.test(s) ? '2°C' : '';
+  return {
+    ...blankTarget(),
+    action: 'Target',
+    type,
+    yearSet,
+    baseYear,
+    targetYear1: targetYears[0] || '',
+    targetYear2: targetYears[1] || '',
+    ...freeTextScopes(s),
+    classification,
+    status: /\b(SBTi[\s-]*)?validated\b/i.test(s) ? 'Validated Targets' : '',
+  };
+}
+
+export function parseFreeTextTargets(text) {
+  // Sentence ends: . ! ? ; or a line break. A decimal point ("1.5°C") or an
+  // abbreviation followed by a lower-case word doesn't split.
+  const sentences = String(text ?? '')
+    .split(/\n+|(?<=[.!?;])\s+(?=[A-Z(])/)
+    .map(x => x.trim())
+    .filter(Boolean);
+  const rows = [];
+  let skipped = 0;
+  for (const sentence of sentences) {
+    const row = freeTextRow(sentence);
+    if (row.type || row.targetYear1) { rows.push(row); continue; }
+    // "The targets were validated by SBTi as consistent with 1.5°C." names
+    // no target of its own but describes the ones before it.
+    if (rows.length && (row.classification || row.status)) {
+      for (const r of rows) {
+        if (!r.classification) r.classification = row.classification;
+        if (!r.status) r.status = row.status;
+      }
+      continue;
+    }
+    skipped += 1;
+  }
+  return { rows, skipped };
+}
+
 // Parse a pasted table into target rows (with fresh ids).
 //   { rows, skipped }  skipped counts lines that held nothing usable.
+// Prose instead of a table goes to parseFreeTextTargets.
 export function parsePastedTargets(text) {
+  if (looksLikeFreeText(text)) return parseFreeTextTargets(text);
   const grid = pasteGrid(text);
   if (!grid.length) return { rows: [], skipped: 0 };
   // A header row is one where most of the cells are names we know.
