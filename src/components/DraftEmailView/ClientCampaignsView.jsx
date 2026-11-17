@@ -20,7 +20,7 @@ import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { DataTable } from '../common/DataTable';
 import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
-import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket, currentClients, rosterAccounts, keyContactSummary, contactHasAnyTag, CAMPAIGN_AUDIENCE_VIEWS } from '../../utils/clientCampaignCoverage';
+import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket, currentClients, rosterAccounts, keyContactSummary, contactHasAnyTag, contactClosedOnService, CAMPAIGN_AUDIENCE_VIEWS } from '../../utils/clientCampaignCoverage';
 import { makeRosterGates } from '../../utils/contactRosters';
 import { getEffectiveServiceMetadata, parseServiceContactTags } from '../../data/serviceCatalog';
 import { campaignServices } from '../../utils/campaignServices';
@@ -304,22 +304,27 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     }
     return out;
   }, [services, settings?.serviceOverrides]);
+  const tagReviewMap = settings?.contactTagReview || null;
   // keyPeople: company key -> the roster people there (Key Contacts or Key
   // Prospects), listed whether or not the campaign reached them.
   const { accounts, keyPeople } = useMemo(() => {
     if (audienceKey === 'clients' || !rosterGates) return { accounts: currentClients(prospects, cdmName, clientUntrackedMap), keyPeople: null };
     if (audienceKey === 'keyContacts') {
       const people = new Map();
-      const list = rosterAccounts({ prospects, contacts, gate: rosterGates.isKey, untrackedMap: clientUntrackedMap, people });
+      // Less anybody whose own status for this service's tag is Not sold
+      // or N/A: that is settled with them, so they aren't one to send to.
+      const gate = (c) => rosterGates.isKey(c) && !contactClosedOnService(c, tagReviewMap, serviceTags);
+      const list = rosterAccounts({ prospects, contacts, gate, untrackedMap: clientUntrackedMap, people });
       return { accounts: keyContactsIncludeClients ? list : list.filter(p => !isClientCompany(p)), keyPeople: people };
     }
     // Key Prospects for this campaign: Decision Makers at a Tier account
     // who also carry one of the campaign services' Contact Tags (e.g.
     // Procurement), not every Decision Maker there.
     const people = new Map();
-    const gate = (c) => rosterGates.isKeyProspect(c) && contactHasAnyTag(c, serviceTags);
+    const gate = (c) => rosterGates.isKeyProspect(c) && contactHasAnyTag(c, serviceTags)
+      && !contactClosedOnService(c, tagReviewMap, serviceTags);
     return { accounts: rosterAccounts({ prospects, contacts, gate, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap, people }), keyPeople: people };
-  }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap, keyContactsIncludeClients, serviceTags]);
+  }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap, keyContactsIncludeClients, serviceTags, tagReviewMap]);
 
   const allRows = useMemo(
     () => clientCampaignRows({ prospects, cdmName, campaign, accounts }),

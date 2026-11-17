@@ -108,3 +108,29 @@ check('anyTag: no service tags narrows nothing', contactHasAnyTag({ dans_tags: '
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll client campaign coverage tests passed.');
+
+// Key Contacts / Prospects views leave out people closed on the service.
+{
+  const { contactClosedOnService } = await import('../src/utils/clientCampaignCoverage.js');
+  const assert = (await import('node:assert/strict')).default;
+  const tags = ['Procurement'];
+  const notSold = { id: 1, dans_tags: 'Dan Key Target' };
+  const na = { id: 2, dans_tags: 'Dan Key Target;Procurement' };
+  const open = { id: 3, dans_tags: 'Dan Key Target;Procurement' };
+  const staleNotSold = { id: 4, dans_tags: 'Dan Key Target;Procurement' };
+  const twoTags = { id: 5, dans_tags: 'Dan Key Target;ESG' };
+  const review = {
+    1: { Procurement: { answer: 'yes', status: 'notsold' } },
+    2: { procurement: { answer: 'yes', status: 'na' } },
+    4: { Procurement: { answer: 'yes', status: 'notsold' } },
+    5: { Procurement: { status: 'notsold' } },
+  };
+  assert.equal(contactClosedOnService(notSold, review, tags), true, 'Not sold: out');
+  assert.equal(contactClosedOnService(na, review, tags), true, 'N/A: out, any casing');
+  assert.equal(contactClosedOnService(open, review, tags), false, 'no status: stays');
+  assert.equal(contactClosedOnService(staleNotSold, review, tags), false, 'tag back on: the stale Not sold no longer counts, as in the popup');
+  assert.equal(contactClosedOnService(twoTags, review, ['Procurement', 'ESG']), false, 'another service tag still open: stays');
+  assert.equal(contactClosedOnService(twoTags, review, ['Procurement']), true);
+  assert.equal(contactClosedOnService(notSold, review, []), false, 'no service tags: nothing to judge by');
+  assert.equal(contactClosedOnService(notSold, null, tags), false);
+}
