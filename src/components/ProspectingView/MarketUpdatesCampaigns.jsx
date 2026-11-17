@@ -26,13 +26,17 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
   const { campaigns, loading } = useSavedCampaigns();
 
   const rows = useMemo(() => {
+    // Only active campaigns belong under this step: paused and inactive
+    // ones are left out, the same rule the step's own status follows.
+    // Ids are numbered across every campaign so they stay stable when a
+    // campaign's status changes.
     const seen = new Map();
     return (campaigns || []).map((c) => {
       const base = campaignIdentity(c);
       const n = (seen.get(base) || 0) + 1;
       seen.set(base, n);
       return { id: n > 1 ? `${base}#${n}` : base, campaign: c, stats: campaignSendStats(c), status: statusOf(c) };
-    });
+    }).filter((r) => r.status === 'Active');
   }, [campaigns]);
 
   const toggle = (c, key, on) => {
@@ -129,11 +133,11 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
   ], [onNavigate, user?.uid]);
 
   if (loading) return <div style={{ marginTop: 8, fontSize: '0.72rem', color: '#94A3B8' }}>Loading campaigns...</div>;
-  if (!rows.length) return null;
+  if (!(campaigns || []).length) return null;
   return (
     <div style={{ marginTop: 8 }} data-market-updates-campaigns>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: 4 }}>
-        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>Saved campaigns ({rows.length}):</span>
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.02em' }}>Active campaigns ({rows.length}):</span>
         {onNavigate && (
           <button
             type="button"
@@ -151,7 +155,7 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
         rows={rows}
         variableRowHeight
         fitWidth
-        emptyMessage="No saved campaigns"
+        emptyMessage="No active campaigns"
         settings={settings}
         updateSettings={updateSettings}
       />
