@@ -53,10 +53,22 @@ export function ProspectingTargets({ prospects, settings, updateSettings, onSele
       render: r => reportingTier(r.prospect) || dash,
     },
     {
+      key: 'action', label: 'Action', defaultWidth: 110,
+      getFilterValue: r => r.action,
+      exportValue: r => r.action,
+      render: r => r.action || dash,
+    },
+    {
       key: 'type', label: 'Target Type', defaultWidth: 180,
       getFilterValue: r => r.type,
       exportValue: r => r.type,
       render: r => r.type || dash,
+    },
+    {
+      key: 'commitmentType', label: 'Commitment Type', defaultWidth: 140,
+      getFilterValue: r => r.commitmentType,
+      exportValue: r => r.commitmentType,
+      render: r => r.commitmentType || dash,
     },
     ...YEAR_COLUMNS.map(c => ({
       key: c.key, label: c.label, defaultWidth: 105,
@@ -89,6 +101,12 @@ export function ProspectingTargets({ prospects, settings, updateSettings, onSele
       getFilterValue: r => r.status,
       exportValue: r => r.status,
       render: r => r.status || dash,
+    },
+    {
+      key: 'datePublished', label: 'Date Published', defaultWidth: 120,
+      getFilterValue: r => r.datePublished,
+      exportValue: r => r.datePublished,
+      render: r => (r.datePublished ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{r.datePublished}</span> : dash),
     },
     {
       key: 'refreshDue', label: 'Refresh Due', defaultWidth: 160,
