@@ -158,5 +158,20 @@ check('types: dedupe keeps first spelling', types.dedupeTypes(['A', 'a', ' b ', 
   check('no target: detected', [hasNoTargetRow([n]), hasNoTargetRow([{ id: 'x', type: 'no target SET' }]), hasNoTargetRow([{ id: 'y', type: 'Net zero' }]), hasNoTargetRow(null)], [true, true, false, false]);
 }
 
+// Free text: a target written as a sentence rather than a table.
+{
+  const pick = r => [r.action, r.type, r.yearSet, r.baseYear, r.targetYear1, r.targetYear2, scopesLabel(r), r.classification, r.status];
+  const realterm = parsePastedTargets('Realterm aims to achieve net-zero Scope 1 and Scope 2 emissions by 2050 (and targets net-positive impact before 2050 across key logistics and cargo operations like its air cargo programs)');
+  check('free text: one sentence', realterm.rows.map(pick), [['Target', 'Net zero', '', '', '2050', '', scopesLabel({ scope1: true, scope2: true }), '', '']]);
+  const report = parsePastedTargets('Acme commits to reduce absolute scope 1 and 2 GHG emissions 42% by 2030 from a 2020 base year. It also commits to reach net-zero across scopes 1-3 by 2045. The targets were validated by SBTi as consistent with 1.5\u00b0C.\nWe like cats a lot more than dogs.');
+  check('free text: several sentences, description carried back', report.rows.map(pick), [
+    ['Target', 'Absolute emissions reduction', '', '2020', '2030', '', scopesLabel({ scope1: true, scope2: true }), '1.5\u00b0C', 'Validated Targets'],
+    ['Target', 'Net zero', '', '', '2045', '', scopesLabel({ scope1: true, scope2: true, scope3: true }), '1.5\u00b0C', 'Validated Targets'],
+  ]);
+  check('free text: unrelated sentence skipped', report.skipped, 1);
+  check('free text: year set', parsePastedTargets('In 2021, Foo pledged to source 100% renewable electricity by 2025.').rows.map(pick),
+    [['Target', 'Renewable electricity (RE100)', '2021', '', '2025', '', '', '', '']]);
+}
+
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll company targets tests passed.');
