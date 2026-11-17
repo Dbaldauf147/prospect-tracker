@@ -82,3 +82,22 @@ export function scheduleState(day, today) {
   const ms = Date.parse(`${day}T00:00:00`) - Date.parse(`${today}T00:00:00`);
   return ms <= 7 * 86400000 ? 'soon' : 'later';
 }
+
+/**
+ * How a saved campaign's row is coloured on Saved Campaigns:
+ *   'complete' (green)  every audience is ticked Sent To;
+ *   'waiting'  (yellow) paused, or every audience is either ticked or has
+ *                       a date still to come (today or later);
+ *   ''                  anything else: some audience has neither, or only
+ *                       an overdue date.
+ * `paused` is passed in (utils/campaignOutreach isCampaignPaused) so this
+ * file stays free of the status rules.
+ */
+export function campaignRowTone(c, today, paused = false) {
+  const sent = campaignAudience(c);
+  if (CAMPAIGN_AUDIENCES.every(a => sent[a.key])) return 'complete';
+  if (paused) return 'waiting';
+  const dates = campaignSchedule(c);
+  if (CAMPAIGN_AUDIENCES.every(a => sent[a.key] || (dates[a.key] && dates[a.key] >= today))) return 'waiting';
+  return '';
+}

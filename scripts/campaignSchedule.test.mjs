@@ -25,3 +25,17 @@ assert.equal(scheduleState('2026-11-17', '2026-11-17'), 'today');
 assert.equal(scheduleState('2026-11-24', '2026-11-17'), 'soon');
 assert.equal(scheduleState('2026-11-25', '2026-11-17'), 'later');
 console.log('campaignSchedule: all assertions passed');
+
+// Row colours.
+import { campaignRowTone } from '../src/utils/campaignAudience.js';
+const T = '2026-11-17';
+const all = { sentTo: { clients: true, keyContacts: true, prospects: true } };
+assert.equal(campaignRowTone(all, T), 'complete');
+assert.equal(campaignRowTone(all, T, true), 'complete', 'complete wins over paused');
+assert.equal(campaignRowTone({}, T, true), 'waiting', 'paused');
+assert.equal(campaignRowTone({}, T), '');
+assert.equal(campaignRowTone({ sentTo: { clients: true }, scheduledFor: { keyContacts: '2026-11-23', prospects: '2026-11-17' } }, T), 'waiting', 'ticked + dates');
+assert.equal(campaignRowTone({ scheduledFor: { clients: '2026-12-01', keyContacts: '2026-12-01', prospects: '2026-12-01' } }, T), 'waiting', 'all dated');
+assert.equal(campaignRowTone({ sentTo: { clients: true }, scheduledFor: { keyContacts: '2026-11-23' } }, T), '', 'one audience with neither');
+assert.equal(campaignRowTone({ sentTo: { clients: true, keyContacts: true }, scheduledFor: { prospects: '2026-11-10' } }, T), '', 'overdue date does not count');
+console.log('campaignRowTone: all assertions passed');
