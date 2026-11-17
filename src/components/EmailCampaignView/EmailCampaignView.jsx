@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { useBadEmails } from '../../hooks/useBadEmails';
+import { orderCampaignRoster } from '../../utils/campaignRosterOrder';
 import { badEmailInfo, badEmailTitle } from '../../utils/badEmails';
 import { scanForBounces, bounceScanDue, CAMPAIGN_SCAN_EVERY_MS } from '../../utils/bounceScan';
 import { createPortal } from 'react-dom';
@@ -1946,15 +1947,12 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
         liveFilters,
       ));
     }
-    if (!sortConfig.key) return list;
-    const dir = sortConfig.dir === 'asc' ? 1 : -1;
-    return list.slice().sort((a, b) => {
-      const va = sortValue(a.c, sortConfig.key);
-      const vb = sortValue(b.c, sortConfig.key);
-      if (va < vb) return -1 * dir;
-      if (va > vb) return 1 * dir;
-      return a.i - b.i;
-    });
+    // The Not Sent rows lead whatever the sort (utils/campaignRosterOrder).
+    return orderCampaignRoster(
+      list,
+      sortConfig.key ? (c) => sortValue(c, sortConfig.key) : null,
+      sortConfig.dir === 'asc' ? 'asc' : 'desc',
+    );
   })();
 
   const toggleCol = (key) => setColHidden(prev => {
@@ -3298,10 +3296,15 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                     // list without reading the Outreach column row by row.
                     // The duplicate warning is louder and keeps its colour.
                     const blocked = contactOutreach(c);
+                    // Not Sent yet (and free to email): a blue tint and a
+                    // blue bar down the left edge, so the rows at the top
+                    // read as the ones still to send.
+                    const notSent = !c.sentDate;
                     const rowBg = isDup ? '#FFFBEB'
                       : blocked === 'avoid' ? 'var(--color-surface-alt)'
                         : blocked === 'hold' ? 'rgba(251, 191, 36, 0.07)'
-                          : undefined;
+                          : notSent ? '#EFF6FF'
+                            : undefined;
                     return (
                     <tr
                       key={i}
@@ -3316,7 +3319,10 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                         opacity: blocked === 'avoid' ? 0.72 : 1,
                       }}
                     >
-                      <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
+                      <td
+                        data-not-sent={notSent ? 'true' : undefined}
+                        style={{ padding: '0.4rem 0.3rem', textAlign: 'center', boxShadow: notSent && blocked === 'open' ? 'inset 3px 0 0 #2563EB' : undefined }}
+                      >
                         <button
                           onClick={() => removeContact(i)}
                           style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
