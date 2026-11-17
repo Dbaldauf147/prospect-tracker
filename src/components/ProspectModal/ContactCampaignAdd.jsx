@@ -164,8 +164,10 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 // The company popup's bulk version: the contacts ticked in the roster, put
 // on one saved campaign in a single write. Same storage and the same rows
 // as the one-contact control above, read fresh just before the write for
-// the same reason.
-export function ContactsCampaignBulkAdd({ contacts, company, onClose, onAdded }) {
+// the same reason. `hint` replaces the nothing-selected text, and
+// `preferSubject` pre-picks the campaign with that lead subject (Client
+// Campaigns passes the one on screen).
+export function ContactsCampaignBulkAdd({ contacts, company, onClose, onAdded, hint = null, preferSubject = '' }) {
   const auth = useAuth();
   const uid = auth?.user?.uid || null;
   const [campaigns, setCampaigns] = useState(null); // null = loading
@@ -184,6 +186,15 @@ export function ContactsCampaignBulkAdd({ contacts, company, onClose, onAdded })
     })();
     return () => { live = false; };
   }, [uid]);
+
+  // Pre-pick the preferred campaign once the list is in, unless one is
+  // already picked.
+  useEffect(() => {
+    const want = String(preferSubject || '').trim().toLowerCase();
+    if (!want || !Array.isArray(campaigns)) return;
+    const i = campaigns.findIndex(c => primarySubject(c).toLowerCase() === want);
+    if (i >= 0) setPick(prev => prev || String(i));
+  }, [campaigns, preferSubject]);
 
   const people = useMemo(() => (contacts || []).map(c => ({
     email: String(c?.email || '').trim(),
@@ -263,7 +274,7 @@ export function ContactsCampaignBulkAdd({ contacts, company, onClose, onAdded })
     >
       <strong style={{ fontWeight: 700 }}>Add to email campaign</strong>
       {n === 0 ? (
-        <span style={{ color: '#4338CA' }}>Tick the contacts to add in the table below. The box in the header row selects every one on screen.</span>
+        <span style={{ color: '#4338CA' }}>{hint || 'Tick the contacts to add in the table below. The box in the header row selects every one on screen.'}</span>
       ) : (
         <span>{plural(n, 'selected contact')} to</span>
       )}

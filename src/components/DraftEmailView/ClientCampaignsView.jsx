@@ -14,6 +14,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { ContactsCampaignBulkAdd } from '../ProspectModal/ContactCampaignAdd';
+import { primarySubject } from '../../utils/campaignSubjects';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { DataTable } from '../common/DataTable';
@@ -347,6 +349,34 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
       .filter(k => { const id = (k.email || k.name).toLowerCase(); if (seen.has(id)) return false; seen.add(id); return true; })
       .sort((a, b) => (!!b.status - !!a.status) || (b.dm - a.dm) || a.name.localeCompare(b.name));
   };
+  // Bulk add (Key Contacts / Prospects views): roster people ticked in the
+  // roster column, by lowercased email, put on a saved campaign from the
+  // bar above the table. Cleared when the campaign or the view changes.
+  const keyByEmail = useMemo(() => {
+    const m = new Map();
+    for (const list of (keyPeople?.values() || [])) {
+      for (const c of list) {
+        const e = String(c?.email || '').trim().toLowerCase();
+        if (e && !m.has(e)) m.set(e, c);
+      }
+    }
+    return m;
+  }, [keyPeople]);
+  const [bulkPick, setBulkPick] = useState(() => new Set());
+  useEffect(() => { setBulkPick(new Set()); }, [pickedName, audienceKey]);
+  const toggleBulk = (email) => setBulkPick(prev => {
+    const k = String(email || '').trim().toLowerCase();
+    const next = new Set(prev);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
+  const bulkContacts = [...bulkPick].map(e => keyByEmail.get(e)).filter(Boolean);
+  // Everyone in the rows on screen who isn't on this campaign yet.
+  const notOnShown = () => {
+    const out = [];
+    for (const r of rows) for (const k of keyContactsOf(r)) if (k.email && !k.status) out.push(k.email.toLowerCase());
+    return out;
+  };
   const keyContactText = (k) => `${k.name}${k.tags.length ? ` (${k.tags.join(', ')})` : ''}${k.dm ? ' DM' : ''}`;
 
   // The companies in one bucket, as the cards and the Sold / N/A pop-overs
@@ -444,6 +474,17 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
             onToggle={() => toggleCell(r, col)}
             renderItem={k => (
               <>
+                {k.email && (
+                  <input
+                    type="checkbox"
+                    checked={bulkPick.has(k.email.toLowerCase())}
+                    onChange={() => toggleBulk(k.email)}
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label={`Select ${k.name} to add to a campaign`}
+                    title="Select to add to an email campaign (bar above the table)"
+                    style={{ margin: 0, flexShrink: 0, cursor: 'pointer' }}
+                  />
+                )}
                 <span
                   aria-label={k.dm ? 'Decision Maker' : 'Not tagged Decision Maker'}
                   title={k.dm ? 'Tagged Decision Maker' : 'Not tagged Decision Maker'}
@@ -644,6 +685,33 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           </div>
         </div>
       ))}
+
+      {campaign && keyPeople && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem', color: '#475569', marginBottom: 4 }}>
+            <button
+              type="button"
+              onClick={() => setBulkPick(prev => new Set([...prev, ...notOnShown()]))}
+              title="Tick every person in the rows shown who isn't on this campaign yet"
+              style={{ padding: '2px 10px', borderRadius: 4, border: '1px solid #C7D2FE', background: '#fff', color: '#4338CA', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}
+            >Select everyone not on this campaign ({notOnShown().length})</button>
+            {bulkPick.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setBulkPick(new Set())}
+                style={{ ...linkBtn, fontSize: '0.72rem', color: '#64748B' }}
+              >Clear selection</button>
+            )}
+          </div>
+          <ContactsCampaignBulkAdd
+            contacts={bulkContacts}
+            onClose={() => setBulkPick(new Set())}
+            onAdded={() => setBulkPick(new Set())}
+            preferSubject={primarySubject(campaign)}
+            hint={`Tick people in the ${audience.key === 'keyContacts' ? 'Key Contacts' : 'Key Prospects'} column below, or use Select everyone above.`}
+          />
+        </div>
+      )}
 
       <div style={{
         height: 'calc(100vh - 230px)', minHeight: 320, display: 'flex', flexDirection: 'column',
