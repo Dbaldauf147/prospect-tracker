@@ -2,7 +2,7 @@
 // clients a campaign reached, and who at each.
 // Plain Node, no framework. Run:
 //   node scripts/clientCampaignCoverage.test.mjs
-import { currentClients, campaignChoices, clientCampaignRows, clientServiceBuckets, rosterAccounts } from '../src/utils/clientCampaignCoverage.js';
+import { currentClients, campaignChoices, clientCampaignRows, clientServiceBuckets, rosterAccounts, keyContactSummary } from '../src/utils/clientCampaignCoverage.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -84,6 +84,18 @@ check('choices: newest first', campaignChoices([
   const krows = clientCampaignRows({ prospects, campaign: { contacts: [{ email: 'kim@umbrella.com', name: 'Kim', company: 'Umbrella', sentDate: '2026-10-01' }, { email: 'jane@acme.com', name: 'Jane', company: 'Acme Holdings' }] }, accounts });
   check('rows over other accounts: one per account, people matched to them',
     krows.map(r => [r.company, r.people.map(p => p.name)]), [['Umbrella', ['Kim']], ['Acme Holdings', ['Jane']]]);
+}
+
+{
+  const people = new Map();
+  rosterAccounts({ prospects, contacts: [
+    { email: 'a@umbrella.com', company: 'Umbrella', k: 1 }, { email: 'b@umbrella.com', company: 'Umbrella', k: 1 }, { email: 'c@acme.com', company: 'Acme Holdings', k: 0 },
+  ], gate: c => c.k, people });
+  check('roster accounts: people per company', [...people].map(([k, v]) => [k, v.map(c => c.email)]), [['umbrella', ['a@umbrella.com', 'b@umbrella.com']]]);
+  const c = { firstname: 'Kim', lastname: 'Lee', email: 'kim@x.com', dans_tags: 'Dan Key Target;Procurement;ESG;Decision Maker' };
+  check('summary: service tags picked out, DM flagged', keyContactSummary(c, ['procurement']), { name: 'Kim Lee', email: 'kim@x.com', tags: ['Procurement'], dm: true });
+  check('summary: no service tags falls back to area tags', keyContactSummary({ ...c, dans_tags: 'ESG;Hide;Real Estate' }, []).tags, ['ESG', 'Real Estate']);
+  check('summary: not a DM', keyContactSummary({ email: 'z@x.com', dans_tags: 'Procurement' }, ['Procurement']).dm, false);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }

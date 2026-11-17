@@ -14,8 +14,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
-import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket, currentClients, rosterAccounts, CAMPAIGN_AUDIENCE_VIEWS } from '../../utils/clientCampaignCoverage';
+import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket, currentClients, rosterAccounts, keyContactSummary, CAMPAIGN_AUDIENCE_VIEWS } from '../../utils/clientCampaignCoverage';
 import { makeRosterGates } from '../../utils/contactRosters';
+import { getEffectiveServiceMetadata, parseServiceContactTags } from '../../data/serviceCatalog';
 import { campaignServices } from '../../utils/campaignServices';
 import { buildOppStagesByClient, effectiveServiceStatus } from '../../utils/serviceCoverage';
 import { buildAutoNaByClient } from '../../utils/serviceAutoNaByClient';
@@ -111,13 +112,16 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   // out unless this is ticked: the Clients view is where they are covered.
   const [keyContactsIncludeClients, setKeyContactsIncludeClients] = useState(() => userLsGet(KEY_CONTACTS_CLIENTS_KEY) === '1');
   const pickKeyContactsIncludeClients = (on) => { setKeyContactsIncludeClients(on); userLsSet(KEY_CONTACTS_CLIENTS_KEY, on ? '1' : ''); };
-  const accounts = useMemo(() => {
-    if (audienceKey === 'clients' || !rosterGates) return currentClients(prospects, cdmName, clientUntrackedMap);
+  // keyPeople: company key -> the Key Contacts there, for the Key Contacts
+  // column (Key Contacts view only).
+  const { accounts, keyPeople } = useMemo(() => {
+    if (audienceKey === 'clients' || !rosterGates) return { accounts: currentClients(prospects, cdmName, clientUntrackedMap), keyPeople: null };
     if (audienceKey === 'keyContacts') {
-      const list = rosterAccounts({ prospects, contacts, gate: rosterGates.isKey, untrackedMap: clientUntrackedMap });
-      return keyContactsIncludeClients ? list : list.filter(p => !isClientCompany(p));
+      const people = new Map();
+      const list = rosterAccounts({ prospects, contacts, gate: rosterGates.isKey, untrackedMap: clientUntrackedMap, people });
+      return { accounts: keyContactsIncludeClients ? list : list.filter(p => !isClientCompany(p)), keyPeople: people };
     }
-    return rosterAccounts({ prospects, contacts, gate: rosterGates.isKeyProspect, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap });
+    return { accounts: rosterAccounts({ prospects, contacts, gate: rosterGates.isKeyProspect, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap }), keyPeople: null };
   }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap, keyContactsIncludeClients]);
 
   const allRows = useMemo(
@@ -164,6 +168,24 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   const reached = allRows.filter(r => r.onCampaign > 0).length;
   const peopleCount = allRows.reduce((n, r) => n + r.onCampaign, 0);
   const repliedClients = allRows.filter(r => r.replied > 0).length;
+
+  // The campaign services' Contact Tags (Dropdowns > service), the tags the
+  // Key Contacts column picks out of each person's tags.
+  const serviceTags = useMemo(() => {
+    const out = [];
+    for (const svc of services) {
+      for (const t of parseServiceContactTags(getEffectiveServiceMetadata(svc, settings?.serviceOverrides || {})?.contactTags)) {
+        if (!out.some(x => x.toLowerCase() === t.toLowerCase())) out.push(t);
+      }
+    }
+    return out;
+  }, [services, settings?.serviceOverrides]);
+  const keyContactsOf = (r) => {
+    const list = keyPeople?.get(String(r.company || '').trim().toLowerCase()) || [];
+    return list.map(c => keyContactSummary(c, serviceTags))
+      .sort((a, b) => (b.dm - a.dm) || a.name.localeCompare(b.name));
+  };
+  const keyContactText = (k) => `${k.name}${k.tags.length ? ` (${k.tags.join(', ')})` : ''}${k.dm ? ' DM' : ''}`;
 
   const pick = (label) => {
     setPickedLabel(label);
@@ -214,6 +236,37 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
         </div>
       ) : <span style={{ color: '#94A3B8' }}>Nobody at this {audience.one} is on it</span>),
     },
+    // Key Contacts view: the Key Contacts at the company, each with their
+    // tags for the campaign's service and a check if tagged Decision Maker.
+    ...(audience.key === 'keyContacts' ? [{
+      key: 'keyContacts',
+      label: 'Key Contacts',
+      defaultWidth: 300,
+      getSortValue: r => keyContactsOf(r).filter(k => k.dm).length,
+      getFilterValue: r => keyContactsOf(r).map(keyContactText).join(', '),
+      exportValue: r => keyContactsOf(r).map(keyContactText).join('; '),
+      render: r => {
+        const list = keyContactsOf(r);
+        if (!list.length) return <span style={{ color: '#94A3B8' }}>-</span>;
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '3px 0' }}>
+            {list.map(k => (
+              <div key={k.email || k.name} title={k.email} style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                <span
+                  aria-label={k.dm ? 'Decision Maker' : 'Not tagged Decision Maker'}
+                  title={k.dm ? 'Tagged Decision Maker' : 'Not tagged Decision Maker'}
+                  style={{ width: 14, flexShrink: 0, textAlign: 'center', fontWeight: 800, color: '#16A34A' }}
+                >{k.dm ? '✓' : ''}</span>
+                <span style={{ fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{k.name}</span>
+                {k.tags.map(t => (
+                  <span key={t} style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, padding: '0 6px', borderRadius: 999, background: '#EDE9FE', color: '#5B21B6', border: '1px solid #C4B5FD', whiteSpace: 'nowrap' }}>{t}</span>
+                ))}
+              </div>
+            ))}
+          </div>
+        );
+      },
+    }] : []),
     {
       key: 'sent',
       label: 'Sent',
