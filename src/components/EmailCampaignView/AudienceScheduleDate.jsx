@@ -10,6 +10,7 @@ import { scheduleState } from '../../utils/campaignAudience';
 const pad = (n) => String(n).padStart(2, '0');
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 const fmt = (day) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+const fmtShort = (day) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 const STATE_STYLE = {
   overdue: { background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5' },
@@ -19,7 +20,11 @@ const STATE_STYLE = {
 };
 const STATE_TITLE = { overdue: 'Overdue', today: 'Due today', soon: 'Coming up this week', later: 'Scheduled' };
 
-export function AudienceScheduleDate({ value, label, onChange, disabled = false }) {
+// `hideEmpty` shows nothing at all without a date (no Schedule button), for
+// a table that only reports the dates set elsewhere. `compact` writes the
+// date as "Nov 23" (the full date and "Overdue" stay in the hover) for a
+// narrow column.
+export function AudienceScheduleDate({ value, label, onChange, disabled = false, hideEmpty = false, compact = false }) {
   const inputRef = useRef(null);
   const open = () => {
     if (disabled) return;
@@ -28,6 +33,7 @@ export function AudienceScheduleDate({ value, label, onChange, disabled = false 
     try { el.showPicker(); } catch { el.focus(); el.click(); }
   };
   const state = scheduleState(value, localToday());
+  if (!value && hideEmpty) return null;
   return (
     <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 2 }} onClick={e => e.stopPropagation()}>
       <input
@@ -47,7 +53,7 @@ export function AudienceScheduleDate({ value, label, onChange, disabled = false 
             disabled={disabled}
             title={`${STATE_TITLE[state]}: send to ${label} on ${fmt(value)}. Click to change.`}
             style={{ ...STATE_STYLE[state], padding: '0 6px', borderRadius: 999, font: 'inherit', fontSize: '0.64rem', fontWeight: 700, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
-          >{state === 'overdue' ? 'Overdue ' : ''}{fmt(value)}</button>
+          >{compact ? fmtShort(value) : `${state === 'overdue' ? 'Overdue ' : ''}${fmt(value)}`}</button>
           {!disabled && (
             <button
               type="button"
