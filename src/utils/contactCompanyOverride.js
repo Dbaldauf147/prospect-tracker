@@ -96,3 +96,35 @@ export function companyOverridesUpdate(contactIds, value) {
     return changed ? { contactLocalFields: map } : null;
   };
 }
+
+// Pin a different Company on each of several contacts in one save:
+// `pins` maps contact id -> name. Gap Fill uses it for a run of fills.
+export function companyOverridesByIdUpdate(pins) {
+  return (settings) => {
+    let map = settings?.contactLocalFields;
+    let changed = false;
+    for (const [id, value] of Object.entries(pins || {})) {
+      const next = withCompanyOverride(map, id, value);
+      if (next) { map = next; changed = true; }
+    }
+    return changed ? { contactLocalFields: map } : null;
+  };
+}
+
+/**
+ * `contacts` with each one's Company pin laid over the synced `company`,
+ * the way App.jsx and the contact pages read them. A list with no pins
+ * comes back as it is.
+ */
+export function withCompanyPins(contacts, localFields) {
+  const lf = (localFields && typeof localFields === 'object') ? localFields : null;
+  if (!lf || !Array.isArray(contacts)) return contacts;
+  let touched = false;
+  const out = contacts.map((c) => {
+    const pin = lf[String(c?.id ?? c?.vid ?? '')]?._companyOverride;
+    if (typeof pin !== 'string' || !pin.trim() || pin === c.company) return c;
+    touched = true;
+    return { ...c, company: pin };
+  });
+  return touched ? out : contacts;
+}

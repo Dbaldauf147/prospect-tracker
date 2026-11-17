@@ -35,6 +35,7 @@ import { saveHubspotOthersActivity } from '../../utils/hubspotOthersActivityStor
 import { saveHubspotGapFill } from '../../utils/hubspotGapFillStore';
 import { contactMatcher, contactRows } from '../../utils/hubspotContacts';
 import { appContactsByEmail, contactGapRows, gapFillIssueRecords } from '../../utils/hubspotContactGaps';
+import { withCompanyPins } from '../../utils/contactCompanyOverride';
 import { getHubspotCacheShared } from '../../utils/hubspotContactsCache';
 import { HubspotCompanyPicker } from './HubspotCompanyPicker';
 import { HubspotMappingBackup } from './HubspotMappingBackup';
@@ -364,19 +365,27 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     window.addEventListener('hubspot-cache-updated', read);
     return () => { live = false; window.removeEventListener('hubspot-cache-updated', read); };
   }, []);
+  // With each contact's Company pin (settings.contactLocalFields) laid
+  // over the synced company, as the rest of the app reads them: a company
+  // filled or typed in the app is pinned locally because the HubSpot sync
+  // can blank it, and without the pin here Gap Fill kept listing it.
+  const pinnedAppContacts = useMemo(
+    () => withCompanyPins(appContacts, settings?.contactLocalFields),
+    [appContacts, settings?.contactLocalFields],
+  );
   // Gap Fill's work per account, published for the Issues tab
   // (hubspotGapFillStore): one issue per active My Accounts company with a
   // contact to add or a blank to fill. Only once the export, the app's
   // contacts and the accounts are all in (with no app contacts every email
   // reads as missing), and only when it changed.
   const gapFillRecords = useMemo(() => {
-    if (!contactsLoaded || !appContacts?.length || !withNames.length) return null;
+    if (!contactsLoaded || !pinnedAppContacts?.length || !withNames.length) return null;
     const gapRows = contactGapRows(
       contactRows(contactsData.contacts, contactMatcher(mapping, withNames), cdmName),
-      appContactsByEmail(appContacts, settings?.contactOldEmails),
+      appContactsByEmail(pinnedAppContacts, settings?.contactOldEmails),
     );
     return gapFillIssueRecords(gapRows, (a) => a?.substatus || byId.get(a?.id)?.substatus || '');
-  }, [contactsLoaded, appContacts, withNames, contactsData, mapping, cdmName, settings?.contactOldEmails, byId]);
+  }, [contactsLoaded, pinnedAppContacts, withNames, contactsData, mapping, cdmName, settings?.contactOldEmails, byId]);
   const publishedGapFill = useRef('');
   useEffect(() => {
     if (!gapFillRecords) return;
@@ -892,7 +901,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
         <HubspotGapFillTab
           data={contactsData}
           loaded={contactsLoaded}
-          appContacts={appContacts}
+          appContacts={pinnedAppContacts}
           mapping={mapping}
           accounts={withNames}
           byId={byId}

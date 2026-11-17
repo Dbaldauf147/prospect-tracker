@@ -16,6 +16,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
 import { contactMatcher, contactRows } from '../../utils/hubspotContacts';
 import { accountTier, formatActivityDate } from '../../utils/hubspotActivity';
+import { companyOverridesByIdUpdate } from '../../utils/contactCompanyOverride';
 import { appContactsByEmail, contactGapRows, appContactName, GAP, GAP_FIELDS, gapFillPlan, gapFillBlocked, withoutInactiveAccounts } from '../../utils/hubspotContactGaps';
 import { updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { apiFetch } from '../../utils/apiFetch';
@@ -106,6 +107,13 @@ export function HubspotGapFillTab({ data, loaded, appContacts = null, mapping = 
     const errors = {};
     let pending = [];
     const leadSources = {};
+    // Company names Fill wrote, by contact id. The HubSpot sync rewrites
+    // every contact's company from its associated Company record, and the
+    // association Fill asks for doesn't always become the primary one, so
+    // without a local pin the filled company was blank again on the next
+    // refresh and the row (and its issue) came straight back. Pinned the
+    // same way every other Company edit in the app is.
+    const companyPins = {};
     const flush = async () => {
       if (pending.length) {
         const batch = pending; pending = [];
@@ -116,6 +124,11 @@ export function HubspotGapFillTab({ data, loaded, appContacts = null, mapping = 
             else if (i >= 0) draft.contacts[i] = { ...draft.contacts[i], ...record };
           }
         });
+      }
+      if (Object.keys(companyPins).length && updateSettings) {
+        const pins = { ...companyPins };
+        for (const id of Object.keys(pins)) delete companyPins[id];
+        updateSettings(companyOverridesByIdUpdate(pins));
       }
       if (Object.keys(leadSources).length && updateSettings) {
         const cur = settingsRef.current?.contactLeadSource || {};
@@ -134,7 +147,10 @@ export function HubspotGapFillTab({ data, loaded, appContacts = null, mapping = 
         if (plan.kind === 'add') {
           if (out.existed) existed += 1;
           else { added += 1; leadSources[out.id] = HUBSPOT_EXPORT_LEAD_SOURCE; }
-        } else filled += 1;
+        } else {
+          filled += 1;
+          if (plan.properties.company) companyPins[out.id] = plan.properties.company;
+        }
       } catch (err) {
         errors[row.gapEmail] = String(err?.message || err).slice(0, 300);
       }
