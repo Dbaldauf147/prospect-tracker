@@ -120,6 +120,7 @@ import { readSheetSync } from '../../utils/sheetSyncSettings';
 import { planSheetCompanyRename, spreadsheetIdFromUrl } from '../../utils/sheetCompanyRename';
 import { computePortfolioFitScore, siteCountNumber, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
+import { SiteListTable } from './SiteListTable';
 import { SiteListExportMenu } from './SiteListExportMenu';
 import { requestMasterAnalysisHandoff } from '../../utils/utilityLookupHandoff';
 import PortfolioTransactions from './PortfolioTransactions';
@@ -13308,32 +13309,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       Copy the site rows in Excel and click “Paste from Excel” to map columns, drag a spreadsheet here, or use “Upload file”.
                     </p>
                   )}
+                  {/* Every column filterable and sortable (the shared
+                      DataTable), with Expand for a near full screen view. */}
                   {currentSiteList && (currentSiteList.rows || []).length > 0 && (
-                    <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 6 }}>
-                      <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%' }}>
-                        <thead>
-                          <tr>
-                            {(currentSiteList.headers || []).map(h => (
-                              <th key={h} style={{ position: 'sticky', top: 0, background: '#F8FAFC', textAlign: 'left', padding: '0.3rem 0.5rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap', fontWeight: 600 }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {currentSiteList.rows.slice(0, 50).map((r, i) => (
-                            <tr key={i}>
-                              {(currentSiteList.headers || []).map(h => (
-                                <td key={h} style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap' }}>{String(r[h] ?? '')}</td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {currentSiteList.rows.length > 50 && (
-                        <div style={{ padding: '0.35rem 0.5rem', fontSize: '0.68rem', color: '#94A3B8' }}>
-                          Showing first 50 of {currentSiteList.rows.length} rows.
-                        </div>
-                      )}
-                    </div>
+                    <SiteListTable
+                      list={currentSiteList}
+                      title={fields.company || ''}
+                      settings={settings}
+                      updateSettings={updateSettings}
+                    />
                   )}
                 </div>
               )}
