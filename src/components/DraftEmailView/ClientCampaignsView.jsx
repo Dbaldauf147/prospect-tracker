@@ -11,7 +11,11 @@
 // a panel above the table splits the clients by where each service stands
 // at them: Sold, In progress, Not sold, N/A, Not explored, read the way the
 // company popup reads it (manual status, then a matching opp, then auto N/A).
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { useContactEditSettings } from '../../hooks/useContactEditSettings';
+import { companyPopupTarget } from '../../utils/companyLookup';
 import { DataTable } from '../common/DataTable';
 import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
 import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket, currentClients, rosterAccounts, keyContactSummary, CAMPAIGN_AUDIENCE_VIEWS } from '../../utils/clientCampaignCoverage';
@@ -61,6 +65,14 @@ const chip = (status) => (
     padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap',
   }}>{status}</span>
 );
+
+// A person's name as a link to their contact popup: reads as the name it
+// was, underlined on hover.
+const nameBtn = {
+  background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, cursor: 'pointer',
+  textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0,
+  textDecoration: 'underline', textDecorationColor: '#CBD5E1', textUnderlineOffset: 2,
+};
 
 const linkBtn = {
   background: 'none', border: 'none', padding: 0, font: 'inherit', color: '#1D4ED8',
@@ -178,6 +190,44 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     getHubspotContacts().then(c => { if (!cancelled) setContacts(c || []); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
+
+  // Contact popup (the same ContactEditModal as Email Campaigns), opened by
+  // clicking a person's name in the Who or roster column. Opens the HubSpot
+  // record for that address, or a bare one the popup can create it from.
+  const [editingContact, setEditingContact] = useState(null);
+  const contactEditSettings = useContactEditSettings({ settings, updateSettings });
+  const contactsByEmail = useMemo(() => {
+    const m = new Map();
+    for (const c of contacts) {
+      const e = String(c?.email || '').trim().toLowerCase();
+      if (e && !m.has(e)) m.set(e, c);
+    }
+    return m;
+  }, [contacts]);
+  const openContact = (email, company) => {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e) return;
+    setEditingContact(contactsByEmail.get(e) || { email: e, company: company || '' });
+  };
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setEditingContact(null);
+    onSelectProspect(target);
+  }, [prospects, onSelectProspect]);
+  const editCompanyKey = String(editingContact?.company || '').trim().toLowerCase();
+  const editCompanyContacts = useMemo(
+    () => (editCompanyKey ? contacts.filter(c => String(c?.company || '').trim().toLowerCase() === editCompanyKey) : []),
+    [editCompanyKey, contacts],
+  );
+  const editEmailDomains = useMemo(() => {
+    if (!editCompanyKey) return [];
+    const matched = (prospects || []).find(p => String(p.company || '').trim().toLowerCase() === editCompanyKey);
+    return matched?.emailDomain
+      ? String(matched.emailDomain).split(/[\n;,]+/).map(x => x.trim()).filter(Boolean)
+      : [];
+  }, [editCompanyKey, prospects]);
+  const editCompanyNames = useMemo(() => (prospects || []).map(p => p.company).filter(Boolean), [prospects]);
 
   // Which companies are listed: current clients (the default), or the
   // companies of the people on the Key Contacts or Key Prospects roster.
@@ -348,7 +398,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           renderItem={p => (
             <>
               {chip(p.status)}
-              <span style={{ fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>{p.name || p.email}</span>
+              <button type="button" onClick={(e) => { e.stopPropagation(); openContact(p.email, r.company); }} title={`Open ${p.name || p.email}`} style={{ ...nameBtn, color: '#1E293B' }}>{p.name || p.email}</button>
               {p.name && (
                 <span style={{ color: '#64748B', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.email}</span>
               )}
@@ -388,7 +438,9 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
                 {k.status
                   ? chip(k.status)
                   : <span title="Not on this campaign" style={{ flexShrink: 0, padding: '0 7px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, border: '1px dashed #CBD5E1', color: '#94A3B8', whiteSpace: 'nowrap' }}>Not on</span>}
-                <span title={k.email} style={{ fontWeight: 600, color: k.status ? '#1E293B' : '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{k.name}</span>
+                {k.email
+                  ? <button type="button" onClick={(e) => { e.stopPropagation(); openContact(k.email, r.company); }} title={`Open ${k.name} (${k.email})`} style={{ ...nameBtn, color: k.status ? '#1E293B' : '#64748B' }}>{k.name}</button>
+                  : <span style={{ fontWeight: 600, color: k.status ? '#1E293B' : '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{k.name}</span>}
                 {k.tags.map(t => (
                   <span key={t} style={{ flexShrink: 0, fontSize: '0.62rem', fontWeight: 700, padding: '0 6px', borderRadius: 999, background: '#EDE9FE', color: '#5B21B6', border: '1px solid #C4B5FD', whiteSpace: 'nowrap' }}>{t}</span>
                 ))}
@@ -605,6 +657,22 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           updateSettings={updateSettings}
         />
       </div>
+
+      {editingContact && createPortal(
+        <ContactEditModal
+          prospects={prospects}
+          contact={editingContact}
+          onSave={(_updated, opts) => { if (!opts?.silent) setEditingContact(null); }}
+          onClose={() => setEditingContact(null)}
+          onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
+          {...contactEditSettings}
+          companyContacts={editCompanyContacts}
+          allContacts={contacts}
+          emailDomains={editEmailDomains}
+          companyNames={editCompanyNames}
+        />,
+        document.body,
+      )}
     </div>
   );
 }
