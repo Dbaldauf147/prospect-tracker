@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets } from '../src/utils/companyTargets.js';
+import { normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -96,6 +96,20 @@ check('types: dedupe keeps first spelling', types.dedupeTypes(['A', 'a', ' b ', 
   check('hide: survives normalize', normalizeTargets(hid)[0].hidden, true);
   check('hide: unhide', updateTarget(hid, 'h', 'hidden', false)[0].hidden, false);
   check('hide: new targets start shown', blankTarget().hidden, false);
+}
+
+// Every company's targets as one list (Prospecting > Targets).
+{
+  const all = allSavedTargets([
+    { id: 'p1', company: 'CBRE', climateTargets: [{ id: 'a', type: 'Net zero', yearSet: '2024' }, { id: 'b', type: 'SBTi near-term', hidden: true }] },
+    { id: 'p2', company: 'Acme' },
+    { id: 'p3', company: 'Beta', climateTargets: 'junk' },
+    { id: 'p4', company: 'Gamma', climateTargets: [{ id: 'a', type: 'SBTi commitment' }] },
+  ]);
+  check('all targets: count', all.length, 3);
+  check('all targets: ids unique across companies', all.map(t => t.id), ['p1:a', 'p1:b', 'p4:a']);
+  check('all targets: company and hidden carried', [all[0].company, all[1].hidden, all[2].company], ['CBRE', true, 'Gamma']);
+  check('all targets: none', allSavedTargets(null), []);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
