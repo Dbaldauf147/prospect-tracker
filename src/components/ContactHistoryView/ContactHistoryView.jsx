@@ -23,7 +23,7 @@ const RANGES = [
 const SERIES = {
   key: { label: 'Key', color: '#D97706' },
   client: { label: 'Client', color: '#2563EB' },
-  keyProspect: { label: 'Key Prospect', color: '#7C3AED' },
+  keyProspect: { label: 'DM at Tier 1-3', color: '#7C3AED' },
 };
 
 const AXIS_TICK = { fontSize: 11, fill: '#64748B' };
@@ -97,7 +97,7 @@ export function ContactHistoryView() {
     <div style={{ padding: '0.25rem 0 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', maxWidth: 1200 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 300px', maxWidth: 760 }}>
-          How many contacts are on the Key, Client and Key Prospect rosters each week. The counts are the ones the
+          How many contacts are on the Key, Client and DM at Tier 1-3 rosters each week. The counts are the ones the
           All tab&apos;s Totals pills show, recorded automatically while the app is open. The latest reading in a week
           is the one that week keeps.
         </div>

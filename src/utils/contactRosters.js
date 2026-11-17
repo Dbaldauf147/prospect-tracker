@@ -222,7 +222,7 @@ export const ROSTER_CATEGORIES = [
   { key: 'key', label: 'Key', bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
   { key: 'active', label: 'Active', bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
   { key: 'client', label: 'Client', bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A' },
-  { key: 'keyProspect', label: 'Key Prospect', bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6' },
+  { key: 'keyProspect', label: 'DM at Tier 1-3', bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6' },
 ];
 
 // The rosters a "tags still to map" count is taken over.
@@ -681,7 +681,7 @@ export function makeRosterGates({
       { label: 'Key', why: keyWhy() },
       { label: 'Active', why: activeWhy() },
       { label: 'Client', why: clientWhy() },
-      { label: 'Key Prospect', why: keyProspectWhy() },
+      { label: 'DM at Tier 1-3', why: keyProspectWhy() },
     ].map(r => ({ ...r, ok: !blocked && !r.why }));
     return { on: rosters.filter(r => r.ok).map(r => r.label), blocked, rosters };
   };

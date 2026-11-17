@@ -97,7 +97,7 @@ export function ProspectingLogic({ steps = [], settings, updateSettings, canEdit
           <li><b>Any step</b> can be marked caught up for the day. A mark made today wins over the step&apos;s count.</li>
           <li><b>Marks expire overnight.</b> Prospecting is daily work, so each new day starts with every hand-marked step open again.</li>
           <li><b>Owed when reached:</b> a step nothing counts goes red as Outstanding once every step above it is clear, and the sidebar dots Prospecting until it is marked.</li>
-          <li><b>Some steps answer themselves:</b> contact mapping clears when Key, Client and Key Prospect are all fully tagged, and market updates clears when every email campaign that isn&apos;t paused has finished sending.</li>
+          <li><b>Some steps answer themselves:</b> contact mapping clears when Key, Client and DM at Tier 1-3 are all fully tagged, and market updates clears when every email campaign that isn&apos;t paused has finished sending.</li>
         </ul>
       </section>
 

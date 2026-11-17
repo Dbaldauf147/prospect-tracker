@@ -345,7 +345,7 @@ export function rosterActivityCounts({
 function rosterDefs(gates, myCdmGate) {
   return [
     { key: 'keyTarget', label: 'Dan Key Target', on: (c) => gates.gateFor.key(c) },
-    { key: 'keyProspect', label: 'Dan Key Prospect', on: (c) => gates.gateFor.keyProspect(c) },
+    { key: 'keyProspect', label: 'DM at Tier 1-3', on: (c) => gates.gateFor.keyProspect(c) },
     { key: 'decisionMakers', label: 'Decision Makers', on: (c, raw) => isDecisionMakerContact(raw) && (!myCdmGate || myCdmGate(raw)) },
   ];
 }

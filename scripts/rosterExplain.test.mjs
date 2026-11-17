@@ -39,16 +39,16 @@ for (const c of contacts) {
   check(`explain agrees with rosterSelector: ${c.id}`, ex.on.length > 0, gates.rosterSelector(c));
 }
 const why = (c, label) => gates.explain(c).rosters.find(r => r.label === label).why;
-check('Key + Key Prospect for a tagged DM at an untouched Tier 1', gates.explain(contacts[0]).on, ['Key', 'Key Prospect']);
+check('Key + Key Prospect for a tagged DM at an untouched Tier 1', gates.explain(contacts[0]).on, ['Key', 'DM at Tier 1-3']);
 check('Hide is named', /Hide/.test(gates.explain(contacts[1]).blocked), true);
 check('Left is named', /Left/.test(gates.explain(contacts[2]).blocked), true);
 check('Client by name', gates.explain(contacts[3]).on, ['Client']);
 check('Old Client is named', why(contacts[4], 'Client'), '"Oldco" is an Old Client.');
-check('Active via open opp + recent email, and still a Key Prospect', gates.explain(contacts[5]).on, ['Active', 'Key Prospect']);
-check('opps no longer block Key Prospect', why(contacts[5], 'Key Prospect'), '');
+check('Active via open opp + recent email, and still a Key Prospect', gates.explain(contacts[5]).on, ['Active', 'DM at Tier 1-3']);
+check('opps no longer block Key Prospect', why(contacts[5], 'DM at Tier 1-3'), '');
 check('no recent email is named', /last 90 days/.test(why(contacts[6], 'Active')), true);
 check('Cancelling account is named', /Cancelling for Sure/.test(gates.explain(contacts[7]).blocked), true);
-check('no tier account is named', /does not match a Tier/.test(why(contacts[8], 'Key Prospect')), true);
+check('no tier account is named', /does not match a Tier/.test(why(contacts[8], 'DM at Tier 1-3')), true);
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

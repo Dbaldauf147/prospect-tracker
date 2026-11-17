@@ -1,62 +1,24 @@
-// Key Prospects page — HubSpot contacts tagged Decision Maker at Tier 1 /
-// Tier 2 / Tier 3 accounts (CDM = me, or a "Dan target" under any CDM),
-// whatever opps the account has. Same layout / interactions as the other
-// roster tabs since this is a thin wrapper around KeyContactsView
-// with a custom selector.
+// The Tier 1 / 2 / 3 gap banners on the DMs page: the accounts on your book
+// with no Decision Maker tagged, and the narrower list of those with no opps
+// either (the truly untouched ones).
 //
-// A gap-report banner above the table also surfaces the inverse list:
-// Tier 1 / Tier 2 / Tier 3 accounts (CDM = me) that have ZERO opps AND ZERO
-// decision-maker contacts on this tab — the truly-untouched accounts
-// where the next step is to find / tag a decision maker.
+// They used to head the Key Prospects tab. That tab was the DMs list narrowed
+// to Tier 1-3 accounts, so it became the DMs page's "DM at Tier 1-3" pill and
+// these came with it. The rule is unchanged: "has a decision maker" is the
+// decisionMakerCoverage module's, the one the Prospecting ladder runs too.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
-import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
-import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { useMemo, useState } from 'react';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { onMyBook, reportingTier } from '../../utils/tierSource';
 import { accountHasDecisionMaker, decisionMakerCompanies, makeAccountContactIndex } from '../../utils/decisionMakerCoverage';
-import { rosterCompaniesMatch, makeClientAccountLookup } from '../../utils/contactRosters';
+import { rosterCompaniesMatch } from '../../utils/contactRosters';
 
-const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
-const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
-function isSchneiderContact(c) {
-  if (SCHNEIDER_COMPANY_RE.test(String(c?.company || ''))) return true;
-  const email = String(c?.email || '').toLowerCase().trim();
-  const at = email.lastIndexOf('@');
-  if (at >= 0) {
-    const domain = email.slice(at + 1).trim();
-    if (SCHNEIDER_DOMAIN_RE.test(domain)) return true;
-  }
-  return false;
-}
-
-// Company names are compared with the roster gates' own rosterCompaniesMatch,
-// so this tab and the Prospecting ladder's Key Prospect roster can't put a
-// contact on one list and not the other.
 const companiesMatch = rosterCompaniesMatch;
 
 // Statuses the no-Decision-Maker warning leaves out: Ex Clients and Hold Off.
 const MISSING_DM_SKIP_STATUSES = new Set(['Old Client', 'Hold Off']);
 
-export function KeyProspectsView({ prospects = [], onSelectProspect, settings, updateSettings, updateSettingsPath, cdmName = '' }) {
-  const { user } = useAuth();
-  const oppsRecords = useOppsRecords(user?.uid);
-
-  // HubSpot cache, refreshed on cache-update events. Used by the gap
-  // report below to figure out which Tier 1 / Tier 2 / Tier 3 accounts have no
-  // decision-maker contacts on this page.
-  const [hubspotContacts, setHubspotContacts] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    function refresh() {
-      getHubspotCache().then(c => { if (!cancelled) setHubspotContacts(c?.contacts || []); }).catch(() => {});
-    }
-    refresh();
-    window.addEventListener('hubspot-cache-updated', refresh);
-    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
-  }, []);
-
+export function TierDmGaps({ prospects = [], hubspotContacts = [], oppsRecords = null, settings, cdmName = '', onSelectProspect }) {
   // Tier 1 / Tier 2 / Tier 3 prospects on this CDM's Table View — the universe
   // a contact's company has to live in to qualify.
   const myTierAccounts = useMemo(() => {
@@ -103,43 +65,6 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
     }
     return map;
   }, [myTierAccounts, accountsWithOpps, oppAccountsArr]);
-
-  // Who belongs to a Client account. Keeping Client rows out of
-  // myTierAccounts isn't enough on its own: a contact whose company is
-  // spelled a little differently from the Client can still near-match some
-  // other Tier 1-3 row (a duplicate, say) and land here. Same rule as the
-  // roster gates in contactRosters.
-  const clientAccountOf = useMemo(() => makeClientAccountLookup(prospects), [prospects]);
-
-  // Contact selector: Decision Maker at a Tier 1 / Tier 2 / Tier 3 account on
-  // my book (same rule as the Key Prospect roster gate in contactRosters).
-  // Hide / Left / Schneider are excluded as they are everywhere else in the
-  // roster pages. Opps on the account and Connected? no longer take anybody
-  // off it.
-  const selector = useCallback((c) => {
-    const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-    if (tags.includes('hide')) return false;
-    if (tags.includes('left')) return false;
-    if (isSchneiderContact(c)) return false;
-    if (!tags.includes('decision maker')) return false;
-    const company = String(c.company || '').trim();
-    if (!company) return false;
-    if (clientAccountOf(c)) return false;
-    const lc = company.toLowerCase();
-    const direct = tierAccountStatus.get(lc);
-    if (direct) return true;
-    // Fuzzy: a contact whose Company is "Brookfield Properties" vs a
-    // prospect "Brookfield Asset Management" — fall through to the
-    // companiesMatch loop. First fuzzy hit wins.
-    for (const p of myTierAccounts) {
-      if (companiesMatch(p.company, company)) {
-        const pLc = String(p.company || '').toLowerCase().trim();
-        const status = tierAccountStatus.get(pLc);
-        if (status) return true;
-      }
-    }
-    return false;
-  }, [tierAccountStatus, myTierAccounts, clientAccountOf]);
 
   // Set of lowercase company strings (taken from passing-the-selector
   // HubSpot contacts) representing Tier 1 / Tier 2 / Tier 3 accounts that DO
@@ -221,8 +146,10 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
   const [gapOpen, setGapOpen] = useState(false);
   const [missingDmOpen, setMissingDmOpen] = useState(false);
 
-  const subtitle = (
-    <>
+
+  if (accountsMissingDm.length === 0 && untouchedAccounts.length === 0) return null;
+  return (
+    <div data-tier-dm-gaps>
       {accountsMissingDm.length > 0 && (
         <div style={{ margin: '6px 0 8px', padding: '0.5rem 0.7rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6 }}>
           <button
@@ -262,7 +189,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
             type="button"
             onClick={() => setGapOpen(o => !o)}
             style={{ background: 'transparent', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: '0.72rem', color: '#92400E', fontWeight: 700, cursor: 'pointer' }}
-            title="Tier 1 / Tier 2 / Tier 3 accounts with no opps and no decision-maker contact on this tab. These are the truly-untouched accounts."
+            title="Tier 1 / Tier 2 / Tier 3 accounts with no opps and no decision-maker contact. These are the truly-untouched accounts."
           >
             {gapOpen ? '▾' : '▸'} {untouchedAccounts.length} Tier 1 / 2 / 3 account{untouchedAccounts.length === 1 ? '' : 's'} with no opps and no decision-maker contact
           </button>
@@ -287,28 +214,6 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
           )}
         </div>
       )}
-      HubSpot contacts tagged <strong>Decision Maker</strong> at <strong>Tier 1</strong> / <strong>Tier 2</strong> / <strong>Tier 3</strong> accounts on your Table View (CDM = <strong>{cdmName || '(set your CDM in Settings)'}</strong>), plus accounts marked <strong>Not on tier list, but Dan target</strong>, leaving out anybody at a Client. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>By Company</strong> to see decision makers grouped by account.
-    </>
-  );
-
-  return (
-    <KeyContactsView
-      prospects={prospects}
-      onSelectProspect={onSelectProspect}
-      settings={settings}
-      updateSettings={updateSettings}
-      updateSettingsPath={updateSettingsPath}
-      cdmName={cdmName}
-      storagePrefix="key-prospects"
-      pageTitle="Key Prospects"
-      pageSubtitle={subtitle}
-      emptyTitle="No Key Prospects yet"
-      emptyDetail={
-        <>None of your Tier 1 / Tier 2 / Tier 3 accounts have decision-maker contacts without opps. Either every Tier 1 / 2 / 3 account already has at least one opp on the Opps tab, or no contacts at those accounts are tagged <code>Decision Maker</code> in HubSpot. Tag a few decision makers and they'll show up here.</>
-      }
-      contactSelector={selector}
-      defaultViewMode="companies"
-      showCompanyVertical
-    />
+    </div>
   );
 }

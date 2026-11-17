@@ -68,7 +68,7 @@ check('nothing on record is null', contactLastOutreachMs({ email: 'x@y.com' }, o
 
 const out = rosterActivityCounts({ contacts, gates, myCdmGate, outreachIndex, nowMs: NOW });
 const view = Object.fromEntries(out.map(r => [r.key, { total: r.total, active: r.windows.map(w => w.active) }]));
-check('rosters in order', out.map(r => r.label), ['Dan Key Target', 'Dan Key Prospect', 'Decision Makers']);
+check('rosters in order', out.map(r => r.label), ['Dan Key Target', 'DM at Tier 1-3', 'Decision Makers']);
 check('windows are 30, 60, 90, 120', out[0].windows.map(w => w.days), [30, 60, 90, 120]);
 check('Dan Key Target', view.keyTarget, { total: 3, active: [1, 1, 1, 1] });
 check('Dan Key Prospect', view.keyProspect, { total: 3, active: [1, 2, 2, 3] });

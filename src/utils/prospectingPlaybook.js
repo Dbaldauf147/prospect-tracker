@@ -105,7 +105,7 @@ export const DEFAULT_STEPS = [
     // Client and Key Prospect all at 100% leaves nothing to confirm — see
     // tagsAllMapped. Let one of them fall back below 100% (a new contact
     // arrives untagged) and it is asked for again.
-    clearTitle: 'Key, Client and Key Prospect are all fully tagged - no tag questions are left to answer',
+    clearTitle: 'Key, Client and DM at Tier 1-3 are all fully tagged - no tag questions are left to answer',
   },
   // People you already know, at a new desk: a warm way into a company you
   // may never have reached. Ahead of the market updates (Dan's call): it is
