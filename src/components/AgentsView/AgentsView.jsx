@@ -5336,7 +5336,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               <span className={styles.sectionCount}>{jobDescriptionReady.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Every Key Contact (tagged Dan Key Target) whose Job Description is blank. Contacts marked N/A in their contact pop-up are left out. The assistant opens each LinkedIn URL, copies the About section and the current (Present) role, and pastes them back here with &ldquo;Paste job descriptions&rdquo;, which fills in each contact&rsquo;s Job Description. Contacts with no LinkedIn URL are listed but left out of the prompt.
+              Every Key Contact (tagged Dan Key Target) whose Job Description is blank. Contacts marked N/A in their contact pop-up, or whose LinkedIn URL is N/A, are left out. The assistant opens each LinkedIn URL, copies the About section and the current (Present) role, and pastes them back here with &ldquo;Paste job descriptions&rdquo;, which fills in each contact&rsquo;s Job Description. Contacts with no LinkedIn URL are listed but left out of the prompt.
             </p>
             {revealedPrompts.jobDescriptions && (
               <textarea

@@ -1,7 +1,7 @@
 // The Agents tab's Job Descriptions agent: every Key Contact (HubSpot
 // contact tagged "Dan Key Target", not hidden, not left) whose Job
 // Description (settings.contactJobDescriptions, see contactJobDescription.js)
-// is still blank. N/A counts as done. The assistant opens each one's LinkedIn
+// is still blank. N/A counts as done, and so does a LinkedIn URL of N/A. The assistant opens each one's LinkedIn
 // profile, copies the About section, the current role and the location
 // (City, State), and pastes the lot back into the section's box in the
 // format parseJobDescriptionPaste reads. The location is written to the
@@ -25,6 +25,16 @@ export function linkedinUrlOf(c) {
 }
 
 /**
+ * A LinkedIn URL field filled in as "N/A" (or "NA", "none", "-"): somebody
+ * has looked and there is no profile to read, so the agent has nothing to
+ * do for them and they are left off its list altogether. A blank field is
+ * different - nobody has looked yet - and stays listed.
+ */
+export function linkedinMarkedNa(url) {
+  return /^(n\/?a|none|-+)$/i.test(String(url || '').trim().replace(/\.$/, ''));
+}
+
+/**
  * Key Contacts with no Job Description yet, sorted by company then name.
  * `localFields` (settings.contactLocalFields) supplies a typed-in Company.
  */
@@ -35,6 +45,7 @@ export function jobDescriptionTargets(contacts, jobDescriptions, localFields = {
     const id = String(c.id || c.vid || '').trim();
     if (!id) continue;
     if (jobDescriptionFor(jobDescriptions, id).trim()) continue;
+    if (linkedinMarkedNa(linkedinUrlOf(c))) continue;
     const local = localFields?.[id];
     const company = String((local && typeof local._companyOverride === 'string' && local._companyOverride) || c.company || '').trim();
     out.push({

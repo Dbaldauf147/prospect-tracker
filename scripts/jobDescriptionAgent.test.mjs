@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  linkedinMarkedNa,
   jobDescriptionTargets, jobDescriptionPromptBlock, parseJobDescriptionPaste,
   jobDescriptionsPasteUpdate, DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS, parseLocation, locationUpdatesFor,
 } from '../src/utils/jobDescriptionAgent.js';
@@ -87,4 +88,15 @@ test('location updates skip contacts that already have that city and state', () 
   const loc = { city: 'Austin', state: 'Texas' };
   const u = locationUpdatesFor([{ id: '1', location: loc }, { id: '2', location: loc }, { id: '3', location: loc }, { id: '4', location: loc }, { id: '2', location: null }], cs);
   assert.deepEqual(u, [{ id: '2', properties: loc }, { id: '3', properties: loc }]);
+});
+
+test('a LinkedIn URL of N/A takes the contact off the list; a blank one does not', () => {
+  const key = (id, url) => ({ id, firstname: `P${id}`, dans_tags: 'Dan Key Target', company: 'Acme', hs_linkedin_url: url });
+  const ids = jobDescriptionTargets([
+    key('1', 'N/A'), key('2', 'n/a'), key('3', ''), key('4', 'https://www.linkedin.com/in/x'), key('5', 'NA'), key('6', 'none'), key('7', '-'),
+  ], {}).map(t => t.id).sort();
+  assert.deepEqual(ids, ['3', '4']);
+  assert.equal(linkedinMarkedNa('N/A.'), true);
+  assert.equal(linkedinMarkedNa('https://linkedin.com/in/na'), false);
+  assert.equal(linkedinMarkedNa(''), false);
 });
