@@ -92,3 +92,36 @@ console.log('recentSends ok');
   assert.deepEqual(threePlusClearDates([], { nowMs: now }), { total: 0, threePlus: 0, majorityAt: null, allClearAt: null });
 }
 console.log('recentSends dates ok');
+
+// Campaigns queued but not sent yet count toward the total.
+{
+  const { recentSendsByGroup, pendingCampaignsByEmail, belowThreeAt } = await import('../src/utils/recentSends.js');
+  const fresh = new Date(now - 2 * 86400000).toISOString();
+  const stale = new Date(now - 200 * 86400000).toISOString();
+  const camps = [
+    { title: 'Sent One', savedAt: fresh, contacts: [{ email: 'q@q.com', sentDate: day(2) }] },
+    { title: 'Year End', savedAt: fresh, contacts: [{ email: 'q@q.com; r@r.com' }, { email: 'held@h.com', outreach: 'hold' }] },
+    { title: 'Old Draft', savedAt: stale, contacts: [{ email: 'q@q.com' }] },
+    { title: 'Paused', savedAt: fresh, pausedUntil: new Date(now + 86400000).toISOString(), contacts: [{ email: 'q@q.com' }] },
+    { title: 'Half Sent', savedAt: fresh, contacts: [{ email: 'q@q.com', sentDate: day(3) }, { email: 'Q@q.com' }] },
+  ];
+  const pend = pendingCampaignsByEmail(camps, now);
+  assert.deepEqual(pend.get('q@q.com').map(x => x.label), ['Year End', 'Half Sent'], 'active, unsent rows only; stale and paused campaigns are out');
+  assert.deepEqual(pend.get('r@r.com').map(x => x.label), ['Year End'], 'a grouped row queues each address');
+  assert.equal(pend.has('held@h.com'), false, 'Hold off is not queued');
+
+  const ppl = [{ id: 20, firstname: 'Quinn', lastname: 'Q', email: 'q@q.com', g: ['key'] },
+    { id: 21, firstname: 'Rae', lastname: 'R', email: 'r@r.com', g: ['key'] },
+    { id: 22, firstname: 'Sam', lastname: 'S', email: 's@s.com', g: ['key'] }];
+  const out = recentSendsByGroup({ contacts: ppl, gates, groupKeys: ['key'], campaigns: camps, nowMs: now });
+  const quinn = out.rows.find(r => r.name === 'Quinn Q');
+  assert.deepEqual(quinn.campaigns.map(c => `${c.label}${c.pending ? '*' : ''}`), ['Sent One', 'Half Sent', 'Year End*'],
+    'Half Sent already reached them, so it is not pending as well; Year End is queued');
+  assert.equal(quinn.pending, 1);
+  const rae = out.rows.find(r => r.name === 'Rae R');
+  assert.deepEqual(rae.campaigns.map(c => c.pending), [true], 'someone only queued is listed');
+  assert.equal(rae.emails, 0);
+  assert.deepEqual(out.counts.key, { total: 3, none: 1, one: 1, two: 0, three: 1 }, 'queued campaigns add to the group tallies');
+  assert.equal(belowThreeAt(quinn, { nowMs: now }), now - 3 * 86400000 + 21 * 86400000, 'third-newest: Half Sent (day 3), the queued one reads as today');
+}
+console.log('recentSends pending ok');
