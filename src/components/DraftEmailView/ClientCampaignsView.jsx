@@ -365,6 +365,17 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     const bucket = campaignServiceBucket(status);
     return bucket === 'na' || (bucket === 'notSold' && !prospectsAnyway(r.client, svc, status));
   });
+  // A client where every campaign service is already Sold or N/A has
+  // nothing left to sell on this campaign: greyed out and kept at the
+  // bottom of the table whatever column it's sorted by.
+  const settled = (r) => services.length > 0 && !!r.client && services.every(svc => {
+    const bucket = campaignServiceBucket(statusOf(r.client, svc));
+    return bucket === 'sold' || bucket === 'na';
+  });
+  const settledLast = (r) => (settled(r) ? 1 : 0);
+  // Opacity sits on the <tr> and is mirrored onto each <td>, so it
+  // compounds (0.7 x 0.7, about half).
+  const settledRowStyle = (r) => (settled(r) ? { opacity: 0.7, background: '#F8FAFC' } : undefined);
   let hiddenClosed = 0;
   if (audience.key === 'keyContacts' && !bucketIds) {
     const kept = rows.filter(r => !closedOut(r));
@@ -784,6 +795,8 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           rows={rows}
           alwaysVisible={['company']}
           defaultSort={{ key: 'onCampaign', direction: 'desc' }}
+          rowGroup={settledLast}
+          rowStyle={settledRowStyle}
           variableRowHeight
           emptyMessage={noClients
             ? (audience.key === 'clients'
