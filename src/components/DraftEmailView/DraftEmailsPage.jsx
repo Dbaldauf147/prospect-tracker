@@ -13,17 +13,13 @@
 // Client Campaigns turns a campaign around: pick one and see, client by
 // client, who at each of the user's current clients is on it.
 //
-// Sent Log sits alongside them but reads the other way round: rather than
-// what this app sent, it is what Outlook sent, read back out of the Sent
-// Items folder. It is what replaced the HubSpot BCC add-in, and it belongs
-// here because "what went out, and to whom" is the question the rest of
-// this page is already about.
+// Email Tracking and Sent Log are hidden for now (Dan's call). Their views
+// are still in the repo (EmailTrackingView, SentLogView); add the tab
+// buttons, TABS entries and render lines back to bring them back.
 
 import { useState } from 'react';
 import { DraftEmailView } from './DraftEmailView';
 import { EmailCampaignView } from '../EmailCampaignView/EmailCampaignView';
-import { EmailTrackingView } from '../EmailTrackingView/EmailTrackingView';
-import { SentLogView } from '../SentLogView/SentLogView';
 import { SiteListOverview } from './SiteListOverview';
 import { DansDraftsView } from './DansDraftsView';
 import { DraftHistoryView } from './DraftHistoryView';
@@ -31,7 +27,7 @@ import { MarketUpdatesView } from './MarketUpdatesView';
 import { ClientCampaignsView } from './ClientCampaignsView';
 import { primarySubject } from '../../utils/campaignSubjects';
 
-const TABS = ['drafts', 'drafthistory', 'dansdrafts', 'marketupdates', 'campaigns', 'clientcampaigns', 'tracking', 'sentlog', 'sitelists'];
+const TABS = ['drafts', 'drafthistory', 'dansdrafts', 'marketupdates', 'campaigns', 'clientcampaigns', 'sitelists'];
 
 export function DraftEmailsPage({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '', onSelectProspect, initialTab = 'drafts' }) {
   const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : 'drafts');
@@ -76,8 +72,6 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
         {tabBtn('marketupdates', 'Market Updates')}
         {tabBtn('campaigns', 'Email Campaigns')}
         {tabBtn('clientcampaigns', 'Client Campaigns')}
-        {tabBtn('tracking', 'Email Tracking')}
-        {tabBtn('sentlog', 'Sent Log')}
         {tabBtn('sitelists', 'Site List Overview')}
       </div>
       {tab === 'drafts' && (
@@ -118,8 +112,6 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
           onOpenCampaign={openCampaign}
         />
       )}
-      {tab === 'tracking' && <EmailTrackingView onOpenCampaign={openCampaign} />}
-      {tab === 'sentlog' && <SentLogView prospects={prospects} />}
       {tab === 'sitelists' && (
         <SiteListOverview prospects={prospects} settings={settings} />
       )}
