@@ -884,7 +884,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 //
 // Service Exploration Coverage is deliberately not among them — see
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], commissionUploads = null, hubspotOthersActivity = [], hubspotGapFill = [], bfoHistoryMissing = [], keyContactLinkedin = [], now = new Date() }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], ignoredSiteListWarnings = [], commissionUploads = null, hubspotOthersActivity = [], hubspotGapFill = [], bfoHistoryMissing = [], keyContactLinkedin = [], now = new Date() }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
   // handed to the opp-derived detectors so every issue row names its opp by
@@ -914,7 +914,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   // browsing data would delete.
   issues.push(...localOnlyFileIssues(localOnlyFiles, { oppsRecords: oppsCache?.records, oppNumbers, prospects }));
   // Site lists close to, or over, the size one can be saved at.
-  issues.push(...siteListSizeIssues(oversizedSiteLists, { prospects }));
+  issues.push(...siteListSizeIssues(oversizedSiteLists, { prospects, ignored: ignoredSiteListWarnings }));
   // Last month's commissions file, while it hasn't been dropped on its
   // card under Commissions > Monthly.
   issues.push(...missingCommissionFileIssues(commissionUploads, now));

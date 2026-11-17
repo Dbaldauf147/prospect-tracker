@@ -135,6 +135,9 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   const siteLists = settings?.companySiteLists;
   const oversizedKey = useMemo(() => JSON.stringify(findOversizedSiteLists(siteLists)), [siteLists]);
   const oversizedSiteLists = useMemo(() => JSON.parse(oversizedKey), [oversizedKey]);
+  // Site lists whose near-the-limit warning was Ignored (Resolution cell).
+  const ignoredSiteRaw = settings?.ignoredSiteListWarnings;
+  const ignoredSiteListWarnings = useMemo(() => (Array.isArray(ignoredSiteRaw) ? ignoredSiteRaw : []), [ignoredSiteRaw]);
   // Months whose commissions file was uploaded (Commissions > Monthly), for
   // the "Commission file not uploaded" row. `issuesNow` only changes when
   // the calendar month rolls over with the app left open, which re-runs
@@ -289,12 +292,12 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   const keyContactLinkedin = useMemo(() => JSON.parse(keyContactLinkedinKey), [keyContactLinkedinKey]);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, now: issuesNow });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, now: issuesNow });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, issuesNow]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, issuesNow]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map
@@ -322,5 +325,5 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 
-  return { issues, openCount, serviceGaps, knownServices, ignoredScopeServices, oppsRecords: oppsCache?.records || null, dmsNoActivityCount };
+  return { issues, openCount, serviceGaps, knownServices, ignoredScopeServices, ignoredSiteListWarnings, oppsRecords: oppsCache?.records || null, dmsNoActivityCount };
 }

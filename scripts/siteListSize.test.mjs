@@ -7,7 +7,7 @@ globalThis.localStorage = {
   setItem: (k, v) => { store.set(k, String(v)); },
   removeItem: (k) => { store.delete(k); },
 };
-const { oversizedSiteLists, siteListSizeIssues, siteListBytes, SITE_LIST_WARN_BYTES, SITE_LIST_LIMIT_BYTES } = await import('../src/utils/siteListSize.js');
+const { oversizedSiteLists, siteListSizeIssues, siteListSizeLabel, siteListBytes, SITE_LIST_WARN_BYTES, SITE_LIST_LIMIT_BYTES } = await import('../src/utils/siteListSize.js');
 const { setUserLsUserId } = await import('../src/utils/userLs.js');
 const { markLocalOnly, loadLocalOnlyFiles, localOnlyFileIssues } = await import('../src/utils/localOnlyFiles.js');
 setUserLsUserId('u1');
@@ -45,6 +45,10 @@ const rows2 = siteListSizeIssues(oversizedSiteLists({ 'near-co': lists.near }), 
 eq(rows2[0].prospectId, 'p1', 'links the company card by slug');
 eq(/Saves to it will fail/.test(rows[0].detail) && /Once it is full/.test(rows[1].detail), true, 'detail says what happens');
 eq(oversizedSiteLists(null), [], 'no lists, no rows');
+eq(rows.map(r => [r.siteList.slug, r.siteList.over]), [['over', true], ['near', false]], 'rows carry slug and over for the Resolution cell');
+const ignoredRows = siteListSizeIssues(big, { ignored: ['near', 'over'] });
+eq(ignoredRows.map(r => r.id), ['site-list-size:over:over'], 'Ignore hides a near list but never an over one');
+eq(siteListSizeLabel(845 * 1024), '845 / 1,024 KB', 'size label');
 
 markLocalOnly('siteList:acme', { kind: 'siteList', reason: 'too-big', name: 'Acme sites.xlsx', sizeBytes: 1.2e6, limitBytes: SITE_LIST_LIMIT_BYTES, owner: 'Acme', error: 'invalid-argument' });
 markLocalOnly('siteList:globex', { kind: 'siteList', reason: 'backup-failed', owner: 'globex', error: 'unavailable' });
