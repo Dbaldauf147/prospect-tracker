@@ -34,6 +34,20 @@ export function TeamOppsView({ prospects = [], cdmName = '', settings, updateSet
   const [record, setRecord] = useState(null);
   const [scope, setScope] = useState('mine'); // 'mine' | 'all'
   const [hideOwn, setHideOwn] = useState(true);
+  const [showIgnored, setShowIgnored] = useState(false);
+
+  // Opportunities ticked Ignore: teamOppKey (opportunity name + account,
+  // stable from one pull to the next) -> when it was ticked. On synced
+  // settings so the choice follows Dan to his other machine and survives
+  // the next paste. Ignored rows are off the list and out of the counts
+  // until "Show ignored" brings them back to untick.
+  const ignored = useMemo(() => settings?.teamOppsIgnored || {}, [settings?.teamOppsIgnored]);
+  const setIgnored = useCallback((key, on) => {
+    const next = { ...ignored };
+    if (on) next[key] = new Date().toISOString();
+    else delete next[key];
+    updateSettings?.({ teamOppsIgnored: next });
+  }, [ignored, updateSettings]);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
 
@@ -96,19 +110,41 @@ export function TeamOppsView({ prospects = [], cdmName = '', settings, updateSet
         _changes: changes,
         _mine: accountMatch(r['Account Name'], index),
         _own: matchesCdm(r['Opportunity Leader'], cdmName),
+        _ignoreKey: base,
+        _ignored: !!ignored[base],
       };
     };
     return [
       ...curr.map(r => { const d = byKey.get(teamOppKey(r)) || {}; return make(r, d.kind || '', d.changes || []); }),
       ...gone.map(r => make(r, 'gone', [])),
     ];
-  }, [record, prevRows, index, cdmName]);
+  }, [record, prevRows, index, cdmName, ignored]);
 
-  const rows = allRows.filter(r => (scope === 'all' || r._mine) && !(hideOwn && r._own));
-  const mineRows = allRows.filter(r => r._mine && !(hideOwn && r._own));
+  const rows = allRows.filter(r => (scope === 'all' || r._mine) && !(hideOwn && r._own) && (showIgnored || !r._ignored));
+  const mineRows = allRows.filter(r => r._mine && !(hideOwn && r._own) && !r._ignored);
+  const ignoredCount = allRows.filter(r => r._ignored && (scope === 'all' || r._mine) && !(hideOwn && r._own)).length;
   const count = (k) => mineRows.filter(r => r._kind === k).length;
 
   const columns = useMemo(() => [
+    {
+      key: '_ignored', label: 'Ignore', defaultWidth: 70,
+      getSortValue: r => (r._ignored ? 1 : 0),
+      getFilterValue: r => (r._ignored ? 'Ignored' : 'Not ignored'),
+      exportValue: r => (r._ignored ? 'Yes' : ''),
+      render: r => (
+        <input
+          type="checkbox"
+          data-team-opp-ignore
+          checked={r._ignored}
+          onChange={e => setIgnored(r._ignoreKey, e.target.checked)}
+          onClick={e => e.stopPropagation()}
+          title={r._ignored
+            ? 'Ignored: off this page and out of the counts. Untick to bring it back.'
+            : 'Ignore this opportunity on this page. It stays ignored on later pulls; tick Show ignored to find it again.'}
+          style={{ cursor: 'pointer' }}
+        />
+      ),
+    },
     {
       key: '_kind', label: 'Change', defaultWidth: 230,
       getSortValue: r => ({ new: 0, changed: 1, gone: 2 }[r._kind] ?? 3),
@@ -146,7 +182,7 @@ export function TeamOppsView({ prospects = [], cdmName = '', settings, updateSet
       exportValue: r => r[h] ?? '',
       render: r => <span style={{ whiteSpace: 'normal' }}>{r[h] || ''}</span>,
     })),
-  ], [headers]);
+  ], [headers, setIgnored]);
 
   const lastPulledMs = record?.updatedAt || (settings?.teamOppsLastPulledAt ? Date.parse(settings.teamOppsLastPulledAt) : null);
   const { due, nextDueMs } = teamOppsDue(lastPulledMs);
@@ -215,6 +251,12 @@ export function TeamOppsView({ prospects = [], cdmName = '', settings, updateSet
               <input type="checkbox" checked={hideOwn} onChange={e => setHideOwn(e.target.checked)} />
               Hide opportunities I lead
             </label>
+            {(ignoredCount > 0 || showIgnored) && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="List the opportunities you ticked Ignore, so you can untick them">
+                <input type="checkbox" data-team-show-ignored checked={showIgnored} onChange={e => setShowIgnored(e.target.checked)} />
+                Show ignored ({ignoredCount})
+              </label>
+            )}
           </div>
           <div style={{ flex: 1, minHeight: 300, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
             <DataTable
@@ -223,7 +265,7 @@ export function TeamOppsView({ prospects = [], cdmName = '', settings, updateSet
               rows={rows}
               alwaysVisible={['col:Opportunity Name']}
               defaultSort={{ key: '_kind', direction: 'asc' }}
-              rowStyle={r => (r._kind === 'gone' ? { opacity: 0.7, background: '#F8FAFC' } : r._mine && scope === 'all' ? { background: '#F0FDF4' } : undefined)}
+              rowStyle={r => (r._ignored ? { opacity: 0.5, background: '#F8FAFC' } : r._kind === 'gone' ? { opacity: 0.7, background: '#F8FAFC' } : r._mine && scope === 'all' ? { background: '#F0FDF4' } : undefined)}
               variableRowHeight
               emptyMessage={scope === 'mine' ? 'No opportunities on your accounts in this pull.' : 'Nothing matches the filters.'}
               exportFileName="All Team Activity"
