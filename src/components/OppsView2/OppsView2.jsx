@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
+import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { contactConnectedUpdate } from '../../utils/contactConnected';
 import { createPortal } from 'react-dom';
 import { doc, collection, getDocs } from 'firebase/firestore';
@@ -19488,6 +19489,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           contact={editingContact}
           onSave={closeContactModal}
           onClose={() => setEditingContact(null)}
+          companyContactExclusions={settings?.companyContactExclusions || {}}
+          onRestoreToCompany={updateSettings ? (key, id) => updateSettings(companyContactRestoreUpdate(key, id)) : null}
           onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
           contactNotes={settings?.contactNotes || {}}
           onSaveNote={saveContactNote}

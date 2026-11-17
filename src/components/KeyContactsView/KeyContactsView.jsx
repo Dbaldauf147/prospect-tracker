@@ -1,4 +1,5 @@
 import { Component, Fragment, useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
 import { lsHas } from '../../utils/tablePrefsSync';
 import { ColumnToggle } from '../common/ColumnToggle';
@@ -6034,6 +6035,8 @@ function KeyContactsViewInner({
             contact={editingContact}
             onSave={handleContactSaved}
             onClose={() => setEditingContact(null)}
+            companyContactExclusions={settings?.companyContactExclusions || {}}
+            onRestoreToCompany={updateSettings ? (key, id) => updateSettings(companyContactRestoreUpdate(key, id)) : null}
             onOpenCompany={openCompanyFromContact}
             contactNotes={settings?.contactNotes || {}}
             onSaveNote={handleSaveContactNote}
