@@ -13,7 +13,7 @@ import { slimHubspotContact } from '../../utils/hubspotContactFields';
 const HubSpotView = lazyView(() => import('../HubSpotView/HubSpotView'), 'HubSpotView');
 const AgendaView = lazyView(() => import('../AgendaView/AgendaView'), 'AgendaView');
 const ZoomSearchLogView = lazyView(() => import('../AgendaView/ZoomSearchLogView'), 'ZoomSearchLogView');
-const KeyContactsView = lazyView(() => import('../KeyContactsView/KeyContactsView'), 'KeyContactsView');
+const KeyTop50View = lazyView(() => import('../KeyContactsView/KeyTop50View'), 'KeyTop50View');
 const ActiveContactsView = lazyView(() => import('../ActiveContactsView/ActiveContactsView'), 'ActiveContactsView');
 const ClientContactsView = lazyView(() => import('../ClientContactsView/ClientContactsView'), 'ClientContactsView');
 const ChangedJobsContactsView = lazyView(() => import('../ChangedJobsContactsView/ChangedJobsContactsView'), 'ChangedJobsContactsView');
@@ -281,7 +281,7 @@ export function ContactsView({
           />
         )}
         {subtab === 'key' && (
-          <KeyContactsView
+          <KeyTop50View
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             settings={settings}
