@@ -21,7 +21,7 @@ import { makeRosterGates } from '../../utils/contactRosters';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
-import { recentSendsByGroup, sendTone, RECENT_SENDS_GROUPS } from '../../utils/recentSends';
+import { recentSendsByGroup, sendTone, threePlusClearDates, belowThreeAt, RECENT_SENDS_GROUPS } from '../../utils/recentSends';
 
 const GROUPS_KEY = 'recent-sends-groups';
 
@@ -38,6 +38,11 @@ const GROUP_TIPS = {
 };
 
 const shortDate = d => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const longDate = ms => new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+// Name | Company | Campaigns | Groups, one grid for the header and every row
+// so the columns line up.
+const ROW_GRID = { display: 'grid', gridTemplateColumns: '170px 200px minmax(0, 1fr) auto', columnGap: 10, alignItems: 'baseline' };
 
 function readGroups() {
   try {
@@ -81,16 +86,20 @@ export function RecentSendsView({ prospects = [], cdmName = '', settings, update
     () => recentSendsByGroup({ contacts, gates, groupKeys: RECENT_SENDS_GROUPS.map(g => g.key), campaigns }).counts,
     [contacts, gates, campaigns],
   );
+  const localFields = settings?.contactLocalFields || null;
   const { rows } = useMemo(
-    () => recentSendsByGroup({ contacts, gates, groupKeys, campaigns }),
-    [contacts, gates, groupKeys, campaigns],
+    () => recentSendsByGroup({ contacts, gates, groupKeys, campaigns, localFields }),
+    [contacts, gates, groupKeys, campaigns, localFields],
   );
+  // If nothing more goes out, when most of the people listed stop being at
+  // 3+ (and when the last of them does). Over the whole list, not the search.
+  const clear = useMemo(() => threePlusClearDates(rows), [rows]);
 
   const [query, setQuery] = useState('');
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter(r => `${r.name} ${r.email} ${r.campaigns.map(c => c.label).join(' ')}`.toLowerCase().includes(q));
+    return rows.filter(r => `${r.name} ${r.email} ${r.company} ${r.campaigns.map(c => c.label).join(' ')}`.toLowerCase().includes(q));
   }, [rows, query]);
   const tones = { red: 0, yellow: 0, green: 0 };
   for (const r of rows) tones[sendTone(r.campaigns.length)] += 1;
@@ -107,7 +116,7 @@ export function RecentSendsView({ prospects = [], cdmName = '', settings, update
   const weeks = RECENT_CAMPAIGN_DAYS / 7;
 
   return (
-    <div data-recent-sends style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxWidth: 1100 }}>
+    <div data-recent-sends style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxWidth: 1400 }}>
       <div style={{ fontSize: '0.78rem', color: '#475569' }}>
         How many of your campaigns each group has received in the last {weeks} weeks, counted the same way as the warning under To on the Drafts tab. Click a name to open the contact.
       </div>
@@ -168,33 +177,57 @@ export function RecentSendsView({ prospects = [], cdmName = '', settings, update
                 type="search"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
-                placeholder="Search name, email or campaign"
+                placeholder="Search name, company, email or campaign"
                 style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '2px 6px', border: '1px solid #FCD34D', borderRadius: 4, minWidth: 220, fontFamily: 'inherit' }}
               />
             )}
           </div>
-          {rows.length === 0 && <div style={{ color: '#64748B' }}>Nobody in these groups was emailed by a campaign in the last {weeks} weeks.</div>}
-          {shown.map(r => (
+          {clear.threePlus > 0 && (
             <div
-              key={r.email}
-              data-recent-sends-row
-              data-tone={sendTone(r.campaigns.length)}
-              style={{ ...TONES[sendTone(r.campaigns.length)], borderRadius: 4, padding: '1px 6px', marginTop: 2, display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}
+              data-recent-sends-clear
+              title={`Assumes no more campaigns go out. A campaign stops counting for someone ${weeks} weeks after its last send to them, so a person drops below 3 when their third-newest campaign ages out.`}
+              style={{ margin: '2px 0 4px', padding: '4px 8px', borderRadius: 4, background: '#fff', border: '1px solid #FCD34D', color: '#334155' }}
             >
-              <button
-                type="button"
-                onClick={() => setEditingContact(r.contact)}
-                title={`Open ${r.name} (${r.email})`}
-                style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 700, color: 'inherit', cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'rgba(0,0,0,0.2)' }}
-              >{r.name}</button>
-              <span>
-                {r.campaigns.map(c => `${c.label}${c.lastSentDate ? ` (${shortDate(c.lastSentDate)})` : ''}`).join('; ')}
-              </span>
-              <span style={{ marginLeft: 'auto', fontSize: '0.64rem', fontWeight: 600, opacity: 0.8, whiteSpace: 'nowrap' }}>
-                {r.groups.join(', ')}{r.emails !== r.campaigns.length ? ` · ${r.emails} emails` : ''}
-              </span>
+              {clear.majorityAt
+                ? <>Most of these {clear.total} people will be below 3 campaigns by <strong>{longDate(clear.majorityAt)}</strong></>
+                : <>Most of these {clear.total} people are already below 3 campaigns</>}
+              {' '}if nothing more is sent
+              {clear.majorityAt && longDate(clear.majorityAt) === longDate(clear.allClearAt)
+                ? ', and so will everyone.'
+                : <>; everyone will be by <strong>{longDate(clear.allClearAt)}</strong>.</>}
             </div>
-          ))}
+          )}
+          {rows.length === 0 && <div style={{ color: '#64748B' }}>Nobody in these groups was emailed by a campaign in the last {weeks} weeks.</div>}
+          {rows.length > 0 && (
+            <div style={{ ...ROW_GRID, padding: '0 6px', marginTop: 4, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#B45309' }}>
+              <span>Name</span><span>Company</span><span>Campaigns (last send)</span><span>Groups</span>
+            </div>
+          )}
+          {shown.map(r => {
+            const dropAt = belowThreeAt(r);
+            return (
+              <div
+                key={r.email}
+                data-recent-sends-row
+                data-tone={sendTone(r.campaigns.length)}
+                style={{ ...TONES[sendTone(r.campaigns.length)], ...ROW_GRID, borderRadius: 4, padding: '1px 6px', marginTop: 2 }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setEditingContact(r.contact)}
+                  title={`Open ${r.name} (${r.email})`}
+                  style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 700, color: 'inherit', cursor: 'pointer', textAlign: 'left', textDecoration: 'underline', textDecorationColor: 'rgba(0,0,0,0.2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >{r.name}</button>
+                <span data-recent-sends-company title={r.company} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: r.company ? 'inherit' : '#94A3B8' }}>{r.company || '-'}</span>
+                <span title={dropAt ? `Below 3 campaigns from ${longDate(dropAt)} if nothing more is sent` : undefined}>
+                  {r.campaigns.map(c => `${c.label}${c.lastSentDate ? ` (${shortDate(c.lastSentDate)})` : ''}`).join('; ')}
+                </span>
+                <span style={{ fontSize: '0.64rem', fontWeight: 600, opacity: 0.8, whiteSpace: 'nowrap', textAlign: 'right' }}>
+                  {r.groups.join(', ')}{r.emails !== r.campaigns.length ? ` · ${r.emails} emails` : ''}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 
