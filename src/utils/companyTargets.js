@@ -39,6 +39,20 @@ export function blankTarget() {
   };
 }
 
+// The company popup's "No Target Set" button logs this row: a record that
+// the company was checked and has no target, so it reads as answered rather
+// than not yet looked at. No action, no years (so no refresh date); it can
+// be edited or deleted like any other row.
+export const NO_TARGET_TYPE = 'No target set';
+
+export function noTargetRow() {
+  return { ...blankTarget(), action: '', type: NO_TARGET_TYPE };
+}
+
+export function hasNoTargetRow(list) {
+  return normalizeTargets(list).some(r => r.type.trim().toLowerCase() === NO_TARGET_TYPE.toLowerCase());
+}
+
 // Digits only, at most four: the year boxes accept nothing else.
 export function cleanYear(value) {
   return String(value ?? '').replace(/\D/g, '').slice(0, 4);
