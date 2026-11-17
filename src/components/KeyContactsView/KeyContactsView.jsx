@@ -46,7 +46,10 @@ import { findLostCompanyPins, recoverChangedJobsFlags, COMPANY_PIN_FLAG } from '
 import { useRelationshipData } from '../../hooks/useRelationshipStrength';
 import { RelationshipBadge } from '../Relationship/RelationshipBadge';
 import { jobDescriptionUpdate } from '../../utils/contactJobDescription';
-import { biggestDeal, formatDealAmount } from '../../utils/biggestDeal';
+import { biggestDealFor, dealMid } from '../../utils/prospectingDeals';
+import { pricedServiceRows } from '../../utils/serviceRows';
+import { formatMoney, formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
+import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 
 // The By Company rollup's columns, in order. Company is always shown; the
 // rest are the user's to hide, star as their standard view, and resize.
@@ -630,9 +633,11 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     // The CDM on that same prospect, blank when it maps to none or has no
     // CDM set.
     { key: 'companyCdm', label: 'CDM' },
-    // The largest Quoted Amount among the company's opps on the Opps tab,
-    // Not Sold left out (utils/biggestDeal). What ranks the Key top 50.
+    // The company card's Biggest Deal (the biggest service still open,
+    // priced off the card's Scale figures), shown as the middle of its
+    // range, and the service it is for. What ranks the Key top 50.
     { key: 'biggestDeal', label: 'Biggest Deal' },
+    { key: 'biggestDealService', label: 'Biggest Deal Service' },
     // The Vertical on that same prospect. Opt-in per page (Decision Makers).
     ...(showCompanyVertical ? [{ key: 'companyVertical', label: 'Company Vertical' }] : []),
     ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
@@ -2112,7 +2117,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, biggestDeal: 130, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 260, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, connected: 120, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
+    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, biggestDeal: 120, biggestDealService: 200, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 260, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, connected: 120, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -2132,7 +2137,7 @@ function KeyContactsViewInner({
   // keys removes the guess: anything not on the list shows, so the next
   // column to ship here needs none of this. They stay only to convert a
   // layout saved under the old model, once.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', 'companyCdm', 'biggestDeal', ...(showCompanyVertical ? ['companyVertical'] : []), ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', ...(hasFullTable(storagePrefix) ? ['connected'] : []), 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct', 'strength'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', 'companyCdm', 'biggestDeal', 'biggestDealService', ...(showCompanyVertical ? ['companyVertical'] : []), ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', ...(hasFullTable(storagePrefix) ? ['connected'] : []), 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct', 'strength'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
   function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -3474,14 +3479,43 @@ function KeyContactsViewInner({
     return out;
   }, [rows]);
 
-  // Each company row's biggest deal (utils/biggestDeal), for the Biggest
-  // Deal column. Read off the opps the By Company rollup already matched to
-  // the row, so the two views can't name different deals for one company.
+  // Each company row's Biggest Deal: the company card's own reading
+  // (utils/prospectingDeals biggestDealFor, the same accountPotential run
+  // the card's Scale section shows), priced off the Services Pricing rate
+  // card. Only the settings that pricing reads are watched, so an unrelated
+  // save doesn't re-price every company. Unmapped companies have no card to
+  // price, so no deal.
+  const pricingSettings = useMemo(() => ({
+    servicePricing: settings?.servicePricing,
+    pricingBases: settings?.pricingBases,
+    serviceOverrides: settings?.serviceOverrides,
+    hiddenServices: settings?.hiddenServices,
+    customServiceCategories: settings?.customServiceCategories,
+    dropdownCustomLists: settings?.dropdownCustomLists,
+    dropdownListLabels: settings?.dropdownListLabels,
+    dropdownLists: settings?.dropdownLists,
+    dropdownListsHidden: settings?.dropdownListsHidden,
+  }), [settings?.servicePricing, settings?.pricingBases, settings?.serviceOverrides,
+    settings?.hiddenServices, settings?.customServiceCategories, settings?.dropdownCustomLists,
+    settings?.dropdownListLabels, settings?.dropdownLists, settings?.dropdownListsHidden]);
+  const dealCtx = useMemo(() => ({
+    serviceRows: pricedServiceRows(pricingSettings),
+    pricing: getServicePricing(pricingSettings),
+    bases: resolvePricingBases(pricingSettings),
+    overrides: pricingSettings.serviceOverrides || null,
+  }), [pricingSettings]);
   const dealByRowKey = useMemo(() => {
     const m = new Map();
-    for (const row of rows) m.set(row.key, biggestDeal(row.opps));
+    if (!dealCtx.serviceRows.length) return m;
+    const mapped = rows.filter(r => r.prospect);
+    // What each company's opportunities say about each service, matched the
+    // way the Prospecting page's Biggest Deal column matches them.
+    const stagesByProspect = buildOppStagesByClient(mapped.map(r => r.prospect), oppsRecords, dealCtx.serviceRows.map(r => r.name));
+    for (const row of mapped) {
+      m.set(row.key, biggestDealFor(row.prospect, { ...dealCtx, oppStages: stagesByProspect.get(row.prospect) || null }));
+    }
     return m;
-  }, [rows]);
+  }, [rows, oppsRecords, dealCtx]);
   const dealFor = (c) => dealByRowKey.get(c.rowKey) || null;
 
   // Distinct states / cities across the loaded contacts, powering the
@@ -3541,7 +3575,8 @@ function KeyContactsViewInner({
         case 'company': cmp = (a.companyName || '').localeCompare(b.companyName || ''); break;
         case 'companyStatus': cmp = (a.prospect?.status || '').localeCompare(b.prospect?.status || ''); break;
         case 'companyCdm': cmp = String(a.prospect?.cdm || '').trim().localeCompare(String(b.prospect?.cdm || '').trim()); break;
-        case 'biggestDeal': cmp = (dealByRowKey.get(a.rowKey)?.amount || 0) - (dealByRowKey.get(b.rowKey)?.amount || 0); break;
+        case 'biggestDeal': cmp = dealMid(dealByRowKey.get(a.rowKey)) - dealMid(dealByRowKey.get(b.rowKey)); break;
+        case 'biggestDealService': cmp = String(dealByRowKey.get(a.rowKey)?.name || '').localeCompare(String(dealByRowKey.get(b.rowKey)?.name || '')); break;
         case 'companyVertical': {
           // Blank verticals sit at the bottom either way round; within a
           // vertical, people group by company.
@@ -3707,7 +3742,8 @@ function KeyContactsViewInner({
     company:  c => c.companyName || '',
     companyStatus: c => c.prospect?.status || '',
     companyCdm: c => String(c.prospect?.cdm || '').trim(),
-    biggestDeal: c => formatDealAmount(dealFor(c)?.amount),
+    biggestDeal: c => (dealFor(c) ? formatMoney(Math.round(dealMid(dealFor(c)))) : ''),
+    biggestDealService: c => dealFor(c)?.name || '',
     companyVertical: c => String(c.prospect?.vertical || '').trim(),
     suggestedCompany: c => c.suggestedCompany || '',
     newCompany: c => c.newCompany || '',
@@ -5026,18 +5062,22 @@ function KeyContactsViewInner({
                       return (
                         <div
                           data-biggest-deal
-                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right' }}
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', fontWeight: deal ? 700 : 400, color: deal ? '#059669' : '#CBD5E1' }}
                           title={deal
-                            ? `${company}'s biggest deal on the Opps tab${deal.name ? `: ${deal.name}` : ''}, ${formatDealAmount(deal.amount)} (${deal.stage || 'no stage'}). Not Sold opps don't count.`
-                            : `${company} has no opp with a Quoted Amount on the Opps tab (Not Sold opps don't count)`}
-                        >
-                          {deal ? (
-                            <>
-                              <span style={{ fontWeight: 700, color: '#059669' }}>{formatDealAmount(deal.amount)}</span>
-                              {deal.stage ? <span style={{ color: '#94A3B8', fontSize: '0.64rem' }}> {deal.stage}</span> : null}
-                            </>
-                          ) : <span style={{ color: '#CBD5E1' }}>-</span>}
-                        </div>
+                            ? `${company}'s Biggest Deal on its company card: ${deal.name}, ${formatMoneyRange(deal.fee, deal.feeHigh)} in its first year. This is the middle of that range.`
+                            : (c.prospect ? `Nothing priced yet on ${company}'s company card` : 'Company not mapped to a Table View prospect, so there is no card to price')}
+                        >{deal ? formatMoney(Math.round(dealMid(deal))) : '-'}</div>
+                      );
+                    })(),
+                    biggestDealService: (() => {
+                      const deal = dealFor(c);
+                      const adds = deal?.adds?.length ? `, sold with ${deal.adds.join(', ')}` : '';
+                      return (
+                        <div
+                          data-biggest-deal-service
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: deal ? '#334155' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={deal ? `${deal.name}${adds}${deal.status && deal.status !== '-' ? ` (${deal.status})` : ''}` : 'No Biggest Deal on the company card'}
+                        >{deal ? deal.name : '-'}</div>
                       );
                     })(),
                     companyVertical: (() => {
