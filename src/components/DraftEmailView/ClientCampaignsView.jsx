@@ -39,6 +39,10 @@ const prospectTag = (service) => (
 
 const PICK_KEY = 'client-campaigns-pick';
 const AUDIENCE_KEY = 'client-campaigns-audience';
+const KEY_CONTACTS_CLIENTS_KEY = 'client-campaigns-key-contacts-include-clients';
+
+// A Table View company whose status is Client.
+const isClientCompany = (p) => String(p?.status || '').trim().toLowerCase() === 'client';
 
 const STATUS_COLORS = {
   Replied: { background: '#DCFCE7', color: '#166534' },
@@ -103,12 +107,18 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     () => (audienceKey === 'clients' ? null : makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap })),
     [audienceKey, prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
   );
+  // The Key Contacts view leaves the companies that are already clients
+  // out unless this is ticked: the Clients view is where they are covered.
+  const [keyContactsIncludeClients, setKeyContactsIncludeClients] = useState(() => userLsGet(KEY_CONTACTS_CLIENTS_KEY) === '1');
+  const pickKeyContactsIncludeClients = (on) => { setKeyContactsIncludeClients(on); userLsSet(KEY_CONTACTS_CLIENTS_KEY, on ? '1' : ''); };
   const accounts = useMemo(() => {
     if (audienceKey === 'clients' || !rosterGates) return currentClients(prospects, cdmName, clientUntrackedMap);
-    return audienceKey === 'keyContacts'
-      ? rosterAccounts({ prospects, contacts, gate: rosterGates.isKey, untrackedMap: clientUntrackedMap })
-      : rosterAccounts({ prospects, contacts, gate: rosterGates.isKeyProspect, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap });
-  }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap]);
+    if (audienceKey === 'keyContacts') {
+      const list = rosterAccounts({ prospects, contacts, gate: rosterGates.isKey, untrackedMap: clientUntrackedMap });
+      return keyContactsIncludeClients ? list : list.filter(p => !isClientCompany(p));
+    }
+    return rosterAccounts({ prospects, contacts, gate: rosterGates.isKeyProspect, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap });
+  }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap, keyContactsIncludeClients]);
 
   const allRows = useMemo(
     () => clientCampaignRows({ prospects, cdmName, campaign, accounts }),
@@ -288,6 +298,15 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           <input type="checkbox" checked={onlyReached} onChange={e => setOnlyReached(e.target.checked)} />
           Only {audience.key === 'clients' ? 'clients' : 'companies'} on this campaign
         </label>
+        {audience.key === 'keyContacts' && (
+          <label
+            title="Key Contacts leaves out the companies that are already clients (status Client); the Clients view covers those. Tick to list them here too."
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: '#475569', cursor: 'pointer' }}
+          >
+            <input type="checkbox" checked={keyContactsIncludeClients} onChange={e => pickKeyContactsIncludeClients(e.target.checked)} />
+            Include clients
+          </label>
+        )}
         <div role="group" aria-label="Which companies to list" style={{ display: 'inline-flex', border: '1px solid #CBD5E1', borderRadius: 6, overflow: 'hidden' }}>
           {CAMPAIGN_AUDIENCE_VIEWS.map((a, i) => {
             const on = a.key === audience.key;
