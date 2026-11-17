@@ -17,6 +17,9 @@ const shortDate = d => new Date(d).toLocaleDateString('en-US', { month: 'short',
 
 export default function RecentCampaignNotice({ hits, days }) {
   if (!hits || hits.length === 0) return null
+  // Most-emailed first: red rows, then yellow, then green. sort is stable,
+  // so people with the same count keep their original order.
+  const sorted = [...hits].sort((a, b) => b.campaigns.length - a.campaigns.length)
   return (
     <div
       role="status"
@@ -25,7 +28,7 @@ export default function RecentCampaignNotice({ hits, days }) {
       <div style={{ fontWeight: 700, marginBottom: 2 }}>
         {hits.length === 1 ? '1 recipient was' : `${hits.length} recipients were`} emailed by another campaign in the last {days / 7} weeks
       </div>
-      {hits.map(h => (
+      {sorted.map(h => (
         <div
           key={h.email}
           data-tone={toneForCount(h.campaigns.length)}
