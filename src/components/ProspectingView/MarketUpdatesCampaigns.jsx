@@ -13,8 +13,16 @@ import { campaignCategory } from '../../utils/campaignCategory';
 import { CAMPAIGN_AUDIENCES, campaignAudience, campaignIdentity } from '../../utils/campaignAudience';
 import { saveCampaignAudience } from '../../utils/campaignAudienceStore';
 import { fmtDate } from '../../utils/dealsFormat';
+import { campaignWarnings } from '../../utils/campaignWarnings';
 
 const statusOf = (c) => (isCampaignPaused(c) ? 'Paused' : isCampaignActive(c) ? 'Active' : 'Inactive');
+// Set-up gaps are red (fix before the rest goes out), unfinished sending amber.
+const WARN_STYLE = {
+  setup: { border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C' },
+  sending: { border: '1px solid #FDE68A', background: '#FFFBEB', color: '#92400E' },
+};
+const warningsText = (ws) => ws.map(w => w.text).join(', ');
+
 const STATUS_STYLE = {
   Active: { border: '1px solid #86EFAC', background: '#DCFCE7', color: '#15803D' },
   Paused: { border: '1px solid #FCD34D', background: '#FEF3C7', color: '#92400E' },
@@ -35,7 +43,7 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
       const base = campaignIdentity(c);
       const n = (seen.get(base) || 0) + 1;
       seen.set(base, n);
-      return { id: n > 1 ? `${base}#${n}` : base, campaign: c, stats: campaignSendStats(c), status: statusOf(c) };
+      return { id: n > 1 ? `${base}#${n}` : base, campaign: c, stats: campaignSendStats(c), status: statusOf(c), warnings: campaignWarnings(c) };
     }).filter((r) => r.status === 'Active');
   }, [campaigns]);
 
@@ -120,6 +128,21 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
         return <span style={{ fontWeight: 700, color: rate >= 20 ? '#10B981' : rate >= 10 ? '#F59E0B' : '#DC2626' }}>{rate}%</span>;
       },
     },
+    // What the campaign still needs: set-up gaps and unfinished sending
+    // (campaignWarnings). Summarised in the banner above the table too.
+    {
+      key: 'warnings', label: 'Warnings', defaultWidth: 220,
+      headerTitle: 'What this active campaign is still missing: subject, category, Sent To, contacts, or sends',
+      getFilterValue: (r) => (r.warnings.length ? warningsText(r.warnings) : 'Complete'),
+      getSortValue: (r) => r.warnings.length,
+      render: (r) => (r.warnings.length ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }} title={warningsText(r.warnings)}>
+          {r.warnings.map(w => (
+            <span key={w.key} style={{ ...WARN_STYLE[w.kind], padding: '0 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, whiteSpace: 'nowrap' }}>{w.text}</span>
+          ))}
+        </div>
+      ) : <span style={{ color: '#16A34A', fontSize: '0.7rem', fontWeight: 600 }}>Complete</span>),
+    },
     {
       key: 'status', label: 'Status', defaultWidth: 100,
       getFilterValue: (r) => r.status,
@@ -131,6 +154,8 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [onNavigate, user?.uid]);
+
+  const incomplete = rows.filter(r => r.warnings.length);
 
   if (loading) return <div style={{ marginTop: 8, fontSize: '0.72rem', color: '#94A3B8' }}>Loading campaigns...</div>;
   if (!(campaigns || []).length) return null;
@@ -146,6 +171,18 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
           >Open Email Campaigns</button>
         )}
       </div>
+      {incomplete.length > 0 && (
+        <div data-campaign-warnings style={{ margin: '2px 0 6px', padding: '6px 10px', border: '1px solid #FCD34D', background: '#FFFBEB', borderRadius: 8, fontSize: '0.72rem', color: '#92400E' }}>
+          <div style={{ fontWeight: 700, marginBottom: 2 }}>
+            ⚠ {incomplete.length} of {rows.length} active campaign{rows.length === 1 ? '' : 's'} {incomplete.length === 1 ? 'is' : 'are'} incomplete
+          </div>
+          {incomplete.map(r => (
+            <div key={r.id}>
+              <span style={{ fontWeight: 600 }}>{campaignOutreachLabel(r.campaign)}:</span> {warningsText(r.warnings)}
+            </div>
+          ))}
+        </div>
+      )}
       {/* DataTable fills its parent's height, so give it one: room for
           every row up to most of the screen, then it scrolls. */}
       <div style={{ height: `min(60vh, ${150 + rows.length * 72}px)`, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
