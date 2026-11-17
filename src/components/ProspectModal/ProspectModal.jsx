@@ -7807,7 +7807,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // are on the page too, greyed, and are deliberately not counted here:
       // this pill is a count of work, not of rows.
       potential: n(accountPotentialReading?.open?.length || 0),
-      targets: n(Array.isArray(fields.climateTargets) ? fields.climateTargets.length : 0),
+      targets: n(Array.isArray(fields.climateTargets) ? fields.climateTargets.filter(t => t && !t.hidden).length : 0),
       portfolio: n((fields.portfolioCompanies || []).length),
     };
   }, [companyContacts.length, servicesExploredCount, companyOppsSummary.total,

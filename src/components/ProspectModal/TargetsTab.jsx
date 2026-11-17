@@ -241,11 +241,24 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
     {
       key: '__delete__',
       label: '',
-      defaultWidth: 50,
+      defaultWidth: 110,
       exportValue: () => '',
       render: r => (
-        <button type="button" style={rowBtn} title="Delete this target" aria-label="Delete this target"
-          onClick={() => remove(r)}>&#10005;</button>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <button
+            type="button"
+            onClick={() => edit(r.id, 'hidden', !r.hidden)}
+            title={r.hidden ? 'Show this target normally again' : 'Grey this target out (it stays on the list)'}
+            aria-label={r.hidden ? 'Show this target' : 'Hide this target'}
+            aria-pressed={r.hidden}
+            style={{
+              padding: '1px 8px', borderRadius: 999, font: 'inherit', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer',
+              border: `1px solid ${r.hidden ? '#94A3B8' : '#CBD5E1'}`, background: r.hidden ? '#E2E8F0' : '#fff', color: '#475569',
+            }}
+          >{r.hidden ? 'Show' : 'Hide'}</button>
+          <button type="button" style={rowBtn} title="Delete this target" aria-label="Delete this target"
+            onClick={() => remove(r)}>&#10005;</button>
+        </span>
       ),
     },
   ];
@@ -287,7 +300,10 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
         tableId="company-targets"
         columns={columns}
         rows={rows}
-        alwaysVisible={['type']}
+        alwaysVisible={['type', '__delete__']}
+        // Hidden targets sit greyed out below the rest, whatever the sort.
+        rowGroup={r => (r.hidden ? 1 : 0)}
+        rowStyle={r => (r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
         emptyMessage={rows.length ? 'No targets match the filters.' : 'No targets logged yet. Use + Add target to log one.'}
         // The filter row only once there is something to filter: on an empty
         // table its boxes look like the place to type a new target in.
