@@ -40,6 +40,7 @@ import { responseRateOf } from '../../utils/campaignContactHold';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
 import { recentCampaignWarnings, sentThisCampaign, RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
+import RecentCampaignNotice from './RecentCampaignNotice';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
 import { recordDraftHistory } from '../../utils/emailDraftHistoryStore';
 import { suggestCampaignFor, DRAFT_AUTOSAVE_KEY } from '../../utils/emailDraftHistory';
@@ -2817,23 +2818,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             </div>
           </div>
 
-          {recentCampaignHits.length > 0 && (
-            <div
-              role="status"
-              style={{ margin: '-0.35rem 0 0.75rem', padding: '0.5rem 0.7rem', border: '1px solid #FCD34D', background: '#FFFBEB', borderRadius: 6, fontSize: '0.74rem', color: '#92400E', lineHeight: 1.45 }}
-            >
-              <div style={{ fontWeight: 700, marginBottom: 2 }}>
-                {recentCampaignHits.length === 1 ? '1 recipient was' : `${recentCampaignHits.length} recipients were`} emailed by another campaign in the last {RECENT_CAMPAIGN_DAYS / 7} weeks
-              </div>
-              {recentCampaignHits.map(h => (
-                <div key={h.email}>
-                  <strong>{h.name || h.email}</strong>
-                  {': '}
-                  {h.campaigns.map(c => `${c.label}${c.lastSentDate ? ` (${new Date(c.lastSentDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})` : ''}`).join('; ')}
-                </div>
-              ))}
-            </div>
-          )}
+          <RecentCampaignNotice hits={recentCampaignHits} days={RECENT_CAMPAIGN_DAYS} />
 
           {/* Draft-level CC */}
           <div className={styles.field}>
