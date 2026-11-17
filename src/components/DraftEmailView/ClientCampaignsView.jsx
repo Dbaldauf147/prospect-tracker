@@ -31,6 +31,11 @@ import { loadOppsFromCache } from '../../utils/oppsCache';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
+import { useAuth } from '../../contexts/AuthContext';
+import { campaignStatus } from '../../utils/campaignOutreach';
+import { CAMPAIGN_AUDIENCES, campaignAudience, campaignIdentity } from '../../utils/campaignAudience';
+import { saveCampaignAudience } from '../../utils/campaignAudienceStore';
+import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
 import { prospectsAnyway } from '../../utils/serviceProspectAnyway';
 
 // The company popup's "Prospect" flag on a Not Sold service
@@ -168,6 +173,13 @@ function BucketPill({ bucket, active, noun, onFilter, renderList }) {
   );
 }
 
+// The picked campaign's status, the same word Email Campaigns shows.
+const CAMPAIGN_STATUS_STYLE = {
+  active: { label: 'Active', border: '1px solid #86EFAC', background: '#DCFCE7', color: '#15803D' },
+  paused: { label: 'Paused', border: '1px solid #FCD34D', background: '#FEF3C7', color: '#92400E' },
+  inactive: { label: 'Inactive', border: '1px solid #E2E8F0', background: '#F3F4F6', color: '#6B7280' },
+};
+
 export function ClientCampaignsView({ prospects, cdmName = '', settings, updateSettings, onSelectProspect, onOpenCampaign }) {
   const campaigns = useEmailCampaigns();
   // Clients ticked "Don't Track" on the Clients tab are left off this list.
@@ -180,6 +192,35 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
 
   const picked = choices.find(c => c.label === pickedLabel) || choices[0] || null;
   const campaign = picked?.campaign || null;
+
+  // The campaign's "Sent To" ticks (Clients / Key Contacts / Prospects),
+  // the same ones Email Campaigns > Saved Campaigns shows. A tick shows at
+  // once and is saved to the stored list; the list then reloads.
+  const { user } = useAuth() || {};
+  const [audienceOverride, setAudienceOverride] = useState({}); // `${identity}|${key}` -> bool
+  const sentTo = useMemo(() => {
+    const base = campaignAudience(campaign);
+    if (!campaign) return base;
+    const id = campaignIdentity(campaign);
+    const out = { ...base };
+    for (const a of CAMPAIGN_AUDIENCES) {
+      const o = audienceOverride[`${id}|${a.key}`];
+      if (typeof o === 'boolean') out[a.key] = o;
+    }
+    return out;
+  }, [campaign, audienceOverride]);
+  const toggleSentTo = (key, on) => {
+    if (!campaign) return;
+    const k = `${campaignIdentity(campaign)}|${key}`;
+    setAudienceOverride(prev => ({ ...prev, [k]: on }));
+    saveCampaignAudience(user?.uid, campaign, key, on)
+      .then(() => window.dispatchEvent(new Event(EMAIL_CAMPAIGNS_UPDATED_EVENT)))
+      .catch(err => {
+        setAudienceOverride(prev => { const n = { ...prev }; delete n[k]; return n; });
+        window.alert(`Could not save Sent To: ${err?.message || err}`);
+      });
+  };
+  const statusStyle = campaign ? CAMPAIGN_STATUS_STYLE[campaignStatus(campaign)] : null;
 
   // Opps and HubSpot contacts feed the service statuses (an opp naming the
   // service, and the auto N/A rules), as on the company popup, and the
@@ -331,8 +372,6 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     rows = kept;
   }
   const reached = allRows.filter(r => r.onCampaign > 0).length;
-  const peopleCount = allRows.reduce((n, r) => n + r.onCampaign, 0);
-  const repliedClients = allRows.filter(r => r.replied > 0).length;
   // Rows kept one person high; "+N more" opens one (by column).
   const [openCells, setOpenCells] = useState(() => new Set());
   const cellOpen = (r, col) => openCells.has(`${col}|${r.id}`);
@@ -561,10 +600,6 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   ];
 
   const noClients = allRows.length === 0;
-  const refreshedMs = Date.parse(campaign?.refreshedAt || '');
-  const refreshedOn = Number.isFinite(refreshedMs)
-    ? new Date(refreshedMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-    : '';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
@@ -629,12 +664,35 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
         </div>
       </div>
 
-      {campaign && !noClients && (
+      {campaign && (
+        <div data-campaign-status style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', flexWrap: 'wrap', fontSize: '0.8rem', color: '#475569' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontWeight: 600, color: '#334155' }}>Status</span>
+            <span style={{ ...statusStyle, padding: '1px 8px', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+              {statusStyle.label}
+            </span>
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }} title="Which audiences this campaign has gone to. The same ticks as Email Campaigns > Saved Campaigns.">
+            <span style={{ fontWeight: 600, color: '#334155' }}>Sent to</span>
+            {CAMPAIGN_AUDIENCES.map(a => (
+              <label key={a.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', color: sentTo[a.key] ? '#166534' : '#475569', fontWeight: sentTo[a.key] ? 700 : 500 }}>
+                <input
+                  type="checkbox"
+                  checked={sentTo[a.key]}
+                  onChange={e => toggleSentTo(a.key, e.target.checked)}
+                  aria-label={`Sent to ${a.label}`}
+                  style={{ margin: 0, accentColor: '#16A34A', cursor: 'pointer' }}
+                />
+                {a.label}
+              </label>
+            ))}
+          </span>
+        </div>
+      )}
+
+      {campaign && !noClients && hiddenClosed > 0 && (
         <div style={{ fontSize: '0.8rem', color: '#475569' }}>
-          <strong style={{ color: '#1E293B' }}>{reached}</strong> of {allRows.length} {audience.noun} are on this campaign
-          ({peopleCount} {peopleCount === 1 ? 'person' : 'people'}); {repliedClients} replied.
-          {refreshedOn ? ` As of the campaign's last refresh, ${refreshedOn}.` : ''}
-          {hiddenClosed > 0 && ` ${hiddenClosed} ${hiddenClosed === 1 ? 'company is' : 'companies are'} N/A or Not Sold, so ${hiddenClosed === 1 ? 'it is' : 'they are'} left off the table (click N/A or Not sold above to see them).`}
+          {hiddenClosed} {hiddenClosed === 1 ? 'company is' : 'companies are'} N/A or Not Sold, so {hiddenClosed === 1 ? 'it is' : 'they are'} left off the table (click N/A or Not sold above to see them).
         </div>
       )}
 
@@ -643,7 +701,6 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.45rem' }}>
             <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B' }}>
               {service}
-              <span style={{ fontWeight: 400, color: '#64748B' }}> - where this service stands at each {audience.one}. Click a heading to filter the table.</span>
             </div>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: '0.4rem' }}>
               {buckets.filter(b => PILL_BUCKETS.has(b.key)).map(b => {
