@@ -50,6 +50,10 @@ const prospectTag = (service) => (
 );
 
 const PICK_KEY = 'client-campaigns-pick';
+// The rows ticked Ignore, and the campaign they were ticked for:
+// { campaign: campaignIdentity, ids: [row id] }. One set at a time, so
+// picking another campaign starts with every box unticked.
+const IGNORE_KEY = 'client-campaigns-ignore';
 const AUDIENCE_KEY = 'client-campaigns-audience';
 // Shown as a small pill each rather than a card: nobody works from them.
 const PILL_BUCKETS = new Set(['sold', 'na']);
@@ -348,6 +352,25 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   // Clicking a bucket narrows the table to its clients; again clears it.
   const [bucketPick, setBucketPick] = useState(null); // { service, key }
   const pickedName = picked?.label || '';
+
+  // Ignore ticks for the picked campaign, cleared when another campaign is
+  // picked (pick, below). Stored with the campaign they belong to as well,
+  // so a campaign that changes some other way never shows another's ticks.
+  const [ignoreStore, setIgnoreStore] = useState(() => {
+    try { return JSON.parse(userLsGet(IGNORE_KEY) || 'null') || null; } catch { return null; }
+  });
+  const campaignKey = campaign ? campaignIdentity(campaign) : '';
+  const ignoredIds = useMemo(
+    () => new Set(ignoreStore && ignoreStore.campaign === campaignKey ? ignoreStore.ids || [] : []),
+    [ignoreStore, campaignKey],
+  );
+  const toggleIgnore = (id, on) => {
+    const next = new Set(ignoredIds);
+    if (on) next.add(id); else next.delete(id);
+    const store = { campaign: campaignKey, ids: [...next] };
+    setIgnoreStore(store);
+    userLsSet(IGNORE_KEY, JSON.stringify(store));
+  };
   useEffect(() => { setBucketPick(null); }, [pickedName, audienceKey]);
   const bucketIds = useMemo(() => {
     if (!bucketPick) return null;
@@ -375,7 +398,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   const settledLast = (r) => (settled(r) ? 1 : 0);
   // Opacity sits on the <tr> and is mirrored onto each <td>, so it
   // compounds (0.7 x 0.7, about half).
-  const settledRowStyle = (r) => (settled(r) ? { opacity: 0.7, background: '#F8FAFC' } : undefined);
+  const settledRowStyle = (r) => (settled(r) || ignoredIds.has(r.id) ? { opacity: 0.7, background: '#F8FAFC' } : undefined);
   let hiddenClosed = 0;
   if (audience.key === 'keyContacts' && !bucketIds) {
     const kept = rows.filter(r => !closedOut(r));
@@ -454,6 +477,12 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   );
 
   const pick = (label) => {
+    // Another campaign: every Ignore box starts unticked, and the old
+    // campaign's ticks are not kept for when it is picked again.
+    if (label !== pickedName) {
+      setIgnoreStore(null);
+      userLsSet(IGNORE_KEY, '');
+    }
     setPickedLabel(label);
     userLsSet(PICK_KEY, label);
   };
@@ -608,6 +637,25 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
         );
       },
     })),
+    {
+      key: 'ignore',
+      label: 'Ignore',
+      defaultWidth: 80,
+      getSortValue: r => (ignoredIds.has(r.id) ? 1 : 0),
+      getFilterValue: r => (ignoredIds.has(r.id) ? 'Ignored' : 'Not ignored'),
+      exportValue: r => (ignoredIds.has(r.id) ? 'Yes' : ''),
+      render: r => (
+        <input
+          type="checkbox"
+          checked={ignoredIds.has(r.id)}
+          onClick={e => e.stopPropagation()}
+          onChange={e => toggleIgnore(r.id, e.target.checked)}
+          aria-label={`Ignore ${r.company} for this campaign`}
+          title="Ignore for this campaign. Picking another campaign clears these."
+          style={{ margin: 0, cursor: 'pointer' }}
+        />
+      ),
+    },
   ];
 
   const noClients = allRows.length === 0;
