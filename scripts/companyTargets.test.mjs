@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany } from '../src/utils/companyTargets.js';
+import { normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -148,6 +148,14 @@ check('types: dedupe keeps first spelling', types.dedupeTypes(['A', 'a', ' b ', 
   check('soonest: no year set anywhere, first target', one[1].targetId, 'x');
   check('soonest: counts', one.map(r => r.targetCount), [4, 2, 1]);
   check('soonest: none', soonestTargetPerCompany([]), []);
+}
+
+// "No Target Set" button.
+{
+  const n = noTargetRow();
+  check('no target: row', [n.type, n.action, n.yearSet, refreshDue(n)], ['No target set', '', '', null]);
+  check('no target: survives normalize', normalizeTargets([n])[0].action, '');
+  check('no target: detected', [hasNoTargetRow([n]), hasNoTargetRow([{ id: 'x', type: 'no target SET' }]), hasNoTargetRow([{ id: 'y', type: 'Net zero' }]), hasNoTargetRow(null)], [true, true, false, false]);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }

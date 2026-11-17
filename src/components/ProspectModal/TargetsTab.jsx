@@ -12,7 +12,7 @@ import { DataTable } from '../common/DataTable';
 import {
   TARGET_SCOPES, TARGET_ACTIONS, REFRESH_CYCLE_YEARS, blankTarget, normalizeTargets,
   updateTarget, removeTarget, refreshDue, scopesLabel,
-  parsePastedTargets, mergePastedTargets,
+  parsePastedTargets, mergePastedTargets, NO_TARGET_TYPE, noTargetRow, hasNoTargetRow,
 } from '../../utils/companyTargets';
 import { addTargetTypeOption } from '../../utils/targetTypeOptions';
 import { TargetTypeSelect } from './TargetTypeSelect';
@@ -144,6 +144,12 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
   const typeOptions = useTargetTypeOptions();
   const edit = (id, key, value) => onChange(updateTarget(rows, id, key, value));
   const add = () => onChange([...rows, blankTarget()]);
+  const noTargetLogged = hasNoTargetRow(rows);
+  const addNoTarget = () => {
+    if (noTargetLogged) return;
+    addTargetTypeOption(NO_TARGET_TYPE);
+    onChange([...rows, noTargetRow()]);
+  };
   const [pasting, setPasting] = useState(false);
   const remove = (row) => {
     const named = row.type ? `the "${row.type}" target` : 'this target';
@@ -320,6 +326,17 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
       </div>
       <div style={{ display: 'flex', gap: '0.5rem' }}>
         <button type="button" onClick={add} style={addBtn}>+ Add target</button>
+        <button
+          type="button"
+          onClick={addNoTarget}
+          disabled={noTargetLogged}
+          title={noTargetLogged
+            ? 'Already logged as having no target'
+            : 'Log that this company has no target set (adds a "No target set" row)'}
+          style={{ ...secondaryBtn, opacity: noTargetLogged ? 0.5 : 1, cursor: noTargetLogged ? 'default' : 'pointer' }}
+        >
+          No Target Set
+        </button>
         {!pasting && (
           <button type="button" onClick={() => setPasting(true)} style={secondaryBtn}
             title="Paste a table of targets, such as the SBTi dashboard's Targets / Commitments table">
