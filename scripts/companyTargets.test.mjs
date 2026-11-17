@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets } from '../src/utils/companyTargets.js';
+import { normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -133,6 +133,21 @@ check('types: dedupe keeps first spelling', types.dedupeTypes(['A', 'a', ' b ', 
   check('all targets: ids unique across companies', all.map(t => t.id), ['p1:a', 'p1:b', 'p4:a']);
   check('all targets: company and hidden carried', [all[0].company, all[1].hidden, all[2].company], ['CBRE', true, 'Gamma']);
   check('all targets: none', allSavedTargets(null), []);
+}
+
+// Prospecting > Targets: one row per company, its soonest refresh.
+{
+  const all = allSavedTargets([
+    { id: 'p1', company: 'CBRE', climateTargets: [{ id: 'a', yearSet: '2024' }, { id: 'b', yearSet: '2021' }, { id: 'c', yearSet: '2021' }, { id: 'd' }] },
+    { id: 'p2', company: 'Acme', climateTargets: [{ id: 'x' }, { id: 'y' }] },
+    { id: 'p3', company: 'Beta', climateTargets: [{ id: 'z', yearSet: '2019' }] },
+  ]);
+  const one = soonestTargetPerCompany(all);
+  check('soonest: one row per company', one.map(r => r.company), ['CBRE', 'Acme', 'Beta']);
+  check('soonest: earliest refresh, first on a tie', one[0].targetId, 'b');
+  check('soonest: no year set anywhere, first target', one[1].targetId, 'x');
+  check('soonest: counts', one.map(r => r.targetCount), [4, 2, 1]);
+  check('soonest: none', soonestTargetPerCompany([]), []);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }

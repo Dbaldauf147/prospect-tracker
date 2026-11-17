@@ -307,3 +307,22 @@ export function allSavedTargets(prospects) {
   }
   return out;
 }
+
+// One row per company: the target whose refresh falls due soonest (an
+// overdue one first, since its year is earliest). A target with no year set
+// has no refresh date and is picked only when none of the company's targets
+// has one. Ties go to the target listed first on the company's tab.
+// Each row also carries `targetCount`, how many targets were in the running.
+export function soonestTargetPerCompany(targets) {
+  const best = new Map();
+  for (const t of targets || []) {
+    const key = t.prospect?.id ?? t.company;
+    const cur = best.get(key);
+    if (!cur) { best.set(key, { row: t, count: 1 }); continue; }
+    cur.count += 1;
+    const a = refreshDue(t)?.year ?? Infinity;
+    const b = refreshDue(cur.row)?.year ?? Infinity;
+    if (a < b) cur.row = t;
+  }
+  return [...best.values()].map(({ row, count }) => ({ ...row, targetCount: count }));
+}

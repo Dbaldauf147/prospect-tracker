@@ -1,11 +1,13 @@
-// Prospecting > Targets: every sustainability target saved on the company
-// popups' Targets tabs, in one table (utils/companyTargets allSavedTargets).
-// Read here, edited on the company: the company name opens its popup.
-// Targets hidden on a company's tab stay out unless "Show hidden" is ticked,
-// and then read greyed out the way they do there.
+// Prospecting > Targets: the sustainability targets saved on the company
+// popups' Targets tabs, one row per company: the target whose refresh is due
+// soonest (utils/companyTargets soonestTargetPerCompany), with a count of
+// how many targets the company has. Read here, edited on the company: the
+// company name opens its popup. Targets hidden on a company's tab stay out
+// unless "Show hidden" is ticked, and a row that is a hidden target then
+// reads greyed out the way it does there.
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { allSavedTargets, refreshDue, scopesLabel, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
+import { allSavedTargets, soonestTargetPerCompany, refreshDue, scopesLabel, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
 import { reportingTier } from '../../utils/tierSource';
 
 const REFRESH_COLORS = {
@@ -26,10 +28,14 @@ export function ProspectingTargets({ prospects, settings, updateSettings, onSele
   const [showHidden, setShowHidden] = useState(false);
   const all = useMemo(() => allSavedTargets(prospects), [prospects]);
   const hiddenCount = all.filter(t => t.hidden).length;
-  const rows = showHidden ? all : all.filter(t => !t.hidden);
+  const rows = useMemo(
+    () => soonestTargetPerCompany(showHidden ? all : all.filter(t => !t.hidden)),
+    [all, showHidden],
+  );
   const shown = all.filter(t => !t.hidden);
   const companies = new Set(shown.map(t => t.prospect.id)).size;
-  const dueNow = shown.filter(t => ['due', 'overdue'].includes(refreshDue(t)?.status)).length;
+  // Companies whose soonest refresh is due this year or overdue.
+  const dueNow = soonestTargetPerCompany(shown).filter(t => ['due', 'overdue'].includes(refreshDue(t)?.status)).length;
 
   const columns = [
     {
@@ -45,6 +51,18 @@ export function ProspectingTargets({ prospects, settings, updateSettings, onSele
           style={{ padding: 0, border: 0, background: 'none', font: 'inherit', fontWeight: 600, color: '#1D4ED8', cursor: 'pointer', textAlign: 'left' }}
         >{r.company}</button>
       ) : <span style={{ fontWeight: 600 }}>{r.company}</span>),
+    },
+    {
+      key: 'targetCount', label: 'Targets', defaultWidth: 90,
+      getSortValue: r => r.targetCount,
+      getFilterValue: r => String(r.targetCount),
+      exportValue: r => r.targetCount,
+      render: r => (
+        <span
+          style={{ fontVariantNumeric: 'tabular-nums' }}
+          title={`${r.company} has ${r.targetCount} ${r.targetCount === 1 ? 'target' : 'targets'}; this row is the one due a refresh soonest`}
+        >{r.targetCount}</span>
+      ),
     },
     {
       key: 'tier', label: 'Tier', defaultWidth: 90,
@@ -133,10 +151,11 @@ export function ProspectingTargets({ prospects, settings, updateSettings, onSele
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }} data-prospecting-targets>
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', fontSize: '0.8rem', color: '#475569' }}>
         <span>
-          <strong style={{ color: '#1E293B' }}>{shown.length}</strong> {shown.length === 1 ? 'target' : 'targets'} saved
-          across <strong style={{ color: '#1E293B' }}>{companies}</strong> {companies === 1 ? 'company' : 'companies'}
+          <strong style={{ color: '#1E293B' }}>{companies}</strong> {companies === 1 ? 'company' : 'companies'} with
+          {' '}<strong style={{ color: '#1E293B' }}>{shown.length}</strong> {shown.length === 1 ? 'target' : 'targets'} saved
           {dueNow > 0 && <>; <strong style={{ color: '#92400E' }}>{dueNow}</strong> due a refresh this year or overdue</>}.
-          {' '}Add and edit them on each company's Targets tab; click a company to open it.
+          {' '}Each row is the company's target with the soonest refresh. Add and edit them on each company's
+          Targets tab; click a company to open it.
         </span>
         {hiddenCount > 0 && (
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
