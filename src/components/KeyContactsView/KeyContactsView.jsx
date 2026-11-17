@@ -46,6 +46,7 @@ import { findLostCompanyPins, recoverChangedJobsFlags, COMPANY_PIN_FLAG } from '
 import { useRelationshipData } from '../../hooks/useRelationshipStrength';
 import { RelationshipBadge } from '../Relationship/RelationshipBadge';
 import { jobDescriptionUpdate } from '../../utils/contactJobDescription';
+import { biggestDeal, formatDealAmount } from '../../utils/biggestDeal';
 
 // The By Company rollup's columns, in order. Company is always shown; the
 // rest are the user's to hide, star as their standard view, and resize.
@@ -629,6 +630,9 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     // The CDM on that same prospect, blank when it maps to none or has no
     // CDM set.
     { key: 'companyCdm', label: 'CDM' },
+    // The largest Quoted Amount among the company's opps on the Opps tab,
+    // Not Sold left out (utils/biggestDeal). What ranks the Key top 50.
+    { key: 'biggestDeal', label: 'Biggest Deal' },
     // The Vertical on that same prospect. Opt-in per page (Decision Makers).
     ...(showCompanyVertical ? [{ key: 'companyVertical', label: 'Company Vertical' }] : []),
     ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
@@ -2108,7 +2112,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 260, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, connected: 120, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
+    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, biggestDeal: 130, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 260, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, connected: 120, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -2128,7 +2132,7 @@ function KeyContactsViewInner({
   // keys removes the guess: anything not on the list shows, so the next
   // column to ship here needs none of this. They stay only to convert a
   // layout saved under the old model, once.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', 'companyCdm', ...(showCompanyVertical ? ['companyVertical'] : []), ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', ...(hasFullTable(storagePrefix) ? ['connected'] : []), 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct', 'strength'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', 'companyCdm', 'biggestDeal', ...(showCompanyVertical ? ['companyVertical'] : []), ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', ...(hasFullTable(storagePrefix) ? ['connected'] : []), 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct', 'strength'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
   function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -3470,6 +3474,16 @@ function KeyContactsViewInner({
     return out;
   }, [rows]);
 
+  // Each company row's biggest deal (utils/biggestDeal), for the Biggest
+  // Deal column. Read off the opps the By Company rollup already matched to
+  // the row, so the two views can't name different deals for one company.
+  const dealByRowKey = useMemo(() => {
+    const m = new Map();
+    for (const row of rows) m.set(row.key, biggestDeal(row.opps));
+    return m;
+  }, [rows]);
+  const dealFor = (c) => dealByRowKey.get(c.rowKey) || null;
+
   // Distinct states / cities across the loaded contacts, powering the
   // Travel mode dropdowns. Cities narrow to the selected state when one
   // is chosen so the city list stays relevant.
@@ -3527,6 +3541,7 @@ function KeyContactsViewInner({
         case 'company': cmp = (a.companyName || '').localeCompare(b.companyName || ''); break;
         case 'companyStatus': cmp = (a.prospect?.status || '').localeCompare(b.prospect?.status || ''); break;
         case 'companyCdm': cmp = String(a.prospect?.cdm || '').trim().localeCompare(String(b.prospect?.cdm || '').trim()); break;
+        case 'biggestDeal': cmp = (dealByRowKey.get(a.rowKey)?.amount || 0) - (dealByRowKey.get(b.rowKey)?.amount || 0); break;
         case 'companyVertical': {
           // Blank verticals sit at the bottom either way round; within a
           // vertical, people group by company.
@@ -3598,7 +3613,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, campaignReplies, contactEvents, contactConnected, oppContactIndex, categorizeContact, contactCampaign, campaignSends60, tagScoreFor, contactStrength]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, campaignReplies, contactEvents, contactConnected, oppContactIndex, categorizeContact, contactCampaign, campaignSends60, tagScoreFor, contactStrength, dealByRowKey]);
 
   // Combined "To Also" + "CC" recipients edited in the contact popup,
   // keyed by lowercased primary email so the All Contacts "To / CC"
@@ -3692,6 +3707,7 @@ function KeyContactsViewInner({
     company:  c => c.companyName || '',
     companyStatus: c => c.prospect?.status || '',
     companyCdm: c => String(c.prospect?.cdm || '').trim(),
+    biggestDeal: c => formatDealAmount(dealFor(c)?.amount),
     companyVertical: c => String(c.prospect?.vertical || '').trim(),
     suggestedCompany: c => c.suggestedCompany || '',
     newCompany: c => c.newCompany || '',
@@ -5002,6 +5018,26 @@ function KeyContactsViewInner({
                             ? `${c.prospect.company || c.companyName}: CDM ${cdm}`
                             : (c.prospect ? `${c.prospect.company || c.companyName} has no CDM on its company card` : 'Company not mapped to a Table View prospect')}
                         >{cdm || '-'}</div>
+                      );
+                    })(),
+                    biggestDeal: (() => {
+                      const deal = dealFor(c);
+                      const company = c.prospect?.company || c.companyName || 'This company';
+                      return (
+                        <div
+                          data-biggest-deal
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right' }}
+                          title={deal
+                            ? `${company}'s biggest deal on the Opps tab${deal.name ? `: ${deal.name}` : ''}, ${formatDealAmount(deal.amount)} (${deal.stage || 'no stage'}). Not Sold opps don't count.`
+                            : `${company} has no opp with a Quoted Amount on the Opps tab (Not Sold opps don't count)`}
+                        >
+                          {deal ? (
+                            <>
+                              <span style={{ fontWeight: 700, color: '#059669' }}>{formatDealAmount(deal.amount)}</span>
+                              {deal.stage ? <span style={{ color: '#94A3B8', fontSize: '0.64rem' }}> {deal.stage}</span> : null}
+                            </>
+                          ) : <span style={{ color: '#CBD5E1' }}>-</span>}
+                        </div>
                       );
                     })(),
                     companyVertical: (() => {
