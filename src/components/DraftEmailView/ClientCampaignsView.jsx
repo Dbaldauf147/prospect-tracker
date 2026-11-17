@@ -258,8 +258,16 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   useEffect(() => {
     let cancelled = false;
     loadOppsFromCache().then(o => { if (!cancelled) setOppsRecords(o?.records || []); }).catch(() => {});
-    getHubspotContacts().then(c => { if (!cancelled) setContacts(c || []); }).catch(() => {});
-    return () => { cancelled = true; };
+    // Re-read whenever the contacts cache changes: a save in the contact
+    // popup below writes there, and without this the page kept the list it
+    // loaded on mount, so reopening a contact showed the old values and the
+    // edit looked lost.
+    const refreshContacts = () => {
+      getHubspotContacts().then(c => { if (!cancelled) setContacts(c || []); }).catch(() => {});
+    };
+    refreshContacts();
+    window.addEventListener('hubspot-cache-updated', refreshContacts);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refreshContacts); };
   }, []);
 
   // Contact popup (the same ContactEditModal as Email Campaigns), opened by
