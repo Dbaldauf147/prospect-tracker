@@ -249,6 +249,20 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
 
   let rows = onlyReached ? allRows.filter(r => r.onCampaign > 0) : allRows;
   if (bucketIds) rows = rows.filter(r => bucketIds.has(r.id));
+  // Key Contacts view: a company where every campaign service is N/A, or
+  // Not Sold without the Prospect flag, is done with and left off the
+  // table. Clicking its N/A / Not sold heading on the board still lists it.
+  const closedOut = (r) => services.length > 0 && !!r.client && services.every(svc => {
+    const status = statusOf(r.client, svc);
+    const bucket = campaignServiceBucket(status);
+    return bucket === 'na' || (bucket === 'notSold' && !prospectsAnyway(r.client, svc, status));
+  });
+  let hiddenClosed = 0;
+  if (audience.key === 'keyContacts' && !bucketIds) {
+    const kept = rows.filter(r => !closedOut(r));
+    hiddenClosed = rows.length - kept.length;
+    rows = kept;
+  }
   const reached = allRows.filter(r => r.onCampaign > 0).length;
   const peopleCount = allRows.reduce((n, r) => n + r.onCampaign, 0);
   const repliedClients = allRows.filter(r => r.replied > 0).length;
@@ -523,6 +537,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
           <strong style={{ color: '#1E293B' }}>{reached}</strong> of {allRows.length} {audience.noun} are on this campaign
           ({peopleCount} {peopleCount === 1 ? 'person' : 'people'}); {repliedClients} replied.
           {refreshedOn ? ` As of the campaign's last refresh, ${refreshedOn}.` : ''}
+          {hiddenClosed > 0 && ` ${hiddenClosed} ${hiddenClosed === 1 ? 'company is' : 'companies are'} N/A or Not Sold, so ${hiddenClosed === 1 ? 'it is' : 'they are'} left off the table (click N/A or Not sold above to see them).`}
         </div>
       )}
 
