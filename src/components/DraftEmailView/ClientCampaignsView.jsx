@@ -352,10 +352,13 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     // Key Prospects for this campaign: Decision Makers at a Tier account
     // who also carry one of the campaign services' Contact Tags (e.g.
     // Procurement), not every Decision Maker there.
+    // Only the ones the other two views don't already cover: nobody on the
+    // Key Contacts roster (Dan Key Target) and no company that is a client.
     const people = new Map();
-    const gate = (c) => rosterGates.isKeyProspect(c) && contactHasAnyTag(c, serviceTags)
+    const gate = (c) => rosterGates.isKeyProspect(c) && !rosterGates.isKey(c) && contactHasAnyTag(c, serviceTags)
       && !contactClosedOnService(c, tagReviewMap, serviceTags);
-    return { accounts: rosterAccounts({ prospects, contacts, gate, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap, people }), keyPeople: people };
+    const list = rosterAccounts({ prospects, contacts, gate, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap, people });
+    return { accounts: list.filter(p => !isClientCompany(p)), keyPeople: people };
   }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap, keyContactsIncludeClients, serviceTags, tagReviewMap]);
 
   const allRows = useMemo(
@@ -746,7 +749,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
                   ? 'Your current clients (status Client, you as CDM, not Don\'t Track)'
                   : a.key === 'keyContacts'
                     ? 'Companies of the people on your Key Contacts roster (tagged Dan Key Target)'
-                    : 'Companies of the people of your DMs at Tier 1-3 (Decision Makers at your Tier 1-3 accounts) who carry the campaign service\'s Contact Tags'}
+                    : 'Decision Makers at your Tier 1-3 accounts who carry the campaign service\'s Contact Tags, less clients and anybody on Key Contacts (Dan Key Target)'}
                 style={{
                   padding: '0.25rem 0.7rem', border: 'none', borderLeft: i ? '1px solid #CBD5E1' : 'none',
                   font: 'inherit', fontSize: '0.78rem', fontWeight: on ? 700 : 500, cursor: 'pointer',
@@ -891,7 +894,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
               ? 'No current clients found. Clients are the Table View companies with status Client and you as CDM, less any ticked Don\'t Track on the Clients tab.'
               : audience.key === 'keyContacts'
                 ? 'No Key Contact companies found. These are the Table View companies of the people tagged Dan Key Target in HubSpot.'
-                : 'No DM at Tier 1-3 companies found. These are your Tier 1-3 accounts with a Decision Maker who carries the campaign service\'s Contact Tags.')
+                : 'No DM at Tier 1-3 companies found. These are your Tier 1-3 accounts, not clients, with a Decision Maker who carries the campaign service\'s Contact Tags and is not on Key Contacts.')
             : bucketIds && rows.length === 0
               ? 'Nothing in that bucket matches the filters.'
               : onlyReached && reached === 0
