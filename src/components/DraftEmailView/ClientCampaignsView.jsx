@@ -20,7 +20,7 @@ import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { DataTable } from '../common/DataTable';
 import { useEmailCampaigns } from '../../hooks/useEmailCampaigns';
-import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket, currentClients, rosterAccounts, keyContactSummary, CAMPAIGN_AUDIENCE_VIEWS } from '../../utils/clientCampaignCoverage';
+import { campaignChoices, clientCampaignRows, clientServiceBuckets, campaignServiceBucket, currentClients, rosterAccounts, keyContactSummary, contactHasAnyTag, CAMPAIGN_AUDIENCE_VIEWS } from '../../utils/clientCampaignCoverage';
 import { makeRosterGates } from '../../utils/contactRosters';
 import { getEffectiveServiceMetadata, parseServiceContactTags } from '../../data/serviceCatalog';
 import { campaignServices } from '../../utils/campaignServices';
@@ -247,6 +247,18 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   // out unless this is ticked: the Clients view is where they are covered.
   const [keyContactsIncludeClients, setKeyContactsIncludeClients] = useState(() => userLsGet(KEY_CONTACTS_CLIENTS_KEY) === '1');
   const pickKeyContactsIncludeClients = (on) => { setKeyContactsIncludeClients(on); userLsSet(KEY_CONTACTS_CLIENTS_KEY, on ? '1' : ''); };
+  const services = useMemo(() => campaignServices(campaign), [campaign]);
+  // The campaign services' Contact Tags (Dropdowns > service), the tags the
+  // Key Contacts column picks out of each person's tags.
+  const serviceTags = useMemo(() => {
+    const out = [];
+    for (const svc of services) {
+      for (const t of parseServiceContactTags(getEffectiveServiceMetadata(svc, settings?.serviceOverrides || {})?.contactTags)) {
+        if (!out.some(x => x.toLowerCase() === t.toLowerCase())) out.push(t);
+      }
+    }
+    return out;
+  }, [services, settings?.serviceOverrides]);
   // keyPeople: company key -> the roster people there (Key Contacts or Key
   // Prospects), listed whether or not the campaign reached them.
   const { accounts, keyPeople } = useMemo(() => {
@@ -256,16 +268,19 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
       const list = rosterAccounts({ prospects, contacts, gate: rosterGates.isKey, untrackedMap: clientUntrackedMap, people });
       return { accounts: keyContactsIncludeClients ? list : list.filter(p => !isClientCompany(p)), keyPeople: people };
     }
+    // Key Prospects for this campaign: Decision Makers at a Tier account
+    // who also carry one of the campaign services' Contact Tags (e.g.
+    // Procurement), not every Decision Maker there.
     const people = new Map();
-    return { accounts: rosterAccounts({ prospects, contacts, gate: rosterGates.isKeyProspect, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap, people }), keyPeople: people };
-  }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap, keyContactsIncludeClients]);
+    const gate = (c) => rosterGates.isKeyProspect(c) && contactHasAnyTag(c, serviceTags);
+    return { accounts: rosterAccounts({ prospects, contacts, gate, accountOf: rosterGates.keyProspectAccountOf, untrackedMap: clientUntrackedMap, people }), keyPeople: people };
+  }, [audienceKey, rosterGates, prospects, cdmName, contacts, clientUntrackedMap, keyContactsIncludeClients, serviceTags]);
 
   const allRows = useMemo(
     () => clientCampaignRows({ prospects, cdmName, campaign, accounts }),
     [prospects, cdmName, campaign, accounts],
   );
 
-  const services = useMemo(() => campaignServices(campaign), [campaign]);
   const clients = useMemo(() => allRows.map(r => r.client).filter(Boolean), [allRows]);
   const oppStagesByClient = useMemo(
     () => (services.length ? buildOppStagesByClient(clients, oppsRecords, services) : new Map()),
@@ -328,17 +343,6 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
     return next;
   });
 
-  // The campaign services' Contact Tags (Dropdowns > service), the tags the
-  // Key Contacts column picks out of each person's tags.
-  const serviceTags = useMemo(() => {
-    const out = [];
-    for (const svc of services) {
-      for (const t of parseServiceContactTags(getEffectiveServiceMetadata(svc, settings?.serviceOverrides || {})?.contactTags)) {
-        if (!out.some(x => x.toLowerCase() === t.toLowerCase())) out.push(t);
-      }
-    }
-    return out;
-  }, [services, settings?.serviceOverrides]);
   // Each roster person, with how far the campaign got with them ('' when
   // they aren't on it): the ones it reached first, then Decision Makers.
   const keyContactsOf = (r) => {
@@ -611,7 +615,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
                   ? 'Your current clients (status Client, you as CDM, not Don\'t Track)'
                   : a.key === 'keyContacts'
                     ? 'Companies of the people on your Key Contacts roster (tagged Dan Key Target)'
-                    : 'Companies of the people on your Key Prospects roster (Decision Makers at your Tier 1-3 accounts)'}
+                    : 'Companies of the people on your Key Prospects roster (Decision Makers at your Tier 1-3 accounts) who carry the campaign service\'s Contact Tags'}
                 style={{
                   padding: '0.25rem 0.7rem', border: 'none', borderLeft: i ? '1px solid #CBD5E1' : 'none',
                   font: 'inherit', fontSize: '0.78rem', fontWeight: on ? 700 : 500, cursor: 'pointer',
@@ -729,7 +733,7 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
               ? 'No current clients found. Clients are the Table View companies with status Client and you as CDM, less any ticked Don\'t Track on the Clients tab.'
               : audience.key === 'keyContacts'
                 ? 'No Key Contact companies found. These are the Table View companies of the people tagged Dan Key Target in HubSpot.'
-                : 'No Key Prospect companies found. These are your Tier 1-3 accounts with a Decision Maker on the Key Prospects roster.')
+                : 'No Key Prospect companies found. These are your Tier 1-3 accounts with a Decision Maker on the Key Prospects roster who carries the campaign service\'s Contact Tags.')
             : bucketIds && rows.length === 0
               ? 'Nothing in that bucket matches the filters.'
               : onlyReached && reached === 0
