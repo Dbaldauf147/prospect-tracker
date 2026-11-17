@@ -2,7 +2,7 @@
 // clients a campaign reached, and who at each.
 // Plain Node, no framework. Run:
 //   node scripts/clientCampaignCoverage.test.mjs
-import { currentClients, campaignChoices, clientCampaignRows, clientServiceBuckets, rosterAccounts, keyContactSummary } from '../src/utils/clientCampaignCoverage.js';
+import { currentClients, campaignChoices, clientCampaignRows, clientServiceBuckets, rosterAccounts, keyContactSummary, contactHasAnyTag } from '../src/utils/clientCampaignCoverage.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -97,6 +97,14 @@ check('choices: newest first', campaignChoices([
   check('summary: no service tags falls back to area tags', keyContactSummary({ ...c, dans_tags: 'ESG;Hide;Real Estate' }, []).tags, ['ESG', 'Real Estate']);
   check('summary: not a DM', keyContactSummary({ email: 'z@x.com', dans_tags: 'Procurement' }, ['Procurement']).dm, false);
 }
+
+// Prospects view: a Key Prospect counts for a campaign only with one of
+// its services' Contact Tags (Procurement YES as well as Decision Maker).
+check('anyTag: DM only, Procurement campaign', contactHasAnyTag({ dans_tags: 'Decision Maker' }, ['Procurement']), false);
+check('anyTag: DM + Procurement', contactHasAnyTag({ dans_tags: 'Decision Maker;Procurement' }, ['Procurement']), true);
+check('anyTag: case and spacing', contactHasAnyTag({ dans_tags: 'decision maker; procurement' }, ['Procurement']), true);
+check('anyTag: any of several', contactHasAnyTag({ dans_tags: 'ESG' }, ['Procurement', 'ESG']), true);
+check('anyTag: no service tags narrows nothing', contactHasAnyTag({ dans_tags: 'Decision Maker' }, []), true);
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll client campaign coverage tests passed.');

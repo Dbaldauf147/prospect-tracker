@@ -109,6 +109,17 @@ const contactTagList = (c) => String(c?.dans_tags || c?.dan_s_tags || c?.dans_ta
   .split(';').map(t => t.trim()).filter(Boolean);
 
 /**
+ * Does the contact carry at least one of `tags` (the campaign services'
+ * Contact Tags)? True when `tags` is empty: with nothing set on the
+ * services there is nothing to narrow by.
+ */
+export function contactHasAnyTag(contact, tags = []) {
+  if (!tags.length) return true;
+  const want = new Set(tags.map(tagKey));
+  return contactTagList(contact).some(t => want.has(tagKey(t)));
+}
+
+/**
  * How one Key Contact reads in the Key Contacts column:
  *   { name, email, tags, dm }
  * `tags` are the contact's own tags among `serviceTags` (the campaign
