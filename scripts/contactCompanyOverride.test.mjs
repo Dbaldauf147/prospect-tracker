@@ -13,6 +13,7 @@
 //     on other contacts, while writing this one.
 import {
   withCompanyOverride, companyOverrideUpdate, contactLocalFieldsUpdate, companyOverridesUpdate,
+  companyOverridesByIdUpdate, withCompanyPins,
 } from '../src/utils/contactCompanyOverride.js';
 
 let passed = 0, failed = 0;
@@ -126,6 +127,27 @@ eq(contactLocalFieldsUpdate('', () => {})({}), null, 'no contact id, no write');
     A: { _companyOverride: 'Pursuit Aerospace' },
     B: { _companyOverride: 'Pursuit Aerospace' },
   }, 'pinning several contacts at once leaves the others alone');
+}
+
+{
+  const out = run({ contactLocalFields: { Z: { _companyOverride: 'Keep', _x: 1 } } },
+    companyOverridesByIdUpdate({ A: 'Thoma Bravo', B: 'Ameriprise Financial' }));
+  eq(out.contactLocalFields, {
+    Z: { _companyOverride: 'Keep', _x: 1 },
+    A: { _companyOverride: 'Thoma Bravo' },
+    B: { _companyOverride: 'Ameriprise Financial' },
+  }, 'Gap Fill pins a different company per contact, leaving the rest alone');
+  eq(companyOverridesByIdUpdate({ A: 'X' })({ contactLocalFields: { A: { _companyOverride: 'X' } } }), null,
+    'pins already in place skip the write');
+}
+
+{
+  const contacts = [{ id: '1', company: '' }, { id: '2', company: 'Acme' }, { vid: 3, company: '' }];
+  const out = withCompanyPins(contacts, { 1: { _companyOverride: 'Thoma Bravo' }, 3: { _companyOverride: 'JLL' } });
+  eq(out.map(c => c.company), ['Thoma Bravo', 'Acme', 'JLL'], 'a pin is read over the synced (blank) company');
+  eq(contacts[0].company, '', 'the cached contacts are not mutated');
+  eq(withCompanyPins(contacts, {}), contacts, 'no pins hands back the same list');
+  eq(withCompanyPins(null, { 1: {} }), null, 'nothing loaded stays nothing');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
