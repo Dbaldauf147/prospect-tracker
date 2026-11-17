@@ -679,6 +679,7 @@ async function loadMirroredStores() {
     import('./relationshipLog.js'),
     import('./pipelineDashboardStore.js'),
     import('./bfoActivityStore.js'),
+    import('./teamOppsStore.js'),
     import('./quotedProjectionsStore.js'),
     import('./commissionsStore.js'),
     import('./yoyOverridesStore.js'),

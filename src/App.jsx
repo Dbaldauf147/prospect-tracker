@@ -749,7 +749,7 @@ function App() {
           ) : view === 'pricing' ? (
             <PricingView settings={settings} updateSettings={updateSettings} />
           ) : view === 'bfo' ? (
-            <BFOActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+            <BFOActivityView prospects={prospects} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'recordings' || view === 'activity' ? (
             // The activity feed is a subtab of this page rather than a
             // sidebar entry of its own; the `activity` view key stays
