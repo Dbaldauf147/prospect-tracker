@@ -4883,6 +4883,9 @@ function KeyContactsViewInner({
                             Active: { bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
                             Client: { bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A' },
                             'DM at Tier 1-3': { bg: '#EDE9FE', border: '#C4B5FD', color: '#5B21B6' },
+                            // The Key tab's "why key" labels (KeyTop50View).
+                            'Decision Maker': { bg: '#ECFDF5', border: '#6EE7B7', color: '#065F46' },
+                            'Not a DM': { bg: '#FFF7ED', border: '#FED7AA', color: '#9A3412' },
                           };
                           return cats.map(cat => {
                             const k = COLORS[cat] || { bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' };
