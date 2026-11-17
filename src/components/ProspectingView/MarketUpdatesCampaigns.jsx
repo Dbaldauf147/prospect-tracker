@@ -96,13 +96,16 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
     ...CAMPAIGN_AUDIENCES.map(a => ({
       key: `sentTo_${a.key}`, label: a.label, defaultWidth: a.key === 'keyContacts' ? 130 : 105,
       headerTitle: `Sent to ${a.label}: tick if this campaign went to ${a.label}`,
-      getFilterValue: (r) => (campaignAudience(r.campaign)[a.key] ? 'Yes' : 'No'),
+      getFilterValue: (r) => (campaignAudience(r.campaign)[a.key] ? 'Yes' : campaignSchedule(r.campaign)[a.key] ? 'Scheduled' : 'No'),
       getSortValue: (r) => (campaignAudience(r.campaign)[a.key] ? 1 : 0),
       render: (r) => {
         const on = !!campaignAudience(r.campaign)[a.key];
         const day = on ? '' : campaignSchedule(r.campaign)[a.key];
         return (
-          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {/* A planned date takes the tick box's place; clearing it (x)
+                brings the box back. */}
+            {!day && (
             <input
               type="checkbox"
               checked={on}
@@ -112,6 +115,7 @@ export function MarketUpdatesCampaigns({ settings, updateSettings, onNavigate })
               title={`Sent to ${a.label}`}
               style={{ margin: 0, width: 15, height: 15, accentColor: '#16A34A', cursor: user?.uid ? 'pointer' : 'default' }}
             />
+            )}
             {day && <AudienceScheduleDate value={day} label={a.label} hideEmpty compact disabled={!user?.uid} onChange={(next) => reschedule(r.campaign, a.key, next)} />}
           </div>
         );
