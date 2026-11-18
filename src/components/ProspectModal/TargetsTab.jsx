@@ -19,6 +19,7 @@ import { addTargetTypeOption } from '../../utils/targetTypeOptions';
 import { TargetTypeSelect } from './TargetTypeSelect';
 import { useTargetTypeOptions } from './useTargetTypeOptions';
 import { TargetSearchMenu } from './TargetSearchMenu';
+import { localToday, fmtSearched } from '../../utils/targetsSearched';
 
 const inputStyle = {
   width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.4rem', fontSize: '0.8rem',
@@ -146,7 +147,11 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
   );
 }
 
-export function TargetsTab({ company = '', website = '', emailDomain = '', targets, onChange, settings, updateSettings }) {
+// `searchedAt` / `onSearchedChange`: the company's Last Searched date
+// (utils/targetsSearched). Opening a Search web link or pasting targets
+// stamps today.
+export function TargetsTab({ company = '', website = '', emailDomain = '', targets, onChange, searchedAt = '', onSearchedChange, settings, updateSettings }) {
+  const stampSearched = () => { const t = localToday(); if (onSearchedChange && searchedAt !== t) onSearchedChange(t); };
   const rows = useMemo(() => normalizeTargets(targets), [targets]);
   const typeOptions = useTargetTypeOptions();
   const edit = (id, key, value) => onChange(updateTarget(rows, id, key, value));
@@ -383,12 +388,26 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
             Paste targets
           </button>
         )}
-        <TargetSearchMenu company={company} website={website} emailDomain={emailDomain} buttonStyle={secondaryBtn} />
+        <TargetSearchMenu company={company} website={website} emailDomain={emailDomain} buttonStyle={secondaryBtn} onSearch={stampSearched} />
+        {onSearchedChange && (
+          <span data-targets-searched style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto', fontSize: '0.78rem', color: '#475569' }}>
+            <label htmlFor="targets-searched-at" title="The day this company's targets were last searched for. Opening a Search web link or pasting targets sets it to today.">Last searched</label>
+            <input
+              id="targets-searched-at"
+              type="date"
+              value={searchedAt || ''}
+              onChange={e => onSearchedChange(e.target.value)}
+              style={{ ...inputStyle, width: 'auto' }}
+              title={searchedAt ? `Last searched ${fmtSearched(searchedAt)}` : 'Not searched yet'}
+            />
+            <button type="button" onClick={stampSearched} disabled={searchedAt === localToday()} style={{ ...secondaryBtn, padding: '0.2rem 0.6rem', opacity: searchedAt === localToday() ? 0.5 : 1 }} title="Set Last searched to today">Today</button>
+          </span>
+        )}
       </div>
       {pasting && (
         <PasteTargetsPanel
           existing={rows}
-          onAdd={(next) => { onChange(next); setPasting(false); }}
+          onAdd={(next) => { onChange(next); stampSearched(); setPasting(false); }}
           onClose={() => setPasting(false)}
         />
       )}

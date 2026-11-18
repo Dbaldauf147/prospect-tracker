@@ -5,7 +5,8 @@ import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
 import { userLsGet, userLsSet } from './utils/userLs';
 import { runProspectBackfill, formatBackfillReport, BACKFILL_PASSES } from './utils/peOwnerBackfill';
-import { planBackfillPasses } from './utils/backfillPassRecord';
+import { planBackfillPasses, BACKFILLS_DONE_KEY } from './utils/backfillPassRecord';
+import { targetsSearchedBackfill, TARGETS_SEARCHED_BACKFILL_FLAG } from './utils/targetsSearched';
 import { migrateIdKeyedSettings } from './utils/dedupeSettingsMigration';
 import { SERVICE_MERGES, planServiceMerge, SERVICE_RENAME_LOG_KEY, serviceRenameFlag } from './utils/serviceNameMerges';
 import { renameServiceShared, renameServiceLocal } from './utils/serviceRenameRunner';
@@ -392,6 +393,25 @@ function App() {
           window.alert(`Company update failed: ${err?.message || err}`);
         }
       }
+    })();
+  }, [user, settingsLoaded, dataLoading, prospects, updateProspect, updateSettingsPath]);
+
+  // One-time, Nov 18 2026 (utils/targetsSearched): every company with
+  // targets already logged gets Last Searched = that day. Marked done in the
+  // account before it writes, like the passes above, so it runs once.
+  const targetsSearchedRan = useRef(false);
+  useEffect(() => {
+    if (targetsSearchedRan.current || !user || !settingsLoaded || dataLoading || prospects.length === 0) return;
+    if (settingsRef.current?.[BACKFILLS_DONE_KEY]?.[TARGETS_SEARCHED_BACKFILL_FLAG]) return;
+    targetsSearchedRan.current = true;
+    updateSettingsPath({ [`${BACKFILLS_DONE_KEY}.${TARGETS_SEARCHED_BACKFILL_FLAG}`]: new Date().toISOString() });
+    const todo = targetsSearchedBackfill(prospects);
+    (async () => {
+      let failed = 0;
+      for (const t of todo) {
+        try { await updateProspect(t.id, t.patch); } catch { failed += 1; }
+      }
+      console.log(`Targets Last Searched backfill: dated ${todo.length - failed} companies${failed ? `, ${failed} failed` : ''}`);
     })();
   }, [user, settingsLoaded, dataLoading, prospects, updateProspect, updateSettingsPath]);
 

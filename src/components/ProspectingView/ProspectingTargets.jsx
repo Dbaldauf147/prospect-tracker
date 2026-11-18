@@ -12,6 +12,7 @@
 // is the company's soonest target OF THAT TYPE, and only companies that
 // have one are listed. "All" is the page as it was. The open subtab is
 // remembered; the column layout is one layout shared by all of them.
+import { targetsSearchedAt, fmtSearched } from '../../utils/targetsSearched';
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTypeKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
@@ -106,6 +107,18 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
           />
         </label>
       ),
+    },
+    {
+      key: 'searchedAt', label: 'Last Searched', defaultWidth: 125,
+      getSortValue: r => targetsSearchedAt(r.prospect) || null,
+      getFilterValue: r => fmtSearched(targetsSearchedAt(r.prospect)),
+      exportValue: r => targetsSearchedAt(r.prospect),
+      render: r => {
+        const day = targetsSearchedAt(r.prospect);
+        return day
+          ? <span style={{ fontVariantNumeric: 'tabular-nums' }} title="When this company's targets were last searched for (set on its Targets tab)">{fmtSearched(day)}</span>
+          : dash;
+      },
     },
     {
       key: 'tier', label: 'Tier', defaultWidth: 90,
