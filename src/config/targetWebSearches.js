@@ -39,8 +39,9 @@ export const TARGET_WEB_SEARCHES = [
 // What the two "Ask ..." entries above send. It asks for the answer as one
 // table in a fixed set of columns, which Paste targets reads as is (see
 // parsePastedTargets: the header names below are ones it knows, and it
-// ignores the Source column). That is what makes the result the same shape
-// for every company, where a search engine's summary is free prose.
+// keeps the Source column as the row's link). That is what makes the
+// result the same shape for every company, where a search engine's summary
+// is free prose.
 // {name} is the company's name (not quoted here) and {site} is
 // " (website: prologis.com)" or nothing.
 //
@@ -56,17 +57,18 @@ export const TARGET_WEB_SEARCHES = [
 //   - a rolling period counts as a deadline, with Target Year left empty.
 export const TARGET_RESEARCH_PROMPT = `Search the web for the climate and energy targets that {name}{site} has publicly set. Check the SBTi target dashboard (sciencebasedtargets.org) first, then the company's latest sustainability, ESG or climate (TCFD) report, then CDP and RE100. Read the report itself (usually a PDF), not only the web page linking to it: targets are often stated only inside it.
 
-Reply with ONLY one code block holding a pipe-delimited table with exactly this header row, and nothing before or after it:
+Reply once, with ONLY one code block holding a pipe-delimited table with exactly this header row. Nothing before or after it, no second or revised table:
 
-Action | Target Type | Commitment Type | Year Set | Base Year | Target Year | Target Year 2 | Scope | Classification | Status | Date Published | Source
+Action | Target Type | Value | Commitment Type | Year Set | Base Year | Target Year | Target Year 2 | Scope | Classification | Status | Date Published | Source
 
 Rules:
 - One row per distinct target. Never list the same target twice.
 - Only forward-looking targets with a deadline. Usually that is a year. A rolling period counts too, such as "15% lower carbon intensity over a five-year holding period": include it and leave Target Year empty.
 - Leave out progress already achieved (such as "reduced emissions 15% since 2019") and goals of a parent company or industry body.
-- Include targets the company has set for what it owns, invests in or finances, not only its own operations: portfolio companies, funds, financed emissions. For an investor (private equity, asset manager, bank, insurer), look for these specifically: search its report for "portfolio companies", "carbon intensity" and "financed emissions".
+- Include targets the company set for what it owns, invests in or finances, not only its own operations: portfolio companies, funds, financed emissions. For an investor (private equity, asset manager, bank, insurer), look for these specifically: search its report for "portfolio companies", "carbon intensity" and "financed emissions".
 - Action: Commitment for an SBTi commitment with no validated target yet, otherwise Target.
 - Target Type: one of Net zero, Carbon neutral, SBTi near-term, SBTi long-term, Absolute emissions reduction, Emissions intensity reduction, Renewable electricity (RE100). For a target about portfolio companies or financed emissions, use Portfolio emissions reduction, Portfolio intensity reduction or Portfolio net zero instead. Only if none fits, a name of three words at most.
+- Value: the target's size as a percentage, such as 50% for a 50% cut. Empty when it has no number.
 - Commitment Type: for a Commitment only (Net-zero or Standard).
 - Year Set, Base Year, Target Year: 4-digit years. Target Year 2 only for a second milestone of the same target.
 - Scope: the scope numbers the target covers, such as 1, 2 or 1, 2, 3.

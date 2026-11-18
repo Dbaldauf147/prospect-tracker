@@ -1,12 +1,15 @@
 // A company's sustainability targets, logged by hand on the company popup's
 // Targets tab. Stored on the company record as `climateTargets`: an array of
-//   { id, action, type, commitmentType, yearSet, baseYear, targetYear1, targetYear2,
+//   { id, action, type, value, commitmentType, yearSet, baseYear, targetYear1, targetYear2,
 //     scope1, scope2, scope3, classification, status, datePublished, sourceUrl, hidden }
 // `action` is SBTi's Action column, "Target" or "Commitment"; a row saved
 // before it existed reads as a Commitment when its type is SBTi commitment,
 // else as a Target. `commitmentType` is a commitment's kind ("Net-zero",
 // "Standard", "BA1.5 Option 2"); `datePublished` is the date SBTi lists,
 // as given ("2024-04-25"), and its year is the Year Set a paste fills in.
+// `value` is the size of the target as the source words it, mostly a
+// percentage ("50%", "15%"); free text, blank for a target with no number
+// to it (net zero) and for every row logged before the column existed.
 // `sourceUrl` is a link to where the target is stated (the company's report,
 // its SBTi entry): typed on the tab, or the Source column of a pasted table.
 // `hidden` greys the row out on the tab (kept, not deleted: an old target
@@ -36,7 +39,7 @@ export const TARGET_ACTIONS = ['Target', 'Commitment'];
 
 export function blankTarget() {
   return {
-    id: newId(), action: 'Target', type: '', commitmentType: '', yearSet: '', baseYear: '', targetYear1: '', targetYear2: '',
+    id: newId(), action: 'Target', type: '', value: '', commitmentType: '', yearSet: '', baseYear: '', targetYear1: '', targetYear2: '',
     scope1: false, scope2: false, scope3: false, classification: '', status: '', datePublished: '', sourceUrl: '', hidden: false,
   };
 }
@@ -66,7 +69,7 @@ export function hasNoTargetRow(list) {
 // "No targets" row, utils/clientIssues.)
 export function hasTargetValues(list) {
   return normalizeTargets(list).some(r => isNoTargetRow(r)
-    || ['type', 'commitmentType', ...TARGET_YEAR_KEYS, 'classification', 'status', 'datePublished', 'sourceUrl'].some(k => String(r[k] || '').trim())
+    || ['type', 'value', 'commitmentType', ...TARGET_YEAR_KEYS, 'classification', 'status', 'datePublished', 'sourceUrl'].some(k => String(r[k] || '').trim())
     || TARGET_SCOPES.some(k => r[k]));
 }
 
@@ -113,6 +116,7 @@ export function normalizeTargets(raw) {
         id: String(r.id || newId()),
         action: r.action === undefined ? (isCommitment ? 'Commitment' : type ? 'Target' : '') : String(r.action || ''),
         type,
+        value: String(r.value || '').trim(),
         commitmentType,
         yearSet: cleanYear(r.yearSet),
         baseYear: cleanYear(r.baseYear),
@@ -196,6 +200,11 @@ const PASTE_HEADERS = {
   link: 'sourceUrl',
   url: 'sourceUrl',
   yearset: 'yearSet',
+  value: 'value',
+  targetvalue: 'value',
+  reduction: 'value',
+  percent: 'value',
+  percentage: 'value',
 };
 // The SBTi table's column order, for a paste without its header row.
 const SBTI_ORDER = ['action', 'commitmentType', 'status', 'target', 'scope', 'classification', 'baseYear', 'targetYear', 'datePublished'];
@@ -213,6 +222,14 @@ function pasteValue(cell) {
 function pasteYear(cell) {
   const m = String(cell ?? '').match(/(?:^|\D)((?:19|20)\d{2})(?!\d)/);
   return m ? m[1] : '';
+}
+
+// A Value cell, tidied: "15 %" and "15 percent" both read "15%". Anything
+// that is more than a bare percentage is kept as written.
+export function pasteTargetValue(cell) {
+  const v = pasteValue(cell);
+  const m = v.match(/^(\d+(?:\.\d+)?)\s*(?:%|percent|per cent)$/i);
+  return m ? `${m[1]}%` : v;
 }
 
 // SBTi's target names onto the standard Target Type list's spelling, so a
@@ -345,6 +362,8 @@ function freeTextRow(sentence) {
     ...blankTarget(),
     action: 'Target',
     type,
+    // The first percentage the sentence gives: "cut emissions 46% by 2030".
+    value: ((s.match(/(\d+(?:\.\d+)?)\s*(?:%|percent\b|per cent\b)/i) || [])[1] || '').replace(/^(.+)$/, '$1%'),
     yearSet,
     baseYear,
     targetYear1: targetYears[0] || '',
@@ -410,6 +429,7 @@ export function parsePastedTargets(text) {
       ...blankTarget(),
       action: rowAction(action, target),
       type,
+      value: pasteTargetValue(rec.value),
       commitmentType,
       yearSet: pasteYear(rec.yearSet) || pasteYear(rec.datePublished),
       baseYear: pasteYear(rec.baseYear),
@@ -428,7 +448,7 @@ export function parsePastedTargets(text) {
     // The AI prompt's answer for a company with none: the row the tab's own
     // No Target Set button logs, with no action.
     if (isNoTargetRow(row)) { rows.push({ ...noTargetRow(), id: row.id }); continue; }
-    const anything = row.type || row.baseYear || row.targetYear1 || row.yearSet || row.classification || row.commitmentType;
+    const anything = row.type || row.value || row.baseYear || row.targetYear1 || row.yearSet || row.classification || row.commitmentType;
     if (anything) rows.push(row); else skipped += 1;
   }
   return { rows, skipped };
@@ -439,7 +459,10 @@ export function parsePastedTargets(text) {
 // blank on either side counts as agreeing, so re-pasting a table onto rows
 // logged before Action / Commitment Type / Date Published existed matches
 // them and fills those in, rather than adding the targets a second time.
-const DETAIL_KEYS = ['action', 'commitmentType', 'datePublished'];
+// Value is one of them: a re-paste fills in the percentage on a row logged
+// before the column existed, while two targets alike in everything but
+// their percentage stay two rows.
+const DETAIL_KEYS = ['action', 'value', 'commitmentType', 'datePublished'];
 // Filled in on a match like the detail fields, but never part of deciding
 // one: the same target read off two different pages is still one target.
 const FILL_ONLY_KEYS = ['sourceUrl'];
