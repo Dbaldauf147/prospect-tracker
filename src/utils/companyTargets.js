@@ -1,12 +1,14 @@
 // A company's sustainability targets, logged by hand on the company popup's
 // Targets tab. Stored on the company record as `climateTargets`: an array of
 //   { id, action, type, commitmentType, yearSet, baseYear, targetYear1, targetYear2,
-//     scope1, scope2, scope3, classification, status, datePublished, hidden }
+//     scope1, scope2, scope3, classification, status, datePublished, sourceUrl, hidden }
 // `action` is SBTi's Action column, "Target" or "Commitment"; a row saved
 // before it existed reads as a Commitment when its type is SBTi commitment,
 // else as a Target. `commitmentType` is a commitment's kind ("Net-zero",
 // "Standard", "BA1.5 Option 2"); `datePublished` is the date SBTi lists,
 // as given ("2024-04-25"), and its year is the Year Set a paste fills in.
+// `sourceUrl` is a link to where the target is stated (the company's report,
+// its SBTi entry): typed on the tab, or the Source column of a pasted table.
 // `hidden` greys the row out on the tab (kept, not deleted: an old target
 // worth remembering but not worth reading past).
 // `classification` is the target's ambition (SBTi's "1.5°C", "Well-below
@@ -35,7 +37,7 @@ export const TARGET_ACTIONS = ['Target', 'Commitment'];
 export function blankTarget() {
   return {
     id: newId(), action: 'Target', type: '', commitmentType: '', yearSet: '', baseYear: '', targetYear1: '', targetYear2: '',
-    scope1: false, scope2: false, scope3: false, classification: '', status: '', datePublished: '', hidden: false,
+    scope1: false, scope2: false, scope3: false, classification: '', status: '', datePublished: '', sourceUrl: '', hidden: false,
   };
 }
 
@@ -55,6 +57,23 @@ export function isNoTargetRow(row) {
 
 export function hasNoTargetRow(list) {
   return normalizeTargets(list).some(isNoTargetRow);
+}
+
+// The link as an address a browser can open, or '' when it isn't one.
+// "example.com/esg" gains https://; anything that is not a web address
+// (javascript:, plain words) gives '', so a typed value is never rendered
+// as a link that does something other than open a page.
+export function targetLinkHref(value) {
+  const v = String(value ?? '').trim();
+  if (!v || /\s/.test(v)) return '';
+  const url = /^https?:\/\//i.test(v) ? v : /^[a-z0-9-]+(\.[a-z0-9-]+)+([/?#].*)?$/i.test(v) ? `https://${v}` : '';
+  try { return url ? new URL(url).href : ''; } catch { return ''; }
+}
+
+// "sciencebasedtargets.org" for the link's label.
+export function targetLinkLabel(value) {
+  const href = targetLinkHref(value);
+  return href ? new URL(href).hostname.replace(/^www\./, '') : '';
 }
 
 // Digits only, at most four: the year boxes accept nothing else.
@@ -94,6 +113,7 @@ export function normalizeTargets(raw) {
         classification,
         status: String(r.status || ''),
         datePublished: String(r.datePublished || ''),
+        sourceUrl: String(r.sourceUrl || '').trim(),
         hidden: !!r.hidden,
       };
     });
@@ -159,6 +179,11 @@ const PASTE_HEADERS = {
   targetyear2: 'targetYear2',
   datepublished: 'datePublished',
   published: 'datePublished',
+  source: 'sourceUrl',
+  sourceurl: 'sourceUrl',
+  sourcelink: 'sourceUrl',
+  link: 'sourceUrl',
+  url: 'sourceUrl',
   yearset: 'yearSet',
 };
 // The SBTi table's column order, for a paste without its header row.
@@ -385,6 +410,9 @@ export function parsePastedTargets(text) {
       classification: pasteValue(rec.classification),
       status: pasteValue(rec.status),
       datePublished: pasteValue(rec.datePublished),
+      // Only something that opens as a web page: a Source cell reading
+      // "Annual report 2024" is not a link.
+      sourceUrl: targetLinkHref(pasteValue(rec.sourceUrl)) ? pasteValue(rec.sourceUrl) : '',
     };
     // The AI prompt's answer for a company with none: the row the tab's own
     // No Target Set button logs, with no action.
@@ -401,6 +429,9 @@ export function parsePastedTargets(text) {
 // logged before Action / Commitment Type / Date Published existed matches
 // them and fills those in, rather than adding the targets a second time.
 const DETAIL_KEYS = ['action', 'commitmentType', 'datePublished'];
+// Filled in on a match like the detail fields, but never part of deciding
+// one: the same target read off two different pages is still one target.
+const FILL_ONLY_KEYS = ['sourceUrl'];
 const norm = v => String(v ?? '').trim().toLowerCase();
 function targetKey(r) {
   return [r.type, r.yearSet, r.baseYear, r.targetYear1, r.targetYear2, scopesLabel(r), r.classification, r.status]
@@ -432,7 +463,7 @@ export function mergePastedTargets(existing, pasted) {
     const cur = list[i];
     matched.add(cur.id);
     duplicates += 1;
-    const fill = Object.fromEntries(DETAIL_KEYS.filter(k => !cur[k] && r[k]).map(k => [k, r[k]]));
+    const fill = Object.fromEntries([...DETAIL_KEYS, ...FILL_ONLY_KEYS].filter(k => !cur[k] && r[k]).map(k => [k, r[k]]));
     if (Object.keys(fill).length) { list[i] = { ...cur, ...fill }; updated += 1; }
   }
   return { list, added, duplicates, updated };
