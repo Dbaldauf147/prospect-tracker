@@ -14,7 +14,7 @@
 // remembered; the column layout is one layout shared by all of them.
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, targetTypeTabs, targetTypeKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
+import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTypeKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
 import { reportingTier } from '../../utils/tierSource';
 
 const REFRESH_COLORS = {
@@ -168,6 +168,21 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
       getFilterValue: r => r.datePublished,
       exportValue: r => r.datePublished,
       render: r => (r.datePublished ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{r.datePublished}</span> : dash),
+    },
+    {
+      key: 'sourceUrl', label: 'Link', defaultWidth: 190,
+      getSortValue: r => targetLinkLabel(r.sourceUrl) || null,
+      getFilterValue: r => targetLinkLabel(r.sourceUrl),
+      exportValue: r => targetLinkHref(r.sourceUrl),
+      render: r => {
+        const href = targetLinkHref(r.sourceUrl);
+        if (!href) return <span style={{ color: '#CBD5E1' }} title="No link saved. Add one on the company's Targets tab.">-</span>;
+        return (
+          <a href={href} target="_blank" rel="noopener noreferrer" title={`Open ${href}`} style={{ color: '#1D4ED8' }}>
+            {targetLinkLabel(r.sourceUrl)}
+          </a>
+        );
+      },
     },
     {
       key: 'refreshDue', label: 'Refresh Due', defaultWidth: 160,

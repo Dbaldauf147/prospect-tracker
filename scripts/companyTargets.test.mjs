@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey } from '../src/utils/companyTargets.js';
+import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -21,7 +21,7 @@ function check(label, actual, expected) {
 
 check('normalize: not an array', normalizeTargets(null), []);
 check('normalize: fills blanks, drops junk', normalizeTargets([{ id: 'a', type: 'Net zero', baseYear: 2019 }, null, 'x']), [
-  { id: 'a', action: 'Target', type: 'Net zero', commitmentType: '', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false, classification: '', status: '', datePublished: '', hidden: false },
+  { id: 'a', action: 'Target', type: 'Net zero', commitmentType: '', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false, classification: '', status: '', datePublished: '', sourceUrl: '', hidden: false },
 ]);
 check('cleanYear: digits only, four max', [cleanYear('20a305'), cleanYear(''), cleanYear(null)], ['2030', '', '']);
 const list = [{ id: 'a', type: '' }, { id: 'b', type: 'SBTi' }];
@@ -58,15 +58,15 @@ const parsed = parsePastedTargets(SBTI);
 check('paste: six rows', parsed.rows.length, 6);
 check('paste: net-zero row', strip(parsed.rows)[0], {
   action: 'Target', type: 'Net zero', commitmentType: '', yearSet: '2024', baseYear: '2019', targetYear1: '2040', targetYear2: '',
-  scope1: true, scope2: true, scope3: true, classification: '1.5°C', status: 'Other', datePublished: '2024-12-05', hidden: false,
+  scope1: true, scope2: true, scope3: true, classification: '1.5°C', status: 'Other', datePublished: '2024-12-05', sourceUrl: '', hidden: false,
 });
 check('paste: scope 3 alone, NA classification blank', strip(parsed.rows)[2], {
   action: 'Target', type: 'SBTi near-term', commitmentType: '', yearSet: '2024', baseYear: '2019', targetYear1: '2030', targetYear2: '',
-  scope1: false, scope2: false, scope3: true, classification: '', status: 'Other', datePublished: '2024-12-05', hidden: false,
+  scope1: false, scope2: false, scope3: true, classification: '', status: 'Other', datePublished: '2024-12-05', sourceUrl: '', hidden: false,
 });
 check('paste: commitment row', strip(parsed.rows)[5], {
   action: 'Commitment', type: 'SBTi commitment', commitmentType: 'BA1.5 Option 2', yearSet: '2021', baseYear: '', targetYear1: '', targetYear2: '',
-  scope1: false, scope2: false, scope3: false, classification: '', status: 'Validated Targets', datePublished: '2021-07-01', hidden: false,
+  scope1: false, scope2: false, scope3: false, classification: '', status: 'Validated Targets', datePublished: '2021-07-01', sourceUrl: '', hidden: false,
 });
 const noHeader = parsePastedTargets(SBTI.split('\r\n').slice(1).join('\n'));
 check('paste: without the header, same rows', strip(noHeader.rows), strip(parsed.rows));
@@ -188,6 +188,26 @@ check('types: dedupe keeps first spelling', types.dedupeTypes(['A', 'a', ' b ', 
     [['sbti net zero', 'SBTi Net zero', 2, 3], ['net zero', 'Net zero', 1, 1], ['no target set', 'No target set', 3, 3], ['', 'No type', 1, 1]]);
   check('type tabs: key folds', targetTypeKey({ type: '  SBTi   NET zero ' }), 'sbti net zero');
   check('type tabs: nothing saved', targetTypeTabs([]), []);
+}
+
+// The link to where a target is stated.
+check('link: href', [
+  targetLinkHref('https://www.prologis.com/esg'), targetLinkHref('sciencebasedtargets.org/target-dashboard'),
+  targetLinkHref('javascript:alert(1)'), targetLinkHref('Annual report 2024'), targetLinkHref(''), targetLinkHref(null),
+], ['https://www.prologis.com/esg', 'https://sciencebasedtargets.org/target-dashboard', '', '', '', '']);
+check('link: label is the bare site', [targetLinkLabel('https://www.prologis.com/esg?x=1'), targetLinkLabel('nope')], ['prologis.com', '']);
+check('link: kept on the row, trimmed', normalizeTargets([{ id: 'a', sourceUrl: '  https://x.com/a ' }])[0].sourceUrl, 'https://x.com/a');
+{
+  const table = ['Action\tTarget\tTarget Year\tSource', 'Target\tNet zero\t2050\thttps://x.com/report', 'Target\tCarbon neutral\t2030\tAnnual report'].join('\n');
+  const { rows } = parsePastedTargets(table);
+  check('link: pasted Source column, web addresses only', rows.map(r => r.sourceUrl), ['https://x.com/report', '']);
+  // Pasted onto a row logged without a link: filled in, not added again.
+  const before = [{ id: 'a', action: 'Target', type: 'Net zero', targetYear1: '2050' }];
+  const m = mergePastedTargets(before, rows.slice(0, 1));
+  check('link: fills a logged target\'s blank link', [m.added, m.updated, m.list[0].sourceUrl], [0, 1, 'https://x.com/report']);
+  // A different page for the same target is still the same target, and the saved link stays.
+  const other = mergePastedTargets(m.list, [{ ...rows[0], sourceUrl: 'https://y.com/other' }]);
+  check('link: a different source does not duplicate or overwrite', [other.added, other.list[0].sourceUrl], [0, 'https://x.com/report']);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
