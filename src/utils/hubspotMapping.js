@@ -118,6 +118,10 @@ function prepName(n) {
 export function nameSimilarity(a, b) {
   return scorePrepared(prepName(normalizeCompany(a)), prepName(normalizeCompany(b)));
 }
+// The same reading over names prepared once (prepareCompanyName), for a
+// caller scoring many names against many others.
+export function prepareCompanyName(name) { return prepName(normalizeCompany(name)); }
+export function preparedNameSimilarity(a, b) { return scorePrepared(a, b); }
 function scorePrepared(a, b) {
   if (!a.n || !b.n) return 0;
   if (a.n === b.n) return 100;
