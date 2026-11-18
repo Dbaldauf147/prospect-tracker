@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues, editSavedTarget } from '../src/utils/companyTargets.js';
+import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues, editSavedTarget, targetsOfCompaniesMatching } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -242,6 +242,19 @@ check('link: kept on the row, trimmed', normalizeTargets([{ id: 'a', sourceUrl: 
   check('edit: scope tick', editSavedTarget(p, 0, 'scope3', true)[0].scope3, true);
   check('edit: same value saves nothing', editSavedTarget(p, 0, 'type', 'Net zero'), null);
   check('edit: no such target saves nothing', editSavedTarget(p, 5, 'type', 'x'), null);
+}
+
+// The company search on Prospecting > Targets: all of a matching company's targets.
+{
+  const saved = allSavedTargets([
+    { id: 'p1', company: 'Simon Property Group', climateTargets: [{ id: 'a', type: 'Net zero' }, { id: 'b', type: 'SBTi near-term', hidden: true }] },
+    { id: 'p2', company: 'Piedmont Realty Trust', climateTargets: [{ id: 'c', type: 'SBTi near-term' }] },
+    { id: 'p3', company: 'Simon & Co', climateTargets: [{ id: 'd', type: 'Carbon neutral' }] },
+  ]);
+  const found = q => targetsOfCompaniesMatching(saved, q).map(t => `${t.company}/${t.type}/${t.targetCount}`);
+  check('search: every target of each matching company, hidden ones too', found('simon'), ['Simon Property Group/Net zero/2', 'Simon Property Group/SBTi near-term/2', 'Simon & Co/Carbon neutral/1']);
+  check('search: every word must be in the name, in any order', found('group  SIMON'), ['Simon Property Group/Net zero/2', 'Simon Property Group/SBTi near-term/2']);
+  check('search: nothing typed, nothing found', [found(''), found('   '), found('zzz')], [[], [], []]);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
