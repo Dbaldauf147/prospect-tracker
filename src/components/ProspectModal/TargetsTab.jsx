@@ -162,6 +162,32 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
 
   const columns = [
     {
+      key: '__delete__',
+      label: '',
+      // First on the left, ahead of any saved column order, so removing a
+      // target never means scrolling the table sideways to find the button.
+      lead: true,
+      defaultWidth: 110,
+      exportValue: () => '',
+      render: r => (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <button type="button" style={rowBtn} title="Delete this target" aria-label="Delete this target"
+            onClick={() => remove(r)}>&#10005;</button>
+          <button
+            type="button"
+            onClick={() => edit(r.id, 'hidden', !r.hidden)}
+            title={r.hidden ? 'Show this target normally again' : 'Grey this target out (it stays on the list)'}
+            aria-label={r.hidden ? 'Show this target' : 'Hide this target'}
+            aria-pressed={r.hidden}
+            style={{
+              padding: '1px 8px', borderRadius: 999, font: 'inherit', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer',
+              border: `1px solid ${r.hidden ? '#94A3B8' : '#CBD5E1'}`, background: r.hidden ? '#E2E8F0' : '#fff', color: '#475569',
+            }}
+          >{r.hidden ? 'Show' : 'Hide'}</button>
+        </span>
+      ),
+    },
+    {
       key: 'action',
       label: 'Action',
       defaultWidth: 130,
@@ -293,29 +319,6 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
           </span>
         );
       },
-    },
-    {
-      key: '__delete__',
-      label: '',
-      defaultWidth: 110,
-      exportValue: () => '',
-      render: r => (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <button
-            type="button"
-            onClick={() => edit(r.id, 'hidden', !r.hidden)}
-            title={r.hidden ? 'Show this target normally again' : 'Grey this target out (it stays on the list)'}
-            aria-label={r.hidden ? 'Show this target' : 'Hide this target'}
-            aria-pressed={r.hidden}
-            style={{
-              padding: '1px 8px', borderRadius: 999, font: 'inherit', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer',
-              border: `1px solid ${r.hidden ? '#94A3B8' : '#CBD5E1'}`, background: r.hidden ? '#E2E8F0' : '#fff', color: '#475569',
-            }}
-          >{r.hidden ? 'Show' : 'Hide'}</button>
-          <button type="button" style={rowBtn} title="Delete this target" aria-label="Delete this target"
-            onClick={() => remove(r)}>&#10005;</button>
-        </span>
-      ),
     },
   ];
 

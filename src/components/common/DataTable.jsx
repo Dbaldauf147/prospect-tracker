@@ -44,6 +44,10 @@ import { applyPreset } from '../../utils/columnPresets';
 // is untouched.
 function orderTableColumns(columns, order) {
   let out = orderColumns(columns, order);
+  // Likewise a column marked `lead: true` (a row's own buttons, such as the
+  // Targets tab's Hide / delete): it sits at the left whatever the saved
+  // order says, so it is on screen without scrolling a wide table sideways.
+  if (out.some((c, i) => c.lead && i > 0)) out = [...out.filter(c => c.lead), ...out.filter(c => !c.lead)];
   const selIdx = out.findIndex(c => c.key === '__select__');
   if (selIdx > 0) out = [out[selIdx], ...out.slice(0, selIdx), ...out.slice(selIdx + 1)];
   return out;
