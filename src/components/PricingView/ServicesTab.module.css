@@ -634,6 +634,14 @@
 }
 
 /* Price check: the cost lines marked up, against the rate card range. */
+.checkHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1rem;
+  font-size: var(--font-size-xs);
+}
+
 .rateGrid {
   display: flex;
   flex-wrap: wrap;

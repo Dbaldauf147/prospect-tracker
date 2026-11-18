@@ -1261,6 +1261,9 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
         <RateCheck
           check={detail.rateCheck}
           ctsShare={ctsShareOf(items, optionCtsTotal)}
+          projects={onSetCount && (detail.rateCheck.unitsUsed || []).includes(PROJECT_UNIT)
+            ? { entered: detail.enteredCounts?.[PROJECT_UNIT], suggested: detail.suggestedProjects || null, onSet: (n) => onSetCount(PROJECT_UNIT, n) }
+            : null}
         />
       )}
 
@@ -1424,7 +1427,12 @@ function ctsShareOf(items, optionCtsTotal) {
 
 // The service's first-year cost on the SIA, marked up, set against the
 // price range its Dropdowns › Services Pricing rate card quotes.
-function RateCheck({ check, ctsShare = null }) {
+//
+// `projects` puts the service's project count beside the heading on a
+// card priced per project: blank reads as one, or as one per Per Project
+// fee on the open structure when it has several (suggestedProjectCount).
+// A cost line with a count of its own typed in its Unit column keeps it.
+function RateCheck({ check, ctsShare = null, projects = null }) {
   // A card that is one per-unit rate is read per unit: cost and price over
   // the same count, against the rate itself.
   const pu = check.perUnit;
@@ -1472,9 +1480,39 @@ function RateCheck({ check, ctsShare = null }) {
 
   return (
     <section className={styles.section}>
-      <h4 className={styles.sectionTitle}>
-        Price check <span className={styles[cls]}>{label}</span>
-      </h4>
+      <div className={styles.checkHead}>
+        <h4 className={styles.sectionTitle}>
+          Price check <span className={styles[cls]}>{label}</span>
+        </h4>
+        {projects && (() => {
+          const { entered, suggested, onSet } = projects;
+          const base = suggested ? suggested.count : 1;
+          const typed = typeof entered === 'number';
+          return (
+            <label
+              className={styles.countField}
+              title="How many projects this service's costs cover. The check reads the cost and the price per project over this count. A cost line with its own Projects count typed in its Unit column keeps that."
+            >
+              Projects
+              <DraftInput
+                value={typed ? String(entered) : ''}
+                placeholder={String(base)}
+                align="right"
+                width={72}
+                className={styles.cellInput}
+                onCommit={(raw) => { const n = parseCount(raw); if (n !== undefined) onSet(n); }}
+              />
+              {typed && entered !== base
+                ? (
+                  <button type="button" className={styles.linkBtn} onClick={() => onSet(null)} title={suggested ? `Clear the typed count and use ${base}, one for each Per Project fee: ${suggested.fees.join(', ')}.` : 'Clear the typed count and use 1.'}>
+                    {suggested ? `Use suggested (${base})` : 'Reset (1)'}
+                  </button>
+                )
+                : <span className={styles.subNote}>{suggested ? `suggested, one per fee: ${suggested.fees.join(', ')}` : (typed ? '' : 'default')}</span>}
+            </label>
+          );
+        })()}
+      </div>
       <div className={styles.rateGrid}>
         <span><span className={styles.factKey}>{pu?.perMonth || pu?.part === 'Ongoing' || !pu ? 'Cost' : 'Year 1 cost'}{per}{(pu?.part === 'Ongoing' && !pu.perMonth) || !pu ? ' a year' : ''}:</span> <span className={styles.rateFigure}>{fmt(shown.cost)}</span></span>
         <span><span className={styles.factKey}>{markupLabel}:</span> <span className={styles.rateFigure}>{fmt(shown.price)}{per}</span></span>

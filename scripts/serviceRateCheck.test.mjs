@@ -4,7 +4,7 @@
 //   node scripts/serviceRateCheck.test.mjs
 
 import assert from 'node:assert/strict';
-import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts, checkPartOf, feeUnitCountsFor, componentForFeeUnit, lineFeeCounts, priceCheckCountsWithLines } from '../src/utils/serviceRateCheck.js';
+import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts, checkPartOf, feeUnitCountsFor, componentForFeeUnit, lineFeeCounts, priceCheckCountsWithLines, suggestedProjectCount } from '../src/utils/serviceRateCheck.js';
 
 let failed = 0;
 function test(name, fn) {
@@ -592,6 +592,25 @@ test('line counts: fee counts and the counts the range prices on', () => {
   assert.deepEqual(priceCheckCountsWithLines(counts, [{ lineCounts: { accounts: 95 } }, { lineCounts: {} }]), { accounts: 519, sites: 30 });
   assert.deepEqual(priceCheckCountsWithLines(counts, [{ lineCounts: { accounts: 95 } }, { lineCounts: { accounts: 11 } }]), { accounts: 95, sites: 30 });
   assert.deepEqual(priceCheckCountsWithLines({}, [{ lineCounts: { meters: 40 } }]), { meters: 40 });
+});
+
+test('two Per Project fees carrying costs suggest two projects', () => {
+  const rows = [{ feeName: 'Audit 1', unit: 'Per Project' }, { feeName: 'Audit 2', unit: 'Per Project' }, { feeName: 'Support', unit: 'Fixed' }];
+  const items = [
+    { cts: 5597, type: 'One Time' }, // on no fee
+    { cts: 4620, type: 'One Time' },
+    { cts: 5580, type: 'One Time' },
+    { cts: 13221, type: 'One Time' },
+    { cts: 12620, type: 'One Time' },
+    { cts: 100, type: 'Recurring (monthly)' },
+  ];
+  const costs = [{ rowIdx: -1 }, { rowIdx: 0 }, { rowIdx: 1 }, { rowIdx: 0 }, { rowIdx: 1 }, { rowIdx: 2 }];
+  assert.deepEqual(suggestedProjectCount(rows, costs, items), { count: 2, fees: ['Audit 1', 'Audit 2'] });
+  // One per project fee is the default single project: nothing to suggest.
+  assert.equal(suggestedProjectCount(rows, [{ rowIdx: -1 }, { rowIdx: 0 }, { rowIdx: 2 }], items), null);
+  // A fee whose only lines are left out of the check doesn't count.
+  const skipped = items.map((it, i) => (i === 2 || i === 4 ? { ...it, ignored: true } : it));
+  assert.equal(suggestedProjectCount(rows, costs, skipped), null);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
