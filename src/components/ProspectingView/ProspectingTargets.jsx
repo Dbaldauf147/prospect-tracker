@@ -8,6 +8,10 @@
 // reads greyed out the way it does there.
 // Reached Out is a tick per company, saved on the company record as
 // `targetsReachedOut`, for whether it has been contacted about its targets.
+// The search box finds companies by name and lists ALL of their targets,
+// whatever their type and hidden or not (utils/companyTargets
+// targetsOfCompaniesMatching), instead of the one row per company. It
+// reads on the All tab's column layout, and picking a subtab clears it.
 // Typed cells save when the box is left (or on Enter), not on each key: a
 // change can re-sort the row, move it to another type's subtab or drop it
 // from a filter, and none of that should happen mid-word.
@@ -18,7 +22,7 @@
 import { targetsSearchedAt, fmtSearched } from '../../utils/targetsSearched';
 import { useMemo, useRef, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, editSavedTarget, cleanYear, TARGET_ACTIONS, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTypeKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
+import { allSavedTargets, soonestTargetPerCompany, targetsOfCompaniesMatching, isNoTargetRow, refreshDue, scopesLabel, editSavedTarget, cleanYear, TARGET_ACTIONS, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTypeKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
 import { reportingTier } from '../../utils/tierSource';
 import { TargetTypeSelect } from '../ProspectModal/TargetTypeSelect';
 import { useTargetTypeOptions } from '../ProspectModal/useTargetTypeOptions';
@@ -126,17 +130,23 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
   const [savedTab, setSavedTab] = useState(readSavedTypeTab);
   // A remembered type nobody has any more falls back to All.
   const typeTab = savedTab !== ALL_TAB && typeTabs.some(t => t.key === savedTab) ? savedTab : ALL_TAB;
+  const [search, setSearch] = useState('');
+  const searching = !!search.trim();
   const pickTab = key => {
+    setSearch('');
     setSavedTab(key);
     try { localStorage.setItem(TYPE_TAB_KEY, key); } catch { /* private mode */ }
   };
   const inTab = t => typeTab === ALL_TAB || targetTypeKey(t) === typeTab;
-  const rows = useMemo(
+  const found = useMemo(() => targetsOfCompaniesMatching(all, search), [all, search]);
+  const foundCompanies = new Set(found.map(t => t.prospect.id)).size;
+  const tabRows = useMemo(
     () => soonestTargetPerCompany(typeTab === ALL_TAB ? listed : listed.filter(t => targetTypeKey(t) === typeTab)),
     [listed, typeTab],
   );
+  const rows = searching ? found : tabRows;
   const shown = all.filter(t => !t.hidden && inTab(t));
-  const tableId = targetsTableId(typeTab);
+  const tableId = targetsTableId(searching ? ALL_TAB : typeTab);
   const tableSettings = useMemo(() => settingsForTable(settings, tableId), [settings, tableId]);
   const typeLabel = typeTab === ALL_TAB ? '' : typeTabs.find(t => t.key === typeTab)?.label || '';
   const allCompanies = new Set(listed.map(t => t.prospect.id)).size;
@@ -167,7 +177,9 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
       render: r => (
         <span
           style={{ fontVariantNumeric: 'tabular-nums' }}
-          title={`${r.company} has ${r.targetCount} ${typeLabel ? `${typeLabel} ` : ''}${r.targetCount === 1 ? 'target' : 'targets'}; this row is the one due a refresh soonest`}
+          title={searching
+            ? `${r.company} has ${r.targetCount} ${r.targetCount === 1 ? 'target' : 'targets'}, all listed here`
+            : `${r.company} has ${r.targetCount} ${typeLabel ? `${typeLabel} ` : ''}${r.targetCount === 1 ? 'target' : 'targets'}; this row is the one due a refresh soonest`}
         >{r.targetCount}</span>
       ),
     },
@@ -332,14 +344,31 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
   return (
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }} data-prospecting-targets>
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', fontSize: '0.8rem', color: '#475569' }}>
-        <span>
+        <span style={{ display: searching ? 'none' : undefined }}>
           <strong style={{ color: '#1E293B' }}>{companies}</strong> {companies === 1 ? 'company' : 'companies'} with
           {' '}<strong style={{ color: '#1E293B' }}>{shown.length}</strong> {typeLabel ? `${typeLabel} ` : ''}{shown.length === 1 ? 'target' : 'targets'} saved
           {dueNow > 0 && <>; <strong style={{ color: '#92400E' }}>{dueNow}</strong> due a refresh this year or overdue</>}.
           {' '}Each row is the company's {typeLabel ? `${typeLabel} target` : 'target'} with the soonest refresh. Edit that target right here: a typed
           change saves when you leave the box. Click a company to open its Targets tab for its other targets or to add one. Tick Reached Out once you have contacted a company about its targets.
         </span>
-        {hiddenCount > 0 && (
+        <span data-targets-search style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexBasis: '100%' }}>
+          <input
+            type="search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') setSearch(''); }}
+            placeholder="Search a company to see all of its targets"
+            aria-label="Search a company to see all of its targets"
+            style={{ ...inputStyle, width: 320, padding: '0.3rem 0.5rem' }}
+          />
+          {searching && (
+              <span data-targets-search-count>
+                <strong style={{ color: '#1E293B' }}>{found.length}</strong> {found.length === 1 ? 'target' : 'targets'} at
+                {' '}<strong style={{ color: '#1E293B' }}>{foundCompanies}</strong> {foundCompanies === 1 ? 'company' : 'companies'}, every type, hidden ones included
+              </span>
+          )}
+        </span>
+        {hiddenCount > 0 && !searching && (
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} />
             Show hidden ({hiddenCount})
@@ -353,7 +382,7 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
               key={t.key}
               type="button"
               role="tab"
-              aria-selected={typeTab === t.key}
+              aria-selected={!searching && typeTab === t.key}
               onClick={() => pickTab(t.key)}
               title={t.key === ALL_TAB
                 ? 'Every company, on its target with the soonest refresh'
@@ -361,8 +390,8 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
               style={{
                 padding: '0.35rem 0.8rem', border: 'none', background: 'none', fontFamily: 'inherit',
                 fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap',
-                color: typeTab === t.key ? '#0A66C2' : '#64748B',
-                borderBottom: `2px solid ${typeTab === t.key ? '#0A66C2' : 'transparent'}`,
+                color: !searching && typeTab === t.key ? '#0A66C2' : '#64748B',
+                borderBottom: `2px solid ${!searching && typeTab === t.key ? '#0A66C2' : 'transparent'}`,
               }}
             >{t.label} <span style={{ fontWeight: 500, opacity: 0.75 }}>({t.companies})</span></button>
           ))}
@@ -388,8 +417,8 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
           rowStyle={r => (r.prospect.targetsReachedOut ? { background: '#DCFCE7' }
             : isNoTargetRow(r) ? { opacity: 0.6, background: '#F1F5F9', filter: 'grayscale(1)' }
               : r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
-          emptyMessage={all.length ? 'No targets match the filters.' : 'No targets saved yet. Add them on a company popup\'s Targets tab.'}
-          exportFileName={typeLabel ? `Company targets - ${typeLabel}` : 'Company targets'}
+          emptyMessage={searching && !found.length ? 'No company with saved targets matches that name.' : all.length ? 'No targets match the filters.' : 'No targets saved yet. Add them on a company popup\'s Targets tab.'}
+          exportFileName={searching ? `Company targets - ${search.trim()}` : typeLabel ? `Company targets - ${typeLabel}` : 'Company targets'}
           settings={tableSettings}
           updateSettings={updateSettings}
         />

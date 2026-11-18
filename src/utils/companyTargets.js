@@ -541,6 +541,23 @@ export function allSavedTargets(prospects) {
 // has one, and a "No target set" row only when the company has nothing else.
 // Ties go to the target listed first on the company's tab.
 // Each row also carries `targetCount`, how many targets were in the running.
+// Prospecting > Targets' company search: EVERY target of the companies
+// whose name holds each word typed (any order, any case), each row with
+// `targetCount`, how many targets its company has. '' when nothing is typed
+// gives []: the page then shows its usual one row per company.
+export function targetsOfCompaniesMatching(targets, query) {
+  const words = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const hits = (targets || []).filter(t => {
+    const name = String(t.company || '').toLowerCase();
+    return words.every(w => name.includes(w));
+  });
+  const counts = new Map();
+  const keyOf = t => t.prospect?.id ?? t.company;
+  for (const t of hits) counts.set(keyOf(t), (counts.get(keyOf(t)) || 0) + 1);
+  return hits.map(t => ({ ...t, targetCount: counts.get(keyOf(t)) }));
+}
+
 export function soonestTargetPerCompany(targets) {
   const best = new Map();
   for (const t of targets || []) {
