@@ -821,6 +821,9 @@ function finalizeCoverage(buckets, left) {
 // `contacts` and `done` then count companies (`unit: 'company'`), and its
 // `people` lists only the contacts at companies still missing something -
 // once the Yes is found there is nothing left to ask the rest of them.
+// The Yes is looked for across the whole book (`all`), not just the roster
+// being scored: a Key contact's company is covered for Procurement when a
+// decision maker there who is not a Key contact carries the Yes.
 //
 // `closedFor(person, tag)`, with byCompany, says a tag is already settled at
 // that person's company without anyone answering it - its services are all
@@ -842,14 +845,24 @@ export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decision
   };
   const buckets = {};
   const left = { cancelling: coverage.cancelling || 0, untracked: coverage.untracked || 0 };
+  const isDm = p => tagsOf(p.contact).split(';').map(t => t.trim()).includes('decision maker');
+  // Everyone on the book per company, for byCompany's "does anyone here
+  // have the Yes" - a roster's own members are only who gets listed.
+  const colleagues = new Map();
+  if (byCompany && Array.isArray(coverage.all?.people)) {
+    for (const p of coverage.all.people) {
+      if (decisionMakersOnly && !isDm(p)) continue;
+      const k = companyGroupKey(p);
+      if (!colleagues.has(k)) colleagues.set(k, []);
+      colleagues.get(k).push(p);
+    }
+  }
   for (const [key, b] of Object.entries(coverage)) {
     if (!b || typeof b !== 'object' || !Array.isArray(b.people)) continue;
     const nb = { contacts: 0, answered: 0, slots: 0, done: 0, people: [] };
-    const kept = decisionMakersOnly
-      ? b.people.filter(p => tagsOf(p.contact).split(';').map(t => t.trim()).includes('decision maker'))
-      : b.people;
+    const kept = decisionMakersOnly ? b.people.filter(isDm) : b.people;
     if (byCompany) {
-      buckets[key] = companyBucket(kept, scoreTags || scoredTagOptions(), tagReviewMap, yesOnly, rowFor, closedFor);
+      buckets[key] = companyBucket(kept, scoreTags || scoredTagOptions(), tagReviewMap, yesOnly, rowFor, closedFor, colleagues);
       continue;
     }
     for (const p of kept) {
@@ -867,18 +880,21 @@ export function rescoreTagCoverage(coverage, tags, tagReviewMap = {}, { decision
 
 // One bucket of rescoreTagCoverage's byCompany reading. Contacts with no
 // company each stand as their own company, so they are not merged into one.
-function companyBucket(people, tags, tagReviewMap, yesOnly, rowFor, closedFor = null) {
+const companyGroupKey = p => String(p.company || '').trim().toLowerCase() || `id:${p.id ?? p.email ?? p.name}`;
+
+function companyBucket(people, tags, tagReviewMap, yesOnly, rowFor, closedFor = null, colleagues = null) {
   const groups = new Map();
   for (const p of people) {
-    const k = String(p.company || '').trim().toLowerCase() || `id:${p.id ?? p.email ?? p.name}`;
+    const k = companyGroupKey(p);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(p);
   }
   const nb = { contacts: groups.size, answered: 0, slots: groups.size * tags.length, done: 0, people: [], unit: 'company' };
-  for (const members of groups.values()) {
+  for (const [k, members] of groups) {
     let covered = 0;
+    const askable = colleagues?.get(k) || members;
     for (const tag of tags) {
-      const hit = (closedFor && closedFor(members[0], tag)) || members.some(p => {
+      const hit = (closedFor && closedFor(members[0], tag)) || askable.some(p => {
         const review = p.id == null ? null : tagReviewMap[p.id];
         return tagReviewScore(p.contact || {}, review, [tag], { yesOnly }).answered > 0;
       });

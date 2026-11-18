@@ -76,5 +76,14 @@ eq([coTwoTagged.all.done, coTwoTagged.all.pct], [1, 50], 'by company: two DMs ca
 const coClosed = rescoreTagCoverage(coCov, ['ESG'], {}, { ...coLens, closedFor: (p, tag) => p.company === 'Beta' && tag === 'ESG' });
 eq([coClosed.all.done, coClosed.all.pct, coClosed.all.people.length], [2, 100, 0], 'by company: closed-by-services counts as covered');
 
+// A roster's company is covered by a DM there who is on the book but not
+// on that roster: H is Key and has no ESG, G (not Key) is tagged ESG.
+const coRoster = rescoreTagCoverage({ ...coCov, key: { contacts: 2, answered: 0, slots: 0, done: 0, people: [h, i9], pct: 0 } }, ['ESG'], {}, coLens);
+eq([coRoster.key.contacts, coRoster.key.done, coRoster.key.pct], [2, 1, 50], 'by company: a colleague off the roster covers the company');
+eq(coRoster.key.people.map(p => p.name), ['I'], 'by company: that company drops off the roster list');
+// F is tagged ESG but is not a decision maker, so cannot cover Acme.
+const coNonDm = rescoreTagCoverage({ all: { ...coCov.all, people: [h, { ...f, company: 'Acme' }] }, key: { contacts: 1, answered: 0, slots: 0, done: 0, people: [h], pct: 0 } }, ['ESG'], {}, coLens);
+eq(coNonDm.key.done, 0, 'by company: a non-DM colleague does not cover it');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
