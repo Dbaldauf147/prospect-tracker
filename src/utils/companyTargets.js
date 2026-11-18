@@ -199,8 +199,30 @@ function rowType(action, target) {
   return TYPE_ALIASES[target.toLowerCase().replace(/[^a-z0-9]/g, '')] || target;
 }
 
+// A table written with pipes, as an AI chat gives it back (the Search web
+// menu's "Ask ChatGPT / Claude" prompt asks for exactly this):
+//   Action | Target Type | Year Set | ...
+//   Target | Net zero | 2021 | ...
+// with or without the outer pipes and the |---|---| rule of a markdown
+// table, and with or without the ``` fence around it. null when the text
+// isn't one: it takes two lines with pipes, the first with two or more.
+const PIPE_RULE = /^[\s|:-]+$/;
+export function pipeGrid(text) {
+  const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !/^```/.test(l));
+  const pipes = l => (l.match(/\|/g) || []).length;
+  const piped = lines.filter(l => pipes(l) >= 1);
+  if (piped.length < 2 || pipes(piped[0]) < 2 || lines.some(l => l.includes('\t'))) return null;
+  return piped
+    .filter(l => !PIPE_RULE.test(l))
+    .map(l => l.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim()));
+}
+
 // Split the pasted text into rows of cells, header row (if any) first.
 function pasteGrid(text) {
+  const piped = pipeGrid(text);
+  if (piped) return piped;
   const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
   if (lines.some(l => l.includes('\t'))) {
     return lines.filter(l => l.trim()).map(l => l.split('\t'));
@@ -325,9 +347,10 @@ export function parseFreeTextTargets(text) {
 
 // Parse a pasted table into target rows (with fresh ids).
 //   { rows, skipped }  skipped counts lines that held nothing usable.
+// A pipe-delimited table (an AI chat's answer) is read like any other.
 // Prose instead of a table goes to parseFreeTextTargets.
 export function parsePastedTargets(text) {
-  if (looksLikeFreeText(text)) return parseFreeTextTargets(text);
+  if (!pipeGrid(text) && looksLikeFreeText(text)) return parseFreeTextTargets(text);
   const grid = pasteGrid(text);
   if (!grid.length) return { rows: [], skipped: 0 };
   // A header row is one where most of the cells are names we know.
@@ -363,6 +386,9 @@ export function parsePastedTargets(text) {
       status: pasteValue(rec.status),
       datePublished: pasteValue(rec.datePublished),
     };
+    // The AI prompt's answer for a company with none: the row the tab's own
+    // No Target Set button logs, with no action.
+    if (isNoTargetRow(row)) { rows.push({ ...noTargetRow(), id: row.id }); continue; }
     const anything = row.type || row.baseYear || row.targetYear1 || row.yearSet || row.classification || row.commitmentType;
     if (anything) rows.push(row); else skipped += 1;
   }
@@ -407,42 +433,6 @@ export function mergePastedTargets(existing, pasted) {
     matched.add(cur.id);
     duplicates += 1;
     const fill = Object.fromEntries(DETAIL_KEYS.filter(k => !cur[k] && r[k]).map(k => [k, r[k]]));
-    if (Object.keys(fill).length) { list[i] = { ...cur, ...fill }; updated += 1; }
-  }
-  return { list, added, duplicates, updated };
-}
-
-// The same for rows that came from "Research targets". A paste is matched
-// exactly, because pasting the same table twice is the case to catch. A
-// researched row is matched more loosely, because the row already on the
-// list was usually typed by hand with less on it: same Target Type, and
-// every other field either equal or blank on one side (no scopes ticked
-// counts as blank). The logged row then gains what it was missing, and what
-// was typed by hand is never overwritten.
-//   { list, added, duplicates, updated }
-const RESEARCH_FILL_KEYS = ['action', 'commitmentType', 'yearSet', 'baseYear', 'targetYear1', 'targetYear2', 'classification', 'status', 'datePublished'];
-const RESEARCH_AGREE_KEYS = ['yearSet', 'baseYear', 'targetYear1', 'targetYear2', 'classification', 'status', 'commitmentType'];
-const typeKey = v => norm(v).replace(/[^a-z0-9]/g, '');
-function looselySameTarget(cur, found) {
-  if (!typeKey(cur.type) || typeKey(cur.type) !== typeKey(found.type)) return false;
-  if (!RESEARCH_AGREE_KEYS.every(k => !norm(cur[k]) || !norm(found[k]) || norm(cur[k]) === norm(found[k]))) return false;
-  return !scopesLabel(cur) || !scopesLabel(found) || scopesLabel(cur) === scopesLabel(found);
-}
-
-export function mergeResearchedTargets(existing, researched) {
-  const list = normalizeTargets(existing);
-  const matched = new Set();
-  let added = 0;
-  let duplicates = 0;
-  let updated = 0;
-  for (const r of normalizeTargets(researched)) {
-    const i = list.findIndex(x => !matched.has(x.id) && !x.hidden && looselySameTarget(x, r));
-    if (i === -1) { list.push(r); matched.add(r.id); added += 1; continue; }
-    const cur = list[i];
-    matched.add(cur.id);
-    duplicates += 1;
-    const fill = Object.fromEntries(RESEARCH_FILL_KEYS.filter(k => !cur[k] && r[k]).map(k => [k, r[k]]));
-    if (!scopesLabel(cur) && scopesLabel(r)) for (const k of TARGET_SCOPES) fill[k] = r[k];
     if (Object.keys(fill).length) { list[i] = { ...cur, ...fill }; updated += 1; }
   }
   return { list, added, duplicates, updated };
