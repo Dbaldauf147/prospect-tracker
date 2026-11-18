@@ -22,6 +22,7 @@ import { useEmailCampaigns } from './useEmailCampaigns';
 import { dmsNotOnCampaign } from '../utils/dmsCampaigns';
 import { bfoHistoryTargets, bfoHistoryMissingNameIssues } from '../utils/bfoHistory';
 import { keyContactLinkedinIssues, KEY_CONTACT_NO_LINKEDIN_KEY } from '../utils/keyContactLinkedin';
+import { keyContactNoTargetsIssues } from '../utils/keyContactNoTargets';
 
 // The Pipeline dashboard is re-read on every window focus, and a fresh array
 // of the same services would re-run the whole issue computation each time —
@@ -290,14 +291,21 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     [hubspotContacts, contactLocalFields, noLinkedin, prospects],
   );
   const keyContactLinkedin = useMemo(() => JSON.parse(keyContactLinkedinKey), [keyContactLinkedinKey]);
+  // Companies with a Key Contact and an empty Targets tab
+  // (utils/keyContactNoTargets), held the same way.
+  const keyContactNoTargetsKey = useMemo(
+    () => JSON.stringify(keyContactNoTargetsIssues(hubspotContacts, { localFields: contactLocalFields || {}, prospects })),
+    [hubspotContacts, contactLocalFields, prospects],
+  );
+  const keyContactNoTargets = useMemo(() => JSON.parse(keyContactNoTargetsKey), [keyContactNoTargetsKey]);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, now: issuesNow });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, now: issuesNow });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, issuesNow]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, issuesNow]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map
