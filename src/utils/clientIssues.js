@@ -23,7 +23,7 @@ import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRow
 import { incompleteHandoffDeals } from './dealHandoff';
 import { oppScopeOffList, suggestServiceMatch } from './oppScopeOffList';
 import { oppCompanyMissingIssues } from './oppCompanyMissing.js';
-import { detectNoTargets } from './clientNoTargets.js';
+import { detectNoTargets, detectProspectNoTargets } from './clientNoTargets.js';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -937,5 +937,10 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   // already lists, so a company shows once.
   const noTargetIds = new Set(issues.filter(r => r.type === 'No targets').map(r => String(r.prospectId)));
   issues.push(...keyContactNoTargets.filter(r => !noTargetIds.has(String(r.prospectId))));
+  // Your prospects with nothing on their Targets tab (clientNoTargets
+  // detectProspectNoTargets), less any the Key Contacts row above already
+  // lists: that row names the people there, so it is the one to keep.
+  const keyContactIds = new Set(keyContactNoTargets.map(r => String(r.prospectId)));
+  issues.push(...detectProspectNoTargets({ prospects, cdmName }).filter(r => !keyContactIds.has(String(r.prospectId))));
   return issues;
 }
