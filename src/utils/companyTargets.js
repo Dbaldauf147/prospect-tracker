@@ -412,6 +412,42 @@ export function mergePastedTargets(existing, pasted) {
   return { list, added, duplicates, updated };
 }
 
+// The same for rows that came from "Research targets". A paste is matched
+// exactly, because pasting the same table twice is the case to catch. A
+// researched row is matched more loosely, because the row already on the
+// list was usually typed by hand with less on it: same Target Type, and
+// every other field either equal or blank on one side (no scopes ticked
+// counts as blank). The logged row then gains what it was missing, and what
+// was typed by hand is never overwritten.
+//   { list, added, duplicates, updated }
+const RESEARCH_FILL_KEYS = ['action', 'commitmentType', 'yearSet', 'baseYear', 'targetYear1', 'targetYear2', 'classification', 'status', 'datePublished'];
+const RESEARCH_AGREE_KEYS = ['yearSet', 'baseYear', 'targetYear1', 'targetYear2', 'classification', 'status', 'commitmentType'];
+const typeKey = v => norm(v).replace(/[^a-z0-9]/g, '');
+function looselySameTarget(cur, found) {
+  if (!typeKey(cur.type) || typeKey(cur.type) !== typeKey(found.type)) return false;
+  if (!RESEARCH_AGREE_KEYS.every(k => !norm(cur[k]) || !norm(found[k]) || norm(cur[k]) === norm(found[k]))) return false;
+  return !scopesLabel(cur) || !scopesLabel(found) || scopesLabel(cur) === scopesLabel(found);
+}
+
+export function mergeResearchedTargets(existing, researched) {
+  const list = normalizeTargets(existing);
+  const matched = new Set();
+  let added = 0;
+  let duplicates = 0;
+  let updated = 0;
+  for (const r of normalizeTargets(researched)) {
+    const i = list.findIndex(x => !matched.has(x.id) && !x.hidden && looselySameTarget(x, r));
+    if (i === -1) { list.push(r); matched.add(r.id); added += 1; continue; }
+    const cur = list[i];
+    matched.add(cur.id);
+    duplicates += 1;
+    const fill = Object.fromEntries(RESEARCH_FILL_KEYS.filter(k => !cur[k] && r[k]).map(k => [k, r[k]]));
+    if (!scopesLabel(cur) && scopesLabel(r)) for (const k of TARGET_SCOPES) fill[k] = r[k];
+    if (Object.keys(fill).length) { list[i] = { ...cur, ...fill }; updated += 1; }
+  }
+  return { list, added, duplicates, updated };
+}
+
 // ---- Every company's targets, as one list ------------------------------
 // Prospecting > Targets lists the targets saved on every company popup:
 // [{ ...target, id: '<prospect id>:<target id>', targetId, prospect, company }]
