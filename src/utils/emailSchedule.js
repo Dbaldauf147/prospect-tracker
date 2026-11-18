@@ -213,3 +213,55 @@ export function audienceMembers(contacts, gates) {
   }
   return out;
 }
+
+/**
+ * The weeks a month's calendar shows: rows of seven 'YYYY-MM-DD' days,
+ * Sunday first, from the Sunday on or before the 1st through the Saturday
+ * on or after the last day. `month` is 'YYYY-MM'.
+ */
+export function calendarWeeks(month) {
+  const [y, m] = month.split('-').map(Number);
+  const first = `${y}-${pad(m)}-01`;
+  const last = localDay(new Date(y, m, 0));
+  let day = addDays(first, -new Date(y, m - 1, 1).getDay());
+  const weeks = [];
+  while (day <= last) {
+    const week = [];
+    for (let i = 0; i < 7; i += 1) { week.push(day); day = addDays(day, 1); }
+    weeks.push(week);
+  }
+  return weeks;
+}
+
+/** 'YYYY-MM' plus `n` months (n may be negative). */
+export function addMonths(month, n) {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+}
+
+/**
+ * What the Email Schedule calendar puts on each day, from
+ * buildEmailSchedule's { rows, groups }: Map<'YYYY-MM-DD', entry[]>.
+ *   { kind: 'send', row }      a planned send, on its sendDay (an overdue
+ *                              one sits on today, where it now counts)
+ *   { kind: 'target', row }    the target date of a send planned too soon,
+ *                              the day it would have to move to. A send
+ *                              that is on track gets no marker: its target
+ *                              is behind it and has nothing to say.
+ *   { kind: 'open', group }    the audience's earliest day for a further
+ *                              send after everything planned
+ * Sends come first on a day, then targets, then open days.
+ */
+export function scheduleCalendarEntries({ rows, groups }) {
+  const byDay = new Map();
+  const put = (day, entry) => {
+    if (!day) return;
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(entry);
+  };
+  for (const row of rows || []) put(row.sendDay, { kind: 'send', row });
+  for (const row of rows || []) if (row.early) put(row.target, { kind: 'target', row });
+  for (const group of groups || []) put(group.nextTarget, { kind: 'open', group });
+  return byDay;
+}
