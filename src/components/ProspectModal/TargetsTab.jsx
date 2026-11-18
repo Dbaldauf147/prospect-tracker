@@ -77,7 +77,7 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
         Paste a targets table, header row optional. The SBTi dashboard's Targets / Commitments
         table works as copied: Action, Commitment Type, Status, Target, Scope, Target Classification,
         Base Year, Target Year, Date Published. The year it was published becomes the Year Set.
-        A Source or Link column holding a web address becomes the target's Link.
+        A Value column (the percentage) and a Source or Link column holding a web address are read too.
         The table ChatGPT or Claude gives back from Search web's Ask entries works as copied too.
         Or paste a target written as text, such as a sentence from a sustainability report: each
         sentence naming a target year or a kind of target becomes a row. Check the preview before adding.
@@ -96,7 +96,7 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.75rem' }}>
             <thead>
               <tr>
-                {['Action', 'Target Type', 'Commitment Type', 'Year Set', 'Base Year', 'Target Year', 'Scopes', 'Classification', 'Status', 'Date Published', 'Link'].map(h => (
+                {['Action', 'Target Type', 'Value', 'Commitment Type', 'Year Set', 'Base Year', 'Target Year', 'Scopes', 'Classification', 'Status', 'Date Published', 'Link'].map(h => (
                   <th key={h} style={previewHead}>{h}</th>
                 ))}
               </tr>
@@ -106,6 +106,7 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
                 <tr key={r.id}>
                   <td style={previewCell}>{r.action || '-'}</td>
                   <td style={previewCell}>{r.type || '-'}</td>
+                  <td style={previewCell}>{r.value || '-'}</td>
                   <td style={previewCell}>{r.commitmentType || '-'}</td>
                   <td style={previewCell}>{r.yearSet || '-'}</td>
                   <td style={previewCell}>{r.baseYear || '-'}</td>
@@ -227,6 +228,27 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
           value={r.type}
           options={typeOptions}
           onChange={v => edit(r.id, 'type', v)}
+        />
+      ),
+    },
+    {
+      // The size of the target, mostly a percentage ("50%"). Free text, so
+      // "100% renewable" or a figure with a unit fits too.
+      key: 'value',
+      label: 'Value',
+      defaultWidth: 100,
+      getSortValue: r => r.value.toLowerCase() || null,
+      getFilterValue: r => r.value,
+      exportValue: r => r.value,
+      render: r => (
+        <input
+          type="text"
+          value={r.value}
+          aria-label="Value"
+          placeholder="50%"
+          title="The size of the target, such as 50%"
+          onChange={e => edit(r.id, 'value', e.target.value)}
+          style={inputStyle}
         />
       ),
     },

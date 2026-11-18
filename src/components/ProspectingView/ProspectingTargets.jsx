@@ -160,6 +160,13 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
       render: r => r.type || dash,
     },
     {
+      key: 'value', label: 'Value', defaultWidth: 90,
+      getSortValue: r => r.value.toLowerCase() || null,
+      getFilterValue: r => r.value,
+      exportValue: r => r.value,
+      render: r => r.value || dash,
+    },
+    {
       key: 'commitmentType', label: 'Commitment Type', defaultWidth: 140,
       getFilterValue: r => r.commitmentType,
       exportValue: r => r.commitmentType,

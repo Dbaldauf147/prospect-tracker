@@ -104,17 +104,17 @@ check('config: every entry is a search, a link or a divider', TARGET_WEB_SEARCHE
   const { parsePastedTargets } = await import('../src/utils/companyTargets.js');
   const header = TARGET_RESEARCH_PROMPT.split('\n').find(l => l.startsWith('Action |'));
   const answer = ['```', header,
-    'Target | Net zero | | 2021 | 2019 | 2050 | | 1, 2 | | Self-declared | | https://example.com/esg',
-    'Commitment | | Net-zero | | | | | | | Committed | 2024-04-25 | https://sciencebasedtargets.org/target-dashboard',
-    'Target | SBTi near-term | | 2023 | 2020 | 2030 | 2035 | 1, 2, 3 | 1.5°C | Validated Targets | 2023-06-01 | x',
+    'Target | Net zero | | | 2021 | 2019 | 2050 | | 1, 2 | | Self-declared | | https://example.com/esg',
+    'Commitment | | | Net-zero | | | | | | | Committed | 2024-04-25 | https://sciencebasedtargets.org/target-dashboard',
+    'Target | SBTi near-term | 42% | | 2023 | 2020 | 2030 | 2035 | 1, 2, 3 | 1.5°C | Validated Targets | 2023-06-01 | x',
     '```'].join('\n');
   const { rows } = parsePastedTargets(answer);
-  const pick = r => [r.action, r.type, r.commitmentType, r.yearSet, r.baseYear, r.targetYear1, r.targetYear2, r.scope1, r.scope2, r.scope3, r.classification, r.status, r.datePublished];
+  const pick = r => [r.action, r.type, r.value, r.commitmentType, r.yearSet, r.baseYear, r.targetYear1, r.targetYear2, r.scope1, r.scope2, r.scope3, r.classification, r.status, r.datePublished];
   check('ai answer: Source column becomes the link', rows.map(r => r.sourceUrl), ['https://example.com/esg', 'https://sciencebasedtargets.org/target-dashboard', '']);
   check('ai answer: read by Paste targets, column for column', rows.map(pick), [
-    ['Target', 'Net zero', '', '2021', '2019', '2050', '', true, true, false, '', 'Self-declared', ''],
-    ['Commitment', 'SBTi commitment', 'Net-zero', '2024', '', '', '', false, false, false, '', 'Committed', '2024-04-25'],
-    ['Target', 'SBTi near-term', '', '2023', '2020', '2030', '2035', true, true, true, '1.5°C', 'Validated Targets', '2023-06-01'],
+    ['Target', 'Net zero', '', '', '2021', '2019', '2050', '', true, true, false, '', 'Self-declared', ''],
+    ['Commitment', 'SBTi commitment', '', 'Net-zero', '2024', '', '', '', false, false, false, '', 'Committed', '2024-04-25'],
+    ['Target', 'SBTi near-term', '42%', '', '2023', '2020', '2030', '2035', true, true, true, '1.5°C', 'Validated Targets', '2023-06-01'],
   ]);
   // As a rendered markdown table copied back out, and with no fence.
   const md = ['| Action | Target Type | Base Year | Target Year | Scope |', '|---|---|:--:|---|---|', '| Target | Net-zero | 2019 | 2050 | 1, 2 |'].join('\n');
@@ -122,14 +122,14 @@ check('config: every entry is a search, a link or a divider', TARGET_WEB_SEARCHE
   // An investor's portfolio target (Apollo's 15% median carbon intensity
   // cut over a five-year hold): the prompt asks for it by name, and the
   // row it describes, with no target year, is kept with its own type.
-  check('prompt: asks for portfolio targets and rolling deadlines', ['portfolio companies', 'financed emissions', 'holding period', 'Portfolio intensity reduction', 'leave Target Year empty', 'not only the web page'].filter(t => !TARGET_RESEARCH_PROMPT.includes(t)), []);
+  check('prompt: asks for portfolio targets and rolling deadlines', ['portfolio companies', 'financed emissions', 'holding period', 'Portfolio intensity reduction', 'leave Target Year empty', 'not only the web page', '| Value |', 'no second or revised table'].filter(t => !TARGET_RESEARCH_PROMPT.includes(t)), []);
   const pe = parsePastedTargets([header,
-    'Target | Portfolio intensity reduction | | 2025 | | | | 1, 2 | | Self-declared | | https://example.com/report.pdf',
-    'Target | Emissions intensity reduction | | 2022 | 2019 | 2030 | | 1, 2 | | Self-declared | | https://example.com/esg',
+    'Target | Portfolio intensity reduction | 15% | | 2025 | | | | 1, 2 | | Self-declared | | https://example.com/report.pdf',
+    'Target | Emissions intensity reduction | | | 2022 | 2019 | 2030 | | 1, 2 | | Self-declared | | https://example.com/esg',
   ].join('\n')).rows;
-  check('ai answer: a portfolio target with no target year is kept apart from the company\'s own', pe.map(r => [r.type, r.yearSet, r.targetYear1, r.scope1, r.scope2, r.scope3, r.sourceUrl]), [
-    ['Portfolio intensity reduction', '2025', '', true, true, false, 'https://example.com/report.pdf'],
-    ['Emissions intensity reduction', '2022', '2030', true, true, false, 'https://example.com/esg'],
+  check('ai answer: a portfolio target with no target year is kept apart from the company\'s own', pe.map(r => [r.type, r.value, r.yearSet, r.targetYear1, r.scope1, r.scope2, r.scope3, r.sourceUrl]), [
+    ['Portfolio intensity reduction', '15%', '2025', '', true, true, false, 'https://example.com/report.pdf'],
+    ['Emissions intensity reduction', '', '2022', '2030', true, true, false, 'https://example.com/esg'],
   ]);
   const none = parsePastedTargets([header, '- | No target set'].join('\n')).rows;
   check('ai answer: no target set', none.map(r => [r.action, r.type]), [['', 'No target set']]);

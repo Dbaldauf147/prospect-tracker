@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey } from '../src/utils/companyTargets.js';
+import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -21,7 +21,7 @@ function check(label, actual, expected) {
 
 check('normalize: not an array', normalizeTargets(null), []);
 check('normalize: fills blanks, drops junk', normalizeTargets([{ id: 'a', type: 'Net zero', baseYear: 2019 }, null, 'x']), [
-  { id: 'a', action: 'Target', type: 'Net zero', commitmentType: '', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false, classification: '', status: '', datePublished: '', sourceUrl: '', hidden: false },
+  { id: 'a', action: 'Target', type: 'Net zero', value: '', commitmentType: '', yearSet: '', baseYear: '2019', targetYear1: '', targetYear2: '', scope1: false, scope2: false, scope3: false, classification: '', status: '', datePublished: '', sourceUrl: '', hidden: false },
 ]);
 check('cleanYear: digits only, four max', [cleanYear('20a305'), cleanYear(''), cleanYear(null)], ['2030', '', '']);
 const list = [{ id: 'a', type: '' }, { id: 'b', type: 'SBTi' }];
@@ -57,15 +57,15 @@ const strip = rows => rows.map(({ id, ...r }) => r);
 const parsed = parsePastedTargets(SBTI);
 check('paste: six rows', parsed.rows.length, 6);
 check('paste: net-zero row', strip(parsed.rows)[0], {
-  action: 'Target', type: 'Net zero', commitmentType: '', yearSet: '2024', baseYear: '2019', targetYear1: '2040', targetYear2: '',
+  action: 'Target', type: 'Net zero', value: '', commitmentType: '', yearSet: '2024', baseYear: '2019', targetYear1: '2040', targetYear2: '',
   scope1: true, scope2: true, scope3: true, classification: '1.5°C', status: 'Other', datePublished: '2024-12-05', sourceUrl: '', hidden: false,
 });
 check('paste: scope 3 alone, NA classification blank', strip(parsed.rows)[2], {
-  action: 'Target', type: 'SBTi near-term', commitmentType: '', yearSet: '2024', baseYear: '2019', targetYear1: '2030', targetYear2: '',
+  action: 'Target', type: 'SBTi near-term', value: '', commitmentType: '', yearSet: '2024', baseYear: '2019', targetYear1: '2030', targetYear2: '',
   scope1: false, scope2: false, scope3: true, classification: '', status: 'Other', datePublished: '2024-12-05', sourceUrl: '', hidden: false,
 });
 check('paste: commitment row', strip(parsed.rows)[5], {
-  action: 'Commitment', type: 'SBTi commitment', commitmentType: 'BA1.5 Option 2', yearSet: '2021', baseYear: '', targetYear1: '', targetYear2: '',
+  action: 'Commitment', type: 'SBTi commitment', value: '', commitmentType: 'BA1.5 Option 2', yearSet: '2021', baseYear: '', targetYear1: '', targetYear2: '',
   scope1: false, scope2: false, scope3: false, classification: '', status: 'Validated Targets', datePublished: '2021-07-01', sourceUrl: '', hidden: false,
 });
 const noHeader = parsePastedTargets(SBTI.split('\r\n').slice(1).join('\n'));
@@ -208,6 +208,26 @@ check('link: kept on the row, trimmed', normalizeTargets([{ id: 'a', sourceUrl: 
   // A different page for the same target is still the same target, and the saved link stays.
   const other = mergePastedTargets(m.list, [{ ...rows[0], sourceUrl: 'https://y.com/other' }]);
   check('link: a different source does not duplicate or overwrite', [other.added, other.list[0].sourceUrl], [0, 'https://x.com/report']);
+}
+
+// Value: the size of the target, read from a Value column or a sentence.
+{
+  const t = parsePastedTargets(['Action | Target Type | Value | Base Year | Target Year | Scope',
+    'Target | Absolute emissions reduction | 50 % | 2019 | 2030 | 1, 2',
+    'Target | Renewable electricity (RE100) | 100 percent | | 2035 | 2',
+    'Target | Net zero | | | 2050 | 1, 2, 3',
+    'Target | Portfolio intensity reduction | 15% median | | | 1, 2'].join('\n')).rows;
+  check('value: column read, bare percentages tidied, wording kept', t.map(r => r.value), ['50%', '100%', '', '15% median']);
+  check('value: free text takes the first percentage', parsePastedTargets('The company will reduce Scope 1 and 2 emissions 46.2 percent by 2030 from a 2019 base year and reach net zero by 2050.').rows.map(r => [r.value, r.targetYear1]), [['46.2%', '2030']]);
+  check('value: free text with no percentage', parsePastedTargets('The company aims to achieve net zero Scope 1 and Scope 2 emissions by 2050 across its portfolio.').rows.map(r => r.value), ['']);
+  // A row logged before the column existed gains its value on a re-paste;
+  // two targets alike but for the percentage stay two.
+  const old = [{ id: 'o', action: 'Target', type: 'Absolute emissions reduction', baseYear: '2019', targetYear1: '2030', scope1: true, scope2: true }];
+  const re1 = mergePastedTargets(old, [t[0]]);
+  check('value: re-paste fills a blank value in', [re1.added, re1.updated, re1.list[0].value], [0, 1, '50%']);
+  const re2 = mergePastedTargets(re1.list, [{ ...t[0], value: '30%' }]);
+  check('value: a different percentage is a different target', [re2.added, re2.list.map(r => r.value)], [1, ['50%', '30%']]);
+  check('value: a row holding only a value counts as filled in', hasTargetValues([{ id: 'v', action: 'Target', value: '20%' }]), true);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
