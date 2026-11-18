@@ -23,7 +23,7 @@ import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRow
 import { incompleteHandoffDeals } from './dealHandoff';
 import { oppScopeOffList, suggestServiceMatch } from './oppScopeOffList';
 import { oppCompanyMissingIssues } from './oppCompanyMissing.js';
-import { detectNoTargets, detectProspectNoTargets } from './clientNoTargets.js';
+import { detectNoTargets, myAccountsNoTargetIssues } from './clientNoTargets.js';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -936,11 +936,12 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   // (utils/keyContactNoTargets), less any a clients' "No targets" row
   // already lists, so a company shows once.
   const noTargetIds = new Set(issues.filter(r => r.type === 'No targets').map(r => String(r.prospectId)));
-  issues.push(...keyContactNoTargets.filter(r => !noTargetIds.has(String(r.prospectId))));
-  // Your prospects with nothing on their Targets tab (clientNoTargets
-  // detectProspectNoTargets), less any the Key Contacts row above already
-  // lists: that row names the people there, so it is the one to keep.
-  const keyContactIds = new Set(keyContactNoTargets.map(r => String(r.prospectId)));
-  issues.push(...detectProspectNoTargets({ prospects, cdmName }).filter(r => !keyContactIds.has(String(r.prospectId))));
+  const keyContactRows = keyContactNoTargets.filter(r => !noTargetIds.has(String(r.prospectId)));
+  issues.push(...keyContactRows);
+  // The rest of My Accounts with nothing on their Targets tab, off the
+  // list that page publishes (clientNoTargets myAccountsNoTargetIssues),
+  // less any company a row above already lists.
+  for (const r of keyContactRows) noTargetIds.add(String(r.prospectId));
+  issues.push(...myAccountsNoTargetIssues({ myAccountsFlags, prospects, skipIds: noTargetIds }));
   return issues;
 }

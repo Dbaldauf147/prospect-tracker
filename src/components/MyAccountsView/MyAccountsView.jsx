@@ -19,6 +19,7 @@ import { slimHubspotContact } from '../../utils/hubspotContactFields';
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
+import { hasTargetValues } from '../../utils/companyTargets';
 import { MY_ACCOUNTS_SINCE_EVENT, loadMyAccountsSince, saveMyAccountsSince, withMyAccountsStamped, sinceFor, sinceDayKey, daysBetween } from '../../utils/myAccountsSince';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
@@ -2891,7 +2892,7 @@ Fix that now?
     else setMyAccountsSince(current);
   }, [allAccounts]);
 
-  // Publish the tier / status / HQ-Region flags so the Issues tab can list
+  // Publish the tier / status / HQ-Region / no-targets flags so the Issues tab can list
   // them. One record per (account, flag); synthetic opps-only rows are
   // skipped since they have no backing prospect to open or edit. The
   // HQ-Region flag mirrors the column header's rule (missing region on a
@@ -2904,6 +2905,9 @@ Fix that now?
         if (a.tierMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'tier', myTier: a.myTier || '', targetTier: a.targetTier || '' });
         if (a.statusMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'status', status: a.status || '', suggestedStatus: a.suggestedStatus || '' });
         if (!a.hqRegion && !isInactive(a)) flags.push({ id: a.id, company: a.company || '', kind: 'hqRegion', status: a.status || '' });
+        // Nothing on the company popup's Targets tab: the Issues tab's
+        // "No targets" rows for My Accounts (utils/clientNoTargets).
+        if (!hasTargetValues(a.climateTargets) && !isInactive(a)) flags.push({ id: a.id, company: a.company || '', kind: 'noTargets' });
       }
       saveMyAccountsFlags(flags);
     } catch {}
