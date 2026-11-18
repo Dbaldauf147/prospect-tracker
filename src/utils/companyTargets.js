@@ -59,6 +59,17 @@ export function hasNoTargetRow(list) {
   return normalizeTargets(list).some(isNoTargetRow);
 }
 
+// Does the Targets tab hold anything at all? A row only counts once
+// something is filled in: the Action every new row starts with ('Target')
+// and the Hide tick are not values. A "No target set" row counts: it is
+// the answer that the company was checked and has none. (The Issues tab's
+// "No targets" row, utils/clientIssues.)
+export function hasTargetValues(list) {
+  return normalizeTargets(list).some(r => isNoTargetRow(r)
+    || ['type', 'commitmentType', ...TARGET_YEAR_KEYS, 'classification', 'status', 'datePublished', 'sourceUrl'].some(k => String(r[k] || '').trim())
+    || TARGET_SCOPES.some(k => r[k]));
+}
+
 // The link as an address a browser can open, or '' when it isn't one.
 // "example.com/esg" gains https://; anything that is not a web address
 // (javascript:, plain words) gives '', so a typed value is never rendered

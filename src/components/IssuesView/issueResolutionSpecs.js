@@ -10,6 +10,7 @@ import { normalizeBfoCompany } from '../../utils/newBfoOpps';
 import { cleanLinkedinUrl, markNoLinkedinUpdate } from '../../utils/keyContactLinkedin';
 import { apiFetch } from '../../utils/apiFetch';
 import { updateHubspotCache } from '../../utils/hubspotContactsCache';
+import { noTargetRow, normalizeTargets } from '../../utils/companyTargets';
 
 // A Key Contact's LinkedIn URL, written to HubSpot (update-contact) and
 // patched into the contacts cache so the issue clears without a re-sync.
@@ -202,6 +203,18 @@ export function buildResolution(row, ctx) {
         subtitle,
         fields: [field('hqRegion', 'HQ Region', 'select', prospect.hqRegion, { options: HQ_REGION_OPTIONS })],
         async save(v) { await updateProspect(prospect.id, { hqRegion: v.hqRegion }); },
+      };
+
+    case 'noTargets':
+      if (!prospect) return null;
+      return {
+        title: 'No targets logged',
+        subtitle,
+        note: 'Add the targets on the Targets tab of the company popup (click the client name). If the company has none, tick below to log a "No target set" row there.',
+        fields: [field('none', 'The company has no sustainability target', 'checkbox', false)],
+        async save(v) {
+          if (v.none) await updateProspect(prospect.id, { climateTargets: [...normalizeTargets(prospect.climateTargets), noTargetRow()] });
+        },
       };
 
     case 'leadStatus':
