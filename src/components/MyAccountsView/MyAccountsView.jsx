@@ -41,6 +41,7 @@ import { isQualifyingCompany } from '../../utils/companyDataFields';
 import { CompanyDataTab } from './CompanyDataTab';
 import { DealSizeTab } from './DealSizeTab';
 import { HubspotMappingTab } from './HubspotMappingTab';
+import { NameMatcherTab } from './NameMatcherTab';
 import { MissingHistoryView } from './MissingHistoryView';
 import { findTier, parseTargetAccounts } from '../../utils/myAccountsMembership';
 import { missingStepsReading, recordMissingDay, dayKey } from '../../utils/missingHistory';
@@ -3971,6 +3972,23 @@ Fix that now?
               </button>
             </>
           )}
+        />
+      </div>
+    );
+  }
+
+  // Name Matcher subtab - a pasted list of names, each matched to the Table
+  // company it most likely is (every tracker company, not only My Accounts),
+  // with its CDM and Tier.
+  if (mode === 'nameMatcher') {
+    return (
+      <div className={styles.wrapper}>
+        <NameMatcherTab
+          prospects={prospects}
+          accounts={allAccounts}
+          settings={settings}
+          updateSettings={updateSettings}
+          onSelect={onSelect}
         />
       </div>
     );
