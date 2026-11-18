@@ -349,7 +349,7 @@ function writeActiveSubTab(tab) {
 // Only genuinely new seeds belong here: an id listed here would come back
 // for a user who deleted it long ago, which is why the original four
 // aren't.
-const LATE_SEED_IDS = ['seed-big-site-list-python'];
+const LATE_SEED_IDS = ['seed-big-site-list-python', 'seed-esg-news-podcast'];
 
 const DEFAULT_SAVED_PROMPTS = [
   {
@@ -787,6 +787,24 @@ biggest data gap, and anything surprising about the portfolio.`,
     id: 'seed-pe-portfolio-analysis',
     title: 'PE Portfolio Analysis',
     body: `https://docs.google.com/document/d/1WoypQRaFrowZ8cK-r_akA7PdgWS2wODoFTQq_XnZcp8/edit?tab=t.0`,
+  },
+  {
+    // Run by a browser agent in a Chrome already signed in to Google, after
+    // the daily ESG News Roundup doc has been written (about 6:47am Eastern).
+    id: 'seed-esg-news-podcast',
+    title: 'ESG News Podcast (NotebookLM)',
+    body: `Turn today's ESG News Roundup into a NotebookLM Audio Overview. I am logged into Google in this browser.
+
+1. Work out today's date in US Eastern time as YYYY-MM-DD. The doc to use is titled exactly "ESG News Roundup - YYYY-MM-DD" and lives in the Google Drive folder https://drive.google.com/drive/folders/1j5E0tVowoaUD-eTu6873Y8lDq8423f89
+2. Open that folder in a new tab and find today's doc. If there is no doc with today's date, stop and reply "No roundup today, nothing generated." Do not use an older doc.
+3. Open https://notebooklm.google.com and open the notebook named "ESG News Daily". If it does not exist, stop and say so. Do not create or delete notebooks.
+4. If today's doc is already a source in the notebook, skip to step 6.
+5. Untick or remove the previous days' roundup sources so only today's will be used, then add a source: Google Drive > Google Docs > today's doc. Wait until it finishes loading.
+6. In the Studio panel, start an Audio Overview with the default settings. If one for today already exists, do not generate a second one.
+7. Generation takes several minutes. Check back every minute or so, up to 15 minutes. When it is ready, rename it "ESG News - YYYY-MM-DD".
+8. Reply with one line: the doc used and whether the Audio Overview is ready, still generating, or failed (and what the page showed).
+
+Rules: touch only this notebook and only read the Drive folder. Do not share, publish, download, email or delete anything else. If a sign-in page, a permission prompt or an unfamiliar layout appears, stop and report what you see instead of guessing.`,
   },
 ];
 
