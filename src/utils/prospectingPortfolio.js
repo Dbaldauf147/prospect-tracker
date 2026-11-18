@@ -17,6 +17,7 @@
 //
 // Imported with extensions so this loads under plain Node for the tests.
 import { matchesCdm } from './cdmMatch.js';
+import { CLOSED_STATUSES, isClosedStatus } from './closedStatuses.js';
 import { buildProspectPcIndex, lookupProspectByPc, topPcCompanyKey } from './topPortfolioCompany.js';
 import { siteCountNumber } from './portfolioCompaniesWorkbook.js';
 
@@ -66,11 +67,10 @@ export function companyFigures(prospect, siteLists) {
 // Statuses that mean there is nothing to prospect: the account has said no,
 // been parked, or already been a client and moved on. Both subtabs leave
 // these companies out (and so do their totals).
-export const CLOSED_STATUSES = ['Old Client', 'Lost - Not Sold', 'Hold Off'];
-const CLOSED_SET = new Set(CLOSED_STATUSES.map(s => s.toLowerCase()));
-export function isClosedStatus(status) {
-  return CLOSED_SET.has(String(status || '').trim().toLowerCase());
-}
+//
+// They live in utils/closedStatuses.js, which imports nothing, so the
+// Issues detectors can share them without loading this file's imports.
+export { CLOSED_STATUSES, isClosedStatus };
 
 /** Every tracker company whose CDM is this user, A to Z, minus closed ones. */
 export function myProspectRows(prospects, cdmName, siteLists) {

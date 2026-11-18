@@ -210,7 +210,7 @@ export function buildResolution(row, ctx) {
       return {
         title: 'No targets logged',
         subtitle,
-        note: 'Add the targets on the Targets tab of the company popup (click the client name). If the company has none, tick below to log a "No target set" row there.',
+        note: 'Add the targets on the Targets tab of the company popup (click the company name). If the company has none, tick below to log a "No target set" row there.',
         fields: [field('none', 'The company has no sustainability target', 'checkbox', false)],
         async save(v) {
           if (v.none) await updateProspect(prospect.id, { climateTargets: [...normalizeTargets(prospect.climateTargets), noTargetRow()] });
