@@ -59,6 +59,7 @@ import { buildScheduledCampaign, cannotCreateReason } from '../../utils/campaign
 import { CampaignSchedulesPanel } from './CampaignSchedulesPanel';
 import { CampaignPauseButton } from './CampaignPauseButton';
 import { CampaignAudienceTicks } from './CampaignAudienceTicks';
+import { EmailSchedulePanel } from './EmailSchedulePanel';
 import { BounceForwardNote } from './BounceForwardNote';
 import { FailedEmailsPanel } from './FailedEmailsPanel';
 import { failedCampaignEmailRows, failedEmailCount } from '../../utils/failedCampaignEmails';
@@ -314,9 +315,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   }, [updateSettings]);
   useEffect(() => { scanBouncesSoon(); }, [scanBouncesSoon]);
   const [savedCampaigns, setSavedCampaigns] = useState([]);
-  // Sub-tab: the campaigns themselves, or Failed Emails (every campaign
+  // Sub-tab: the campaigns themselves, Email Schedule (EmailSchedulePanel), or Failed Emails (every campaign
   // contact whose email bounced, FailedEmailsPanel). Remembered per user.
-  const [subTab, setSubTabState] = useState(() => (userLsGet(SUBTAB_LS) === 'failed' ? 'failed' : 'campaigns'));
+  const [subTab, setSubTabState] = useState(() => (['failed', 'schedule'].includes(userLsGet(SUBTAB_LS)) ? userLsGet(SUBTAB_LS) : 'campaigns'));
   const setSubTab = (t) => { setSubTabState(t); try { userLsSet(SUBTAB_LS, t); } catch { /* a convenience */ } };
   const [campaignsLoaded, setCampaignsLoaded] = useState(false);
   const [viewingSaved, setViewingSaved] = useState(null); // index of saved campaign being viewed
@@ -2358,9 +2359,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     <div style={{ padding: '1.5rem', maxWidth: '1600px' }}>
       <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)', marginTop: 0, marginBottom: '0.6rem' }}>Email Campaign Tracker</h2>
 
-      {/* Sub-tabs: the campaigns, or the sends that failed across all of them. */}
+      {/* Sub-tabs: the campaigns, when the next ones are due to each audience, or the sends that failed across all of them. */}
       <div data-campaign-subtabs style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--color-border)', marginBottom: '1rem' }}>
-        {[['campaigns', 'Campaigns'], ['failed', 'Failed Emails']].map(([key, label]) => (
+        {[['campaigns', 'Campaigns'], ['schedule', 'Email Schedule'], ['failed', 'Failed Emails']].map(([key, label]) => (
           <button
             key={key}
             type="button"
@@ -2387,6 +2388,17 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
           rows={failedRows}
           companyFor={companyFor}
           onOpenContact={openContactByEmail}
+          onOpenCampaign={(i) => { setSubTab('campaigns'); viewCampaign(i); }}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      )}
+
+      {subTab === 'schedule' && (
+        <EmailSchedulePanel
+          campaigns={savedCampaigns}
+          prospects={prospects}
+          cdmName={cdmName}
           onOpenCampaign={(i) => { setSubTab('campaigns'); viewCampaign(i); }}
           settings={settings}
           updateSettings={updateSettings}
