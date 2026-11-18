@@ -23,6 +23,7 @@ import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRow
 import { incompleteHandoffDeals } from './dealHandoff';
 import { oppScopeOffList, suggestServiceMatch } from './oppScopeOffList';
 import { oppCompanyMissingIssues } from './oppCompanyMissing.js';
+import { detectNoTargets } from './clientNoTargets.js';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -897,6 +898,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap, dealIndexOf }));
   issues.push(...detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }));
   issues.push(...detectMissingExpiration({ prospects, cdmName, dealsByClient, untrackedMap }));
+  issues.push(...detectNoTargets({ prospects, cdmName, untrackedMap }));
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
   issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
