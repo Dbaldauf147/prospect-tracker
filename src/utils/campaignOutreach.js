@@ -13,6 +13,7 @@
 
 import { campaignSubjects, primarySubject } from './campaignSubjects.js';
 import { rateBase } from './campaignContactHold.js';
+import { CAMPAIGN_AUDIENCES, campaignAudience, campaignSchedule } from './campaignAudience.js';
 
 // A saved campaign goes Inactive once it has had no activity — neither a
 // save nor a refresh — for 60 days. A campaign with no usable date stays
@@ -58,18 +59,74 @@ export function campaignPauseUntil(nowMs = Date.now(), days = CAMPAIGN_PAUSE_DAY
   return new Date(nowMs + days * DAY_MS).toISOString();
 }
 
+// Local 'YYYY-MM-DD' for a moment, the form planned send dates are stored in.
+function localDay(nowMs) {
+  const d = new Date(nowMs);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Active by the manual override or, without one, the 60-day rule. What a
+// campaign is underneath any pause.
+function isActiveUnderneath(c, nowMs) {
+  return typeof c?.manualActive === 'boolean' ? c.manualActive : isCampaignFresh(c, nowMs);
+}
+
+function isManuallyPaused(c, nowMs) {
+  const until = c?.pausedUntil ? new Date(c.pausedUntil).getTime() : NaN;
+  return Number.isFinite(until) && until > nowMs;
+}
+
+/**
+ * Is this campaign paused on its own, with nobody having pressed Pause?
+ *
+ * A campaign that has gone to everyone on its list (100% sent) and whose
+ * three Sent To audiences are each either ticked or planned for a later
+ * day has nothing to do today: the next move is a date that has not come.
+ * So it reads Paused instead of Active, and leaves the Prospecting ladder,
+ * without anyone parking it by hand.
+ *
+ * Like a manual pause it lifts by itself: on the day the earliest planned
+ * date arrives (or once more contacts are added and it is no longer 100%
+ * sent) the campaign is Active again. With all three audiences ticked there
+ * is no date to wait for and it stays paused.
+ *
+ * Inactive wins: a campaign marked inactive, or gone quiet for 60 days,
+ * stays Inactive.
+ */
+export function isCampaignAutoPaused(c, nowMs = Date.now()) {
+  if (!c || typeof c !== 'object') return false;
+  if (!isActiveUnderneath(c, nowMs)) return false;
+  if (!isCampaignFullySent(c)) return false;
+  const sent = campaignAudience(c);
+  const dates = campaignSchedule(c);
+  const today = localDay(nowMs);
+  return CAMPAIGN_AUDIENCES.every(a => sent[a.key] || (dates[a.key] && dates[a.key] > today));
+}
+
+/**
+ * The day ('YYYY-MM-DD') an automatic pause lifts: the earliest planned
+ * date among the audiences not yet ticked. '' when the campaign is not
+ * auto-paused, or when every audience is ticked and nothing is pending.
+ */
+export function campaignAutoPauseUntil(c, nowMs = Date.now()) {
+  if (!isCampaignAutoPaused(c, nowMs)) return '';
+  const sent = campaignAudience(c);
+  const dates = campaignSchedule(c);
+  return CAMPAIGN_AUDIENCES.filter(a => !sent[a.key]).map(a => dates[a.key]).sort()[0] || '';
+}
+
 /**
  * Is this campaign currently paused?
  *
- * A pause is a timestamp, not a flag, so it lifts on its own: once
- * `pausedUntil` is in the past the campaign is simply back to whatever it was
- * before, with nothing to remember to undo. An unparseable value reads as not
- * paused — a campaign silently parked forever by a bad date is the one
- * outcome worth ruling out.
+ * Two ways in. A manual pause is a timestamp, not a flag, so it lifts on
+ * its own: once `pausedUntil` is in the past the campaign is simply back to
+ * whatever it was before, with nothing to remember to undo. An unparseable
+ * value reads as not paused — a campaign silently parked forever by a bad
+ * date is the one outcome worth ruling out. The other is the automatic
+ * pause (isCampaignAutoPaused): fully sent, every audience ticked or dated.
  */
 export function isCampaignPaused(c, nowMs = Date.now()) {
-  const until = c?.pausedUntil ? new Date(c.pausedUntil).getTime() : NaN;
-  return Number.isFinite(until) && until > nowMs;
+  return isManuallyPaused(c, nowMs) || isCampaignAutoPaused(c, nowMs);
 }
 
 /**
@@ -83,7 +140,7 @@ export function isCampaignPaused(c, nowMs = Date.now()) {
  */
 export function isCampaignActive(c, nowMs = Date.now()) {
   if (isCampaignPaused(c, nowMs)) return false;
-  return typeof c?.manualActive === 'boolean' ? c.manualActive : isCampaignFresh(c, nowMs);
+  return isActiveUnderneath(c, nowMs);
 }
 
 /**

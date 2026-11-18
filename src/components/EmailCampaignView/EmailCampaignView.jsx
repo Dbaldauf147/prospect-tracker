@@ -29,7 +29,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { brandFromDomain } from '../../utils/companyGuess';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
 import {
-  isCampaignActive, isCampaignPaused, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS,
+  isCampaignActive, isCampaignPaused, isCampaignAutoPaused, campaignAutoPauseUntil, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS,
   campaignSendStats,
 } from '../../utils/campaignOutreach';
 import {
@@ -1381,6 +1381,13 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     if (e) e.stopPropagation();
     const c = savedCampaigns[index];
     if (!c) return;
+    // An automatic pause (fully sent, every audience ticked or dated) has
+    // no timer to clear, so the way out of it is marking the campaign
+    // inactive.
+    if (isCampaignAutoPaused(c)) {
+      saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, manualActive: false } : x)));
+      return;
+    }
     if (isCampaignPaused(c)) { resumeCampaign(index); return; }
     const next = !effectiveActive(c);
     saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, manualActive: next } : x)));
@@ -1462,6 +1469,17 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     if (hours < 24) return `in ${hours} hour${hours === 1 ? '' : 's'}`;
     const days = Math.round(hours / 24);
     return days === 1 ? 'tomorrow' : `in ${days} days`;
+  }
+
+  // Why a paused campaign is paused and when that ends, for tooltips.
+  function pauseNoteFor(c) {
+    if (isCampaignAutoPaused(c)) {
+      const until = campaignAutoPauseUntil(c);
+      return until
+        ? `Paused automatically: 100% sent and every audience is ticked or dated. Resumes ${fmtDate(`${until}T00:00:00`)}`
+        : 'Paused automatically: 100% sent and every audience is ticked';
+    }
+    return `Paused - resumes ${pauseLeftLabel(c.pausedUntil)} (${fmtDate(c.pausedUntil)})`;
   }
 
   // Click a column header to sort by it; click again to flip direction. A new
@@ -2617,7 +2635,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                               }}
                             >{row.campaign.title || primarySubject(row.campaign) || '(untitled)'}</button>
                             {isCampaignPaused(row.campaign) && (
-                              <span style={{ marginLeft: '0.35rem', padding: '1px 6px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: '#FEF3C7', color: '#92400E' }} title={`Paused until ${fmtDate(campaignPauseUntil(row.campaign))}`}>Paused</span>
+                              <span style={{ marginLeft: '0.35rem', padding: '1px 6px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: '#FEF3C7', color: '#92400E' }} title={pauseNoteFor(row.campaign)}>Paused</span>
                             )}
                             {!isCampaignActive(row.campaign) && (
                               <span style={{ marginLeft: '0.35rem', padding: '1px 6px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: '#F3F4F6', color: '#6B7280' }} title="No activity on this campaign for a while">Inactive</span>
@@ -3499,7 +3517,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
               const paused = isCampaignPaused(c);
               const active = effectiveActive(c);
               const manualStatus = typeof c.manualActive === 'boolean';
-              const pauseNote = paused ? `Paused - resumes ${pauseLeftLabel(c.pausedUntil)} (${fmtDate(c.pausedUntil)})` : '';
+              const autoPaused = paused && isCampaignAutoPaused(c);
+              const autoUntil = autoPaused ? campaignAutoPauseUntil(c) : '';
+              const pauseNote = paused ? pauseNoteFor(c) : '';
               const tone = rowTone(c);
               const restBg = tone === 'complete' ? '#F0FDF4' : tone === 'waiting' ? '#FEFCE8' : 'transparent';
               return (
@@ -3660,7 +3680,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                         <button
                           onClick={e => toggleCampaignActive(i, e)}
                           title={paused
-                            ? `${pauseNote}. Click to resume now`
+                            ? (autoPaused ? `${pauseNote}. Click to mark inactive` : `${pauseNote}. Click to resume now`)
                             : (active
                               ? 'Active: click to mark this campaign inactive'
                               : (manualStatus
@@ -3687,7 +3707,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                       </div>
                       {paused && (
                         <div style={{ marginTop: 2, fontSize: '0.6rem', color: '#92400E', whiteSpace: 'nowrap' }}>
-                          resumes {pauseLeftLabel(c.pausedUntil)}
+                          {autoPaused
+                            ? (autoUntil ? `auto, resumes ${fmtDate(`${autoUntil}T00:00:00`)}` : 'auto, all sent')
+                            : `resumes ${pauseLeftLabel(c.pausedUntil)}`}
                         </div>
                       )}
                     </td>

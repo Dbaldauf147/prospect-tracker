@@ -10,7 +10,7 @@
 import {
   isCampaignFresh, isCampaignActive, campaignSendStats, campaignOutreachLabel, unfinishedCampaigns,
   isCampaignPaused, campaignStatus, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS, campaignPauseDays, campaignsAllSent,
-  isCampaignFullySent,
+  isCampaignFullySent, isCampaignAutoPaused, campaignAutoPauseUntil,
 } from '../src/utils/campaignOutreach.js';
 
 let passed = 0, failed = 0;
@@ -98,6 +98,35 @@ check('a manual Active beats the 60-day rule',
   isCampaignActive({ refreshedAt: daysAgo(200), manualActive: true }, NOW), true);
 check('a manual Inactive beats it too',
   isCampaignActive({ refreshedAt: daysAgo(1), manualActive: false }, NOW), false);
+
+// --- automatic pause --------------------------------------------------
+// 100% sent, and every audience either ticked or planned for a later day:
+// nothing to do today, so the campaign pauses itself. Local noon, so the
+// local day is the same in any timezone the suite runs in.
+{
+  const T = new Date(2026, 10, 18, 12).getTime();
+  const ago = (n) => new Date(T - n * 86400000).toISOString();
+  const done = { title: 'Done', savedAt: ago(1), uniqueRecipients: 34, totalContacts: 34 };
+  const mixed = { ...done, sentTo: { clients: true }, scheduledFor: { keyContacts: '2026-11-25', prospects: '2026-11-27' } };
+  check('auto-pause: ticked or dated, 100% sent', campaignStatus(mixed, T), 'paused');
+  check('auto-pause: lifts on the earliest pending date', campaignAutoPauseUntil(mixed, T), '2026-11-25');
+  check('auto-pause: it is not active', isCampaignActive(mixed, T), false);
+  const allTicked = { ...done, sentTo: { clients: true, keyContacts: true, prospects: true } };
+  check('auto-pause: all three ticked', isCampaignAutoPaused(allTicked, T), true);
+  check('auto-pause: all ticked has no date to wait for', campaignAutoPauseUntil(allTicked, T), '');
+  check('auto-pause: not while mail is still to go out',
+    campaignStatus({ ...mixed, uniqueRecipients: 10 }, T), 'active');
+  check('auto-pause: not with an audience neither ticked nor dated',
+    campaignStatus({ ...done, sentTo: { clients: true }, scheduledFor: { keyContacts: '2026-11-25' } }, T), 'active');
+  check('auto-pause: a date that has arrived makes it active again',
+    campaignStatus({ ...mixed, scheduledFor: { keyContacts: '2026-11-18', prospects: '2026-11-27' } }, T), 'active');
+  check('auto-pause: marked inactive stays inactive',
+    campaignStatus({ ...mixed, manualActive: false }, T), 'inactive');
+  check('auto-pause: gone quiet for 60 days stays inactive',
+    campaignStatus({ ...mixed, savedAt: ago(90) }, T), 'inactive');
+  check('auto-pause: an empty campaign is not finished',
+    isCampaignAutoPaused({ ...allTicked, uniqueRecipients: 0, totalContacts: 0 }, T), false);
+}
 
 // --- paused ----------------------------------------------------------
 // A pause is stored as the moment it lifts, which is what makes it expire on
