@@ -255,8 +255,12 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
           // Hidden targets sit below the rest and companies logged as having
           // no target set at the very bottom, both whatever the sort.
           rowGroup={r => (isNoTargetRow(r) ? 2 : r.hidden ? 1 : 0)}
-          rowStyle={r => (isNoTargetRow(r) ? { opacity: 0.6, background: '#F1F5F9', filter: 'grayscale(1)' }
-            : r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
+          // A company ticked Reached Out reads green, and that wins over the
+          // grey of a hidden or no-target row: the grey says "nothing to do
+          // here yet", the tick says something was done.
+          rowStyle={r => (r.prospect.targetsReachedOut ? { background: '#DCFCE7' }
+            : isNoTargetRow(r) ? { opacity: 0.6, background: '#F1F5F9', filter: 'grayscale(1)' }
+              : r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
           emptyMessage={all.length ? 'No targets match the filters.' : 'No targets saved yet. Add them on a company popup\'s Targets tab.'}
           exportFileName={typeLabel ? `Company targets - ${typeLabel}` : 'Company targets'}
           settings={settings}
