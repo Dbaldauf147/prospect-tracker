@@ -168,6 +168,14 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
     const named = row.type ? `the "${row.type}" target` : 'this target';
     if (window.confirm(`Delete ${named}?`)) onChange(removeTarget(rows, row.id));
   };
+  // Every target on this company, in one go: for a paste that went onto the
+  // wrong company, or a list worth starting over. This company only, and
+  // Last searched is left alone (it was still searched).
+  const removeAll = () => {
+    if (!rows.length) return;
+    const count = `${rows.length === 1 ? 'the 1 target' : `all ${rows.length} targets`}`;
+    if (window.confirm(`Remove ${count} logged for ${company || 'this company'}? This cannot be undone.`)) onChange([]);
+  };
 
   const columns = [
     {
@@ -411,6 +419,16 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
           </button>
         )}
         <TargetSearchMenu company={company} website={website} emailDomain={emailDomain} buttonStyle={secondaryBtn} onSearch={stampSearched} />
+        <button
+          type="button"
+          data-targets-remove-all
+          onClick={removeAll}
+          disabled={!rows.length}
+          title={rows.length ? `Remove every target logged for ${company || 'this company'}` : 'No targets to remove'}
+          style={{ ...secondaryBtn, borderColor: '#DC2626', color: '#B91C1C', opacity: rows.length ? 1 : 0.5, cursor: rows.length ? 'pointer' : 'default' }}
+        >
+          Remove all targets
+        </button>
         {onSearchedChange && (
           <span data-targets-searched style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto', fontSize: '0.78rem', color: '#475569' }}>
             <label htmlFor="targets-searched-at" title="The day this company's targets were last searched for. Opening a Search web link or pasting targets sets it to today.">Last searched</label>
