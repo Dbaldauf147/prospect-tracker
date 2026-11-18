@@ -98,13 +98,31 @@ const LEGEND = [
 // colour on the day it goes; a dashed amber chip marks the target date of a
 // send planned too soon (the day it would have to move to); a dashed grey one marks the first day
 // each audience could take a further send after everything planned.
-function ScheduleCalendar({ rows, groups, today, onOpenCampaign }) {
+// A send chip can be dragged onto another day (today or later) to replan
+// it: that writes the audience's date on the campaign, the same field the
+// Sent To column on Saved Campaigns edits.
+function ScheduleCalendar({ rows, groups, today, onOpenCampaign, onReschedule }) {
   // null follows the data: the month of the soonest planned send, or this month.
   const [picked, setPicked] = useState(null);
   const month = picked || (rows[0]?.sendDay || today).slice(0, 7);
   const weeks = useMemo(() => calendarWeeks(month), [month]);
   const entries = useMemo(() => scheduleCalendarEntries({ rows, groups }), [rows, groups]);
   const label = new Date(`${month}-01T00:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  // The send being dragged (its row) and the day it is over.
+  const [dragging, setDragging] = useState(null);
+  const [overDay, setOverDay] = useState('');
+  const canDrag = !!onReschedule;
+  const canDropOn = (day) => !!dragging && day >= today && day !== dragging.date;
+  const endDrag = () => { setDragging(null); setOverDay(''); };
+  const dropOn = (day) => {
+    const r = dragging;
+    endDrag();
+    if (!r || day < today || day === r.date) return;
+    // Stay on the month being looked at: without this the calendar follows
+    // the soonest send, and moving that one would flip the page.
+    setPicked(month);
+    onReschedule?.(r, day);
+  };
 
   const renderEntry = (e, i) => {
     if (e.kind === 'send') {
@@ -112,8 +130,11 @@ function ScheduleCalendar({ rows, groups, today, onOpenCampaign }) {
       const s = statusOf(r);
       return (
         <button key={i} type="button" data-cal-send={r.id} onClick={() => onOpenCampaign?.(r.index)}
-          title={`${r.audienceLabel}: ${r.title}\n${r.overdue ? `Overdue, planned for ${fmt(r.date)}\n` : ''}${r.readiness.ok} of ${r.readiness.total} (${pct(r.readiness.share)}) under the cap that day\n${STATUS[s].label}${r.target ? `, target date ${fmt(r.target)}` : ''}\nClick to open this campaign`}
-          style={{ ...chip, ...STATUS[s].style, cursor: 'pointer' }}>
+          draggable={canDrag}
+          onDragStart={(ev) => { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', r.id); setDragging(r); }}
+          onDragEnd={endDrag}
+          title={`${r.audienceLabel}: ${r.title}\n${r.overdue ? `Overdue, planned for ${fmt(r.date)}\n` : ''}${r.readiness.ok} of ${r.readiness.total} (${pct(r.readiness.share)}) under the cap that day\n${STATUS[s].label}${r.target ? `, target date ${fmt(r.target)}` : ''}\nClick to open this campaign${canDrag ? '. Drag to another day to replan it' : ''}`}
+          style={{ ...chip, ...STATUS[s].style, cursor: canDrag ? 'grab' : 'pointer', opacity: dragging?.id === r.id ? 0.45 : 1 }}>
           <strong>{r.audienceLabel}</strong> {r.overdue ? 'Overdue: ' : ''}{r.title}
         </button>
       );
@@ -142,6 +163,7 @@ function ScheduleCalendar({ rows, groups, today, onOpenCampaign }) {
         <button type="button" style={calBtn} aria-label="Next month" title="Next month" onClick={() => setPicked(addMonths(month, 1))}>&rsaquo;</button>
         <button type="button" style={calBtn} onClick={() => setPicked(today.slice(0, 7))}>Today</button>
         <span data-cal-month style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--color-text)', marginLeft: 4 }}>{label}</span>
+        {canDrag && <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginLeft: 6 }}>Drag a send to another day to replan it</span>}
         <span style={{ flex: 1 }} />
         {LEGEND.map(([style, text]) => (
           <span key={text} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.68rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
@@ -158,7 +180,12 @@ function ScheduleCalendar({ rows, groups, today, onOpenCampaign }) {
           const weekend = i % 7 === 0 || i % 7 === 6;
           const isToday = day === today;
           return (
-            <div key={day} data-cal-day={day} style={{
+            <div key={day} data-cal-day={day}
+              onDragOver={(ev) => { if (!canDropOn(day)) return; ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; if (overDay !== day) setOverDay(day); }}
+              onDragLeave={(ev) => { if (overDay === day && !ev.currentTarget.contains(ev.relatedTarget)) setOverDay(''); }}
+              onDrop={(ev) => { ev.preventDefault(); dropOn(day); }}
+              style={{
+              outline: overDay === day ? '2px solid var(--color-accent)' : 'none', outlineOffset: -2,
               minHeight: 92, minWidth: 0, padding: '4px 6px 6px',
               borderTop: '1px solid var(--color-border)', borderLeft: i % 7 ? '1px solid var(--color-border)' : 'none',
               background: weekend || !inMonth ? 'var(--color-bg)' : 'transparent',
@@ -178,7 +205,7 @@ function ScheduleCalendar({ rows, groups, today, onOpenCampaign }) {
   );
 }
 
-export function EmailSchedulePanel({ campaigns, prospects, cdmName, onOpenCampaign, settings, updateSettings }) {
+export function EmailSchedulePanel({ campaigns, prospects, cdmName, onOpenCampaign, onReschedule, settings, updateSettings }) {
   const [most, setMostState] = useState(() => {
     const v = Number(userLsGet(MOST_KEY));
     return MOST_CHOICES.includes(v) ? v : DEFAULT_MOST_SHARE;
@@ -264,7 +291,7 @@ export function EmailSchedulePanel({ campaigns, prospects, cdmName, onOpenCampai
           ))}
         </span>
       </div>
-      {view === 'calendar' && <ScheduleCalendar rows={rows} groups={groups} today={today} onOpenCampaign={onOpenCampaign} />}
+      {view === 'calendar' && <ScheduleCalendar rows={rows} groups={groups} today={today} onOpenCampaign={onOpenCampaign} onReschedule={onReschedule} />}
       {view === 'list' && <div style={{ height: `min(60vh, ${140 + Math.max(rows.length, 1) * 40}px)`, display: 'flex', flexDirection: 'column', border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden', background: 'var(--color-surface)' }}>
         <DataTable
           tableId={TABLE_ID}
