@@ -13,7 +13,7 @@ import { DataTable } from '../common/DataTable';
 import {
   TARGET_SCOPES, TARGET_ACTIONS, REFRESH_CYCLE_YEARS, blankTarget, normalizeTargets,
   updateTarget, removeTarget, refreshDue, scopesLabel,
-  parsePastedTargets, mergePastedTargets, NO_TARGET_TYPE, noTargetRow, hasNoTargetRow,
+  parsePastedTargets, mergePastedTargets, targetLinkHref, targetLinkLabel, NO_TARGET_TYPE, noTargetRow, hasNoTargetRow,
 } from '../../utils/companyTargets';
 import { addTargetTypeOption } from '../../utils/targetTypeOptions';
 import { TargetTypeSelect } from './TargetTypeSelect';
@@ -76,6 +76,7 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
         Paste a targets table, header row optional. The SBTi dashboard's Targets / Commitments
         table works as copied: Action, Commitment Type, Status, Target, Scope, Target Classification,
         Base Year, Target Year, Date Published. The year it was published becomes the Year Set.
+        A Source or Link column holding a web address becomes the target's Link.
         The table ChatGPT or Claude gives back from Search web's Ask entries works as copied too.
         Or paste a target written as text, such as a sentence from a sustainability report: each
         sentence naming a target year or a kind of target becomes a row. Check the preview before adding.
@@ -94,7 +95,7 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.75rem' }}>
             <thead>
               <tr>
-                {['Action', 'Target Type', 'Commitment Type', 'Year Set', 'Base Year', 'Target Year', 'Scopes', 'Classification', 'Status', 'Date Published'].map(h => (
+                {['Action', 'Target Type', 'Commitment Type', 'Year Set', 'Base Year', 'Target Year', 'Scopes', 'Classification', 'Status', 'Date Published', 'Link'].map(h => (
                   <th key={h} style={previewHead}>{h}</th>
                 ))}
               </tr>
@@ -112,6 +113,7 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
                   <td style={previewCell}>{r.classification || '-'}</td>
                   <td style={previewCell}>{r.status || '-'}</td>
                   <td style={previewCell}>{r.datePublished || '-'}</td>
+                  <td style={previewCell}>{targetLinkLabel(r.sourceUrl) || '-'}</td>
                 </tr>
               ))}
             </tbody>
@@ -296,6 +298,36 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
         />
       ),
     })),
+    {
+      key: 'sourceUrl',
+      label: 'Link',
+      defaultWidth: 230,
+      getSortValue: r => targetLinkLabel(r.sourceUrl) || r.sourceUrl.toLowerCase() || null,
+      getFilterValue: r => targetLinkLabel(r.sourceUrl) || r.sourceUrl,
+      exportValue: r => targetLinkHref(r.sourceUrl) || r.sourceUrl,
+      render: r => {
+        const href = targetLinkHref(r.sourceUrl);
+        return (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="url"
+              value={r.sourceUrl}
+              placeholder="https://"
+              aria-label="Link to the target"
+              title="Where this target is stated: the company's report or its SBTi entry"
+              onChange={e => edit(r.id, 'sourceUrl', e.target.value)}
+              style={{ ...inputStyle, width: 'auto', flex: 1, minWidth: 0 }}
+            />
+            {href && (
+              <a href={href} target="_blank" rel="noopener noreferrer" title={`Open ${href}`}
+                aria-label="Open the link" style={{ color: '#2563EB', fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>
+                Open
+              </a>
+            )}
+          </span>
+        );
+      },
+    },
     {
       key: 'refreshDue',
       label: 'Refresh Due',

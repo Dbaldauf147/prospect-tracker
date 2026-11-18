@@ -110,6 +110,7 @@ check('config: every entry is a search, a link or a divider', TARGET_WEB_SEARCHE
     '```'].join('\n');
   const { rows } = parsePastedTargets(answer);
   const pick = r => [r.action, r.type, r.commitmentType, r.yearSet, r.baseYear, r.targetYear1, r.targetYear2, r.scope1, r.scope2, r.scope3, r.classification, r.status, r.datePublished];
+  check('ai answer: Source column becomes the link', rows.map(r => r.sourceUrl), ['https://example.com/esg', 'https://sciencebasedtargets.org/target-dashboard', '']);
   check('ai answer: read by Paste targets, column for column', rows.map(pick), [
     ['Target', 'Net zero', '', '2021', '2019', '2050', '', true, true, false, '', 'Self-declared', ''],
     ['Commitment', 'SBTi commitment', 'Net-zero', '2024', '', '', '', false, false, false, '', 'Committed', '2024-04-25'],
