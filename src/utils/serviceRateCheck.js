@@ -629,6 +629,27 @@ export function priceCheckCountsWithLines(counts = {}, lines = []) {
   return out;
 }
 
+// The project count a fee structure points at, for a card that prices per
+// project: one project per Per Project fee that carries a checked cost
+// line (an "Audit 1" and an "Audit 2" fee are two audits, so two
+// projects). `rows` are the structure's fees and `costs` the fee each
+// cost line landed on (standardFeeContext's std.costs, in line order).
+// Null under two: one project is what a count nobody typed already reads
+// as, so there is nothing to suggest.
+export function suggestedProjectCount(rows = [], costs = [], items = []) {
+  const seen = new Set();
+  const fees = [];
+  (items || []).forEach((it, i) => {
+    if (!it || it.ignored || it.passThrough || typeof it.cts !== 'number') return;
+    const idx = costs?.[i]?.rowIdx;
+    const row = typeof idx === 'number' && idx >= 0 ? rows?.[idx] : null;
+    if (!row || seen.has(idx) || !/^per\s+project$/i.test(String(row.unit || '').trim())) return;
+    seen.add(idx);
+    fees.push(String(row.feeName || '').trim() || `Fee ${idx + 1}`);
+  });
+  return fees.length > 1 ? { count: fees.length, fees } : null;
+}
+
 // The site and account counts a service's fee rows bill on: the counts its
 // price check uses, so a count typed in the Unit column of the cost lines
 // (sites w/ mandate for BBS, or an override of the SIA's sites) carries

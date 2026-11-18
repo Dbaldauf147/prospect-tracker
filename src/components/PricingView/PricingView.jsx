@@ -52,7 +52,7 @@ import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/p
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import { servicesByFeeName } from '../../utils/siaScopeCompare';
 import { getServicePricing, pricingFor, resolvePricingBases } from '../../utils/servicePricing';
-import { rateCardCheck, siaCountsFor, priceCheckCounts, feeUnitCountsFor, componentForFeeUnit, lineFeeCounts, priceCheckCountsWithLines } from '../../utils/serviceRateCheck';
+import { rateCardCheck, siaCountsFor, priceCheckCounts, feeUnitCountsFor, componentForFeeUnit, lineFeeCounts, priceCheckCountsWithLines, suggestedProjectCount } from '../../utils/serviceRateCheck';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import { priceCheckExcludedIds, setPriceCheckExcluded as nextPriceCheckExcluded } from '../../utils/priceCheckExclusions';
 import {
@@ -5311,7 +5311,8 @@ export function PricingView({ settings, updateSettings } = {}) {
     // service went back to the SIA's.
     const sia = siaCountsFor(workbook, opt);
     const enteredCounts = serviceEnteredCounts(opt, want);
-    const { counts, fromSia } = priceCheckCounts(sia, enteredCounts);
+    const { counts: baseCounts, fromSia } = priceCheckCounts(sia, enteredCounts);
+    let counts = baseCounts;
     // Cost lines left out of the check for this service (the tickbox on the
     // Services subtab). Per service, since one line can cover several.
     // Saved by the line's description (priceCheckExcluded), with the
@@ -5328,7 +5329,7 @@ export function PricingView({ settings, updateSettings } = {}) {
     items.forEach(it => { it.feeComponent = linePicks[norm(it.description)] || picks[it.id] || null; });
     // A line on a count of its own (11 waste accounts of the SIA's 519)
     // is priced on it; the card's range takes the largest a line is on.
-    const checkCounts = priceCheckCountsWithLines(counts, items.filter(it => !it.ignored));
+    let checkCounts = priceCheckCountsWithLines(counts, items.filter(it => !it.ignored));
     const checkWith = () => rateCardCheck({
       items: items.filter(it => !it.ignored),
       entry: pricingFor(pricing, cardName, bases),
@@ -5346,6 +5347,7 @@ export function PricingView({ settings, updateSettings } = {}) {
     // standard), each line's fee component follows the structure fee it
     // goes on, by that fee's unit (see componentForFeeUnit), in place of
     // a pick. A line on no fee is checked on Auto.
+    let suggestedProjects = null;
     const saved = serviceFeeStructures[serviceKey(serviceName)];
     const structure = structureOverride
       || (saved?.structures || []).find(x => x.id === saved?.standardId)
@@ -5369,9 +5371,19 @@ export function PricingView({ settings, updateSettings } = {}) {
         it.feeComponent = row ? componentForFeeUnit(it, row.unit, choices) : null;
         it.componentFrom = { structure: structure.name || 'Untitled', fee: row?.feeName || null, unit: row?.unit || null };
       });
+      // A card priced per project, on a structure with a Per Project fee
+      // for each of several projects (Audit 1, Audit 2): the check reads
+      // over that many projects until a count is typed beside it.
+      suggestedProjects = (rateCheck.unitsUsed || []).includes('projects')
+        ? suggestedProjectCount(structure.rows, std.costs, items)
+        : null;
+      if (suggestedProjects && typeof counts.projects !== 'number') {
+        counts = { ...counts, projects: suggestedProjects.count };
+        checkCounts = priceCheckCountsWithLines(counts, items.filter(it => !it.ignored));
+      }
       rateCheck = checkWith();
     }
-    return { items, fees, rateCheck, counts, enteredCounts, fromSia, sia };
+    return { items, fees, rateCheck, counts, enteredCounts, fromSia, sia, suggestedProjects };
   }
 
   // The counts typed for one service on an option: its own, over the
