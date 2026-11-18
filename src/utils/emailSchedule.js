@@ -221,9 +221,17 @@ export function audienceMembers(contacts, gates) {
  */
 export function calendarWeeks(month) {
   const [y, m] = month.split('-').map(Number);
-  const first = `${y}-${pad(m)}-01`;
-  const last = localDay(new Date(y, m, 0));
-  let day = addDays(first, -new Date(y, m - 1, 1).getDay());
+  return weeksSpanning(`${y}-${pad(m)}-01`, localDay(new Date(y, m, 0)));
+}
+
+/**
+ * The whole weeks, Sunday first, that hold every day from `first` through
+ * `last` ('YYYY-MM-DD'): the grid for a run of days that is not a month,
+ * such as the next 60.
+ */
+export function weeksSpanning(first, last) {
+  const [y, m, d] = first.split('-').map(Number);
+  let day = addDays(first, -new Date(y, m - 1, d).getDay());
   const weeks = [];
   while (day <= last) {
     const week = [];

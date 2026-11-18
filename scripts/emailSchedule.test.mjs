@@ -3,7 +3,7 @@
 import {
   outreachLog, sendsInWindow, readinessOn, targetDate, plannedSends,
   buildEmailSchedule, audienceMembers, addDays, nextWeekday,
-  calendarWeeks, addMonths, scheduleCalendarEntries,
+  calendarWeeks, weeksSpanning, addMonths, scheduleCalendarEntries,
 } from '../src/utils/emailSchedule.js';
 
 let passed = 0, failed = 0;
@@ -68,6 +68,9 @@ check('November 2026 is five weeks, Sunday first', [nov.length, nov[0][0], nov[4
 const aug = calendarWeeks('2026-08');
 check('a month starting on Saturday takes six weeks', [aug.length, aug[0][0], aug[5][6]], [6, '2026-07-26', '2026-09-05']);
 check('February 2026 fits four weeks exactly', calendarWeeks('2026-02').length, 4);
+const sixty = weeksSpanning('2026-11-18', addDays('2026-11-18', 59));
+check('the next 60 days from a Wednesday: whole weeks, across the year end', [sixty.length, sixty[0][0], sixty[8][6], sixty.flat().includes('2027-01-16')], [9, '2026-11-15', '2027-01-16', true]);
+check('a single Sunday is one week', weeksSpanning('2026-11-15', '2026-11-15'), [['2026-11-15', '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21']]);
 check('addMonths crosses the year both ways', [addMonths('2026-11', 2), addMonths('2026-01', -1)], ['2027-01', '2025-12']);
 
 const cal = scheduleCalendarEntries({
