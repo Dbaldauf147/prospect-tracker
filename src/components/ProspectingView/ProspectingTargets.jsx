@@ -11,7 +11,7 @@
 // Each target type saved gets its own subtab (targetTypeTabs): there the row
 // is the company's soonest target OF THAT TYPE, and only companies that
 // have one are listed. "All" is the page as it was. The open subtab is
-// remembered; the column layout is one layout shared by all of them.
+// remembered, and each subtab keeps its own column layout (targetsTableId).
 import { targetsSearchedAt, fmtSearched } from '../../utils/targetsSearched';
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
@@ -33,6 +33,25 @@ const SCOPE_LABELS = { scope1: 'Scope 1', scope2: 'Scope 2', scope3: 'Scope 3' }
 const dash = <span style={{ color: '#CBD5E1' }}>-</span>;
 const TYPE_TAB_KEY = 'prospecting-targets:type-tab';
 const ALL_TAB = '\u0000all';
+// Each subtab keeps its own column layout (shown, order, widths, stars,
+// presets): All stays on the table's original id, a type subtab gets
+// `prospecting-targets-type-<type>`. A hyphen, not a colon, after the base
+// id: DataTable reads `<id>:...` keys as an old layout of <id>.
+const ALL_TABLE_ID = 'prospecting-targets';
+function targetsTableId(typeKey) {
+  if (typeKey === ALL_TAB) return ALL_TABLE_ID;
+  const slug = String(typeKey || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${ALL_TABLE_ID}-type-${slug || 'none'}`;
+}
+// A subtab with no layout of its own yet opens on the All tab's layout, so
+// it starts where the user left the columns rather than on the defaults;
+// its first change saves it under its own id.
+function settingsForTable(settings, tableId) {
+  const prefs = settings?.tablePrefs;
+  if (tableId === ALL_TABLE_ID || !prefs || prefs[tableId] || !prefs[ALL_TABLE_ID]) return settings;
+  return { ...settings, tablePrefs: { ...prefs, [tableId]: prefs[ALL_TABLE_ID] } };
+}
+
 function readSavedTypeTab() {
   try { return localStorage.getItem(TYPE_TAB_KEY) ?? ALL_TAB; } catch { return ALL_TAB; }
 }
@@ -56,6 +75,8 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
     [listed, typeTab],
   );
   const shown = all.filter(t => !t.hidden && inTab(t));
+  const tableId = targetsTableId(typeTab);
+  const tableSettings = useMemo(() => settingsForTable(settings, tableId), [settings, tableId]);
   const typeLabel = typeTab === ALL_TAB ? '' : typeTabs.find(t => t.key === typeTab)?.label || '';
   const allCompanies = new Set(listed.map(t => t.prospect.id)).size;
   const companies = new Set(shown.map(t => t.prospect.id)).size;
@@ -259,7 +280,10 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
       )}
       <div style={{ height: '70vh', minHeight: 300, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
         <DataTable
-          tableId="prospecting-targets"
+          // Keyed so switching subtab remounts the table on that subtab's
+          // own saved layout.
+          key={tableId}
+          tableId={tableId}
           columns={columns}
           rows={rows}
           alwaysVisible={['company']}
@@ -276,7 +300,7 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
               : r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
           emptyMessage={all.length ? 'No targets match the filters.' : 'No targets saved yet. Add them on a company popup\'s Targets tab.'}
           exportFileName={typeLabel ? `Company targets - ${typeLabel}` : 'Company targets'}
-          settings={settings}
+          settings={tableSettings}
           updateSettings={updateSettings}
         />
       </div>
