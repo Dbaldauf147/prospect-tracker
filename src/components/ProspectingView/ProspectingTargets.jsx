@@ -5,6 +5,9 @@
 // company name opens its popup. Targets hidden on a company's tab stay out
 // unless "Show hidden" is ticked, and a row that is a hidden target then
 // reads greyed out the way it does there.
+// The one thing edited here is Reached Out: a tick per company, saved on
+// the company record as `targetsReachedOut`, for whether it has been
+// contacted about its targets.
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
@@ -24,7 +27,7 @@ const YEAR_COLUMNS = [
 const SCOPE_LABELS = { scope1: 'Scope 1', scope2: 'Scope 2', scope3: 'Scope 3' };
 const dash = <span style={{ color: '#CBD5E1' }}>-</span>;
 
-export function ProspectingTargets({ prospects, settings, updateSettings, onSelectProspect }) {
+export function ProspectingTargets({ prospects, settings, updateSettings, updateProspect, onSelectProspect }) {
   const [showHidden, setShowHidden] = useState(false);
   const all = useMemo(() => allSavedTargets(prospects), [prospects]);
   const hiddenCount = all.filter(t => t.hidden).length;
@@ -62,6 +65,25 @@ export function ProspectingTargets({ prospects, settings, updateSettings, onSele
           style={{ fontVariantNumeric: 'tabular-nums' }}
           title={`${r.company} has ${r.targetCount} ${r.targetCount === 1 ? 'target' : 'targets'}; this row is the one due a refresh soonest`}
         >{r.targetCount}</span>
+      ),
+    },
+    {
+      key: 'reachedOut', label: 'Reached Out', defaultWidth: 135,
+      getSortValue: r => (r.prospect.targetsReachedOut ? 1 : 0),
+      getFilterValue: r => (r.prospect.targetsReachedOut ? 'Yes' : 'No'),
+      exportValue: r => (r.prospect.targetsReachedOut ? 'Yes' : 'No'),
+      render: r => (
+        <label style={{ display: 'flex', justifyContent: 'center', cursor: updateProspect ? 'pointer' : 'default' }}>
+          <input
+            type="checkbox"
+            checked={!!r.prospect.targetsReachedOut}
+            disabled={!updateProspect}
+            aria-label={`Reached out to ${r.company} about its targets`}
+            title={r.prospect.targetsReachedOut ? 'Reached out about its targets. Untick to clear.' : 'Tick once you have reached out about its targets'}
+            onChange={e => updateProspect(r.prospect.id, { targetsReachedOut: e.target.checked })}
+            style={{ cursor: 'inherit' }}
+          />
+        </label>
       ),
     },
     {
@@ -155,7 +177,7 @@ export function ProspectingTargets({ prospects, settings, updateSettings, onSele
           {' '}<strong style={{ color: '#1E293B' }}>{shown.length}</strong> {shown.length === 1 ? 'target' : 'targets'} saved
           {dueNow > 0 && <>; <strong style={{ color: '#92400E' }}>{dueNow}</strong> due a refresh this year or overdue</>}.
           {' '}Each row is the company's target with the soonest refresh. Add and edit them on each company's
-          Targets tab; click a company to open it.
+          Targets tab; click a company to open it. Tick Reached Out once you have contacted a company about its targets.
         </span>
         {hiddenCount > 0 && (
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>

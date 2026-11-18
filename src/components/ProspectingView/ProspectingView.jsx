@@ -1741,6 +1741,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           prospects={prospects || []}
           settings={settings}
           updateSettings={updateSettings}
+          updateProspect={updateProspect}
           onSelectProspect={onSelectProspect}
         />
       ) : subtab === 'dmsNoActivity' ? (
