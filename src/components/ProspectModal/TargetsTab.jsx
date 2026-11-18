@@ -18,6 +18,7 @@ import {
 import { addTargetTypeOption } from '../../utils/targetTypeOptions';
 import { TargetTypeSelect } from './TargetTypeSelect';
 import { useTargetTypeOptions } from './useTargetTypeOptions';
+import { TargetSearchMenu } from './TargetSearchMenu';
 
 const inputStyle = {
   width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.4rem', fontSize: '0.8rem',
@@ -142,7 +143,7 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
   );
 }
 
-export function TargetsTab({ company = '', targets, onChange, settings, updateSettings }) {
+export function TargetsTab({ company = '', website = '', emailDomain = '', targets, onChange, settings, updateSettings }) {
   const rows = useMemo(() => normalizeTargets(targets), [targets]);
   const typeOptions = useTargetTypeOptions();
   const edit = (id, key, value) => onChange(updateTarget(rows, id, key, value));
@@ -327,7 +328,7 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
         dashboard's, or a target written as text. Each target is due a refresh {REFRESH_CYCLE_YEARS} years after the year
         it was set. Changes save as you type.
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
         <button type="button" onClick={add} style={addBtn}>+ Add target</button>
         <button
           type="button"
@@ -346,6 +347,7 @@ export function TargetsTab({ company = '', targets, onChange, settings, updateSe
             Paste targets
           </button>
         )}
+        <TargetSearchMenu company={company} website={website} emailDomain={emailDomain} buttonStyle={secondaryBtn} />
       </div>
       {pasting && (
         <PasteTargetsPanel

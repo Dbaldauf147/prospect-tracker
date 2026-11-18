@@ -13116,6 +13116,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           {!isNew && activeTab === 'targets' && (
             <TargetsTab
               company={fields.company}
+              website={fields.website}
+              emailDomain={fields.emailDomain}
               targets={fields.climateTargets}
               onChange={(next) => set('climateTargets', next)}
               settings={settings}
