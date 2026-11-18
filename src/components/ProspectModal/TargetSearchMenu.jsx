@@ -74,7 +74,7 @@ export function TargetSearchMenu({ company, website, emailDomain, buttonStyle })
         disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={disabled ? 'Give the company a name to search for it' : 'Search the web for this company\'s targets'}
+        title={disabled ? 'Give the company a name to search for it' : 'Search the web for this company\'s targets, or ask ChatGPT / Claude for them as a table to copy into Paste targets'}
         style={{ ...buttonStyle, opacity: disabled ? 0.5 : 1, cursor: disabled ? 'default' : 'pointer' }}
       >
         Search web &#9662;

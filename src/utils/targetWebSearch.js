@@ -1,7 +1,7 @@
 // Helpers for the Targets tab's "Search web" menu: turn the company record
 // into the {name} and {domain} the searches in config/targetWebSearches use,
 // and build the links. Pure functions, no network: the menu only opens links.
-import { TARGET_WEB_SEARCHES } from '../config/targetWebSearches.js';
+import { TARGET_WEB_SEARCHES, TARGET_RESEARCH_PROMPT } from '../config/targetWebSearches.js';
 
 // Legal suffixes dropped from the end of a name, compared lowercased with
 // dots removed (so "Inc." / "Inc", "S.A." / "SA", "N.V." / "NV" all match).
@@ -55,6 +55,14 @@ export function fillSearchTemplate(template, { name, domain }) {
     .replace(/\{domain\}/g, domain);
 }
 
+// The research prompt for a company: its name as written on the record
+// (legal suffix dropped) and its website when there is one.
+export function targetResearchPrompt({ name, domain }, template = TARGET_RESEARCH_PROMPT) {
+  return String(template)
+    .replace(/\{name\}/g, name)
+    .replace(/\{site\}/g, domain ? ` (website: ${domain})` : '');
+}
+
 // The menu's items for a company: [{ label, href } | { divider: true }].
 // Searches that need a domain are left out when there is none, and a
 // divider never starts or ends the list or doubles up.
@@ -69,7 +77,8 @@ export function buildTargetSearchLinks({ company, website, emailDomain } = {}, s
       continue;
     }
     if (s.requiresDomain && !domain) continue;
-    const href = s.url || googleSearchUrl(fillSearchTemplate(s.query, { name, domain }));
+    const href = s.ai ? s.ai.replace('{prompt}', encodeURIComponent(targetResearchPrompt({ name, domain })))
+      : s.url || googleSearchUrl(fillSearchTemplate(s.query, { name, domain }));
     items.push({ label: s.label, href });
   }
   while (items.length && items[items.length - 1].divider) items.pop();

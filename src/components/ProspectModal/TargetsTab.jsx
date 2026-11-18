@@ -7,22 +7,18 @@
 // the card. See utils/companyTargets for the stored shape.
 // "Paste targets" takes a whole table at once, shaped like the SBTi target
 // dashboard's Targets / Commitments table, or a target written as prose
-// (see parsePastedTargets / parseFreeTextTargets). "Research targets" has
-// Claude look them up on the web and returns them already in these columns
-// (api/research-targets.js).
-import { useEffect, useMemo, useRef, useState } from 'react';
+// (see parsePastedTargets / parseFreeTextTargets).
+import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import {
   TARGET_SCOPES, TARGET_ACTIONS, REFRESH_CYCLE_YEARS, blankTarget, normalizeTargets,
   updateTarget, removeTarget, refreshDue, scopesLabel,
-  parsePastedTargets, mergePastedTargets, mergeResearchedTargets, NO_TARGET_TYPE, noTargetRow, hasNoTargetRow,
+  parsePastedTargets, mergePastedTargets, NO_TARGET_TYPE, noTargetRow, hasNoTargetRow,
 } from '../../utils/companyTargets';
 import { addTargetTypeOption } from '../../utils/targetTypeOptions';
 import { TargetTypeSelect } from './TargetTypeSelect';
 import { useTargetTypeOptions } from './useTargetTypeOptions';
 import { TargetSearchMenu } from './TargetSearchMenu';
-import { apiFetch } from '../../utils/apiFetch';
-import { bareDomain } from '../../utils/targetWebSearch';
 
 const inputStyle = {
   width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.4rem', fontSize: '0.8rem',
@@ -63,160 +59,6 @@ const TEXT_COLUMNS = [
 const previewCell = { padding: '0.25rem 0.5rem', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' };
 const previewHead = { ...previewCell, fontWeight: 600, color: '#475569', background: '#F8FAFC', textAlign: 'left' };
 
-const PREVIEW_HEADS = ['Action', 'Target Type', 'Commitment Type', 'Year Set', 'Base Year', 'Target Year', 'Scopes', 'Classification', 'Status', 'Date Published'];
-
-// What is about to be added, read-only, in the table's own columns.
-// `withDetail` adds the researched rows' one-line wording and source link.
-function TargetPreviewTable({ rows, withDetail = false }) {
-  if (!rows.length) return null;
-  return (
-    <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff' }}>
-      <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.75rem' }}>
-        <thead>
-          <tr>
-            {[...PREVIEW_HEADS, ...(withDetail ? ['As stated', 'Source'] : [])].map(h => (
-              <th key={h} style={previewHead}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={r.id || i}>
-              <td style={previewCell}>{r.action || '-'}</td>
-              <td style={previewCell}>{r.type || '-'}</td>
-              <td style={previewCell}>{r.commitmentType || '-'}</td>
-              <td style={previewCell}>{r.yearSet || '-'}</td>
-              <td style={previewCell}>{r.baseYear || '-'}</td>
-              <td style={previewCell}>{[r.targetYear1, r.targetYear2].filter(Boolean).join(', ') || '-'}</td>
-              <td style={previewCell}>{scopesLabel(r) || '-'}</td>
-              <td style={previewCell}>{r.classification || '-'}</td>
-              <td style={previewCell}>{r.status || '-'}</td>
-              <td style={previewCell}>{r.datePublished || '-'}</td>
-              {withDetail && (
-                <>
-                  <td style={{ ...previewCell, whiteSpace: 'normal', minWidth: 260 }}>{r.detail || '-'}</td>
-                  <td style={previewCell}>
-                    {r.sourceUrl
-                      ? <a href={r.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563EB' }}>{bareDomain(r.sourceUrl) || 'Open'}</a>
-                      : '-'}
-                  </td>
-                </>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// "Research targets": asks /api/research-targets (Claude with web search)
-// for the company's targets and shows them, already in the table's columns
-// and spellings, to check before adding. Nothing is saved until Add.
-function ResearchTargetsPanel({ company, domain, typeOptions, existing, noTargetLogged, onAdd, onNoTarget, onClose }) {
-  const [state, setState] = useState({ loading: true, data: null, error: '' });
-  const [run, setRun] = useState(0);
-  // The type list as it stood when the panel opened: a list that changes
-  // mid-request must not start the search over.
-  const typesRef = useRef(typeOptions);
-  useEffect(() => {
-    let live = true;
-    (async () => {
-      try {
-        const r = await apiFetch('/api/research-targets', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ company, domain, types: typesRef.current }),
-        });
-        const txt = await r.text();
-        let body = null;
-        try { body = JSON.parse(txt); } catch { /* not JSON: reported below */ }
-        if (!live) return;
-        if (!r.ok || !body) {
-          setState({ loading: false, data: null, error: body?.error || txt.slice(0, 200) || `HTTP ${r.status}` });
-          return;
-        }
-        setState({ loading: false, data: body, error: '' });
-      } catch (err) {
-        if (live) setState({ loading: false, data: null, error: err?.message || 'Request failed' });
-      }
-    })();
-    return () => { live = false; };
-  }, [company, domain, run]);
-
-  const found = useMemo(() => state.data?.targets || [], [state.data]);
-  const merge = useMemo(() => mergeResearchedTargets(existing, found), [existing, found]);
-  const changes = merge.added + merge.updated;
-  const add = () => {
-    if (!changes) return;
-    for (const t of new Set(found.map(r => r.type).filter(Boolean))) addTargetTypeOption(t);
-    onAdd(merge.list);
-  };
-  const again = () => { setState({ loading: true, data: null, error: '' }); setRun(n => n + 1); };
-  const { data } = state;
-  return (
-    <div style={{ border: '1px solid #BFDBFE', background: '#F8FAFF', borderRadius: 8, padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-      {state.loading && (
-        <div role="status" style={{ fontSize: '0.8rem', color: '#334155' }}>
-          Researching {company}'s targets on the web (SBTi dashboard, sustainability report, CDP). This takes up to a minute.
-        </div>
-      )}
-      {state.error && (
-        <div role="alert" style={{ fontSize: '0.8rem', color: '#991B1B' }}>Research failed: {state.error}</div>
-      )}
-      {data && (
-        <>
-          {data.summary && <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: 1.5 }}>{data.summary}</div>}
-          {found.length === 0 && (
-            <div style={{ fontSize: '0.8rem', color: '#334155' }}>
-              {data.noTargetFound ? 'No target was found for this company.' : 'Nothing that reads as a target came back.'}
-            </div>
-          )}
-          <TargetPreviewTable rows={found} withDetail />
-          {data.sources?.length > 0 && (
-            <div style={{ fontSize: '0.75rem', color: '#64748B', lineHeight: 1.6 }}>
-              Sources:{' '}
-              {data.sources.map((s, i) => (
-                <span key={s.url}>
-                  {i > 0 && ', '}
-                  <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: '#2563EB' }}>{s.title || bareDomain(s.url)}</a>
-                </span>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-        {found.length > 0 && (
-          <button type="button" onClick={add} disabled={!changes}
-            style={{ ...addBtn, opacity: changes ? 1 : 0.5, cursor: changes ? 'pointer' : 'default' }}>
-            {[
-              merge.added ? `Add ${merge.added} target${merge.added === 1 ? '' : 's'}` : '',
-              merge.updated ? `${merge.added ? 'fill' : 'Fill'} in ${merge.updated} already logged` : '',
-            ].filter(Boolean).join(', ') || 'Nothing new to add'}
-          </button>
-        )}
-        {data && found.length === 0 && data.noTargetFound && !noTargetLogged && existing.length === 0 && (
-          <button type="button" onClick={onNoTarget} style={addBtn}>Log No Target Set</button>
-        )}
-        {!state.loading && (
-          <button type="button" onClick={again} style={secondaryBtn}>Search again</button>
-        )}
-        <button type="button" onClick={onClose} style={secondaryBtn}>{state.loading ? 'Cancel' : 'Close'}</button>
-        {found.length > 0 && (
-          <span style={{ fontSize: '0.75rem', color: '#64748B' }}>
-            {[
-              `${found.length} target${found.length === 1 ? '' : 's'} found`,
-              merge.duplicates - merge.updated ? `${merge.duplicates - merge.updated} already logged in full` : '',
-              'check against the sources before adding',
-            ].filter(Boolean).join(', ')}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // The paste box: a textarea, a preview of what it reads, and Add.
 function PasteTargetsPanel({ existing, onAdd, onClose }) {
   const [text, setText] = useState('');
@@ -234,6 +76,7 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
         Paste a targets table, header row optional. The SBTi dashboard's Targets / Commitments
         table works as copied: Action, Commitment Type, Status, Target, Scope, Target Classification,
         Base Year, Target Year, Date Published. The year it was published becomes the Year Set.
+        The table ChatGPT or Claude gives back from Search web's Ask entries works as copied too.
         Or paste a target written as text, such as a sentence from a sustainability report: each
         sentence naming a target year or a kind of target becomes a row. Check the preview before adding.
       </div>
@@ -246,7 +89,35 @@ function PasteTargetsPanel({ existing, onAdd, onClose }) {
         rows={5}
         style={{ ...inputStyle, fontSize: '0.75rem', fontFamily: 'ui-monospace, monospace', resize: 'vertical' }}
       />
-      <TargetPreviewTable rows={parsed.rows} />
+      {parsed.rows.length > 0 && (
+        <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.75rem' }}>
+            <thead>
+              <tr>
+                {['Action', 'Target Type', 'Commitment Type', 'Year Set', 'Base Year', 'Target Year', 'Scopes', 'Classification', 'Status', 'Date Published'].map(h => (
+                  <th key={h} style={previewHead}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {parsed.rows.map(r => (
+                <tr key={r.id}>
+                  <td style={previewCell}>{r.action || '-'}</td>
+                  <td style={previewCell}>{r.type || '-'}</td>
+                  <td style={previewCell}>{r.commitmentType || '-'}</td>
+                  <td style={previewCell}>{r.yearSet || '-'}</td>
+                  <td style={previewCell}>{r.baseYear || '-'}</td>
+                  <td style={previewCell}>{[r.targetYear1, r.targetYear2].filter(Boolean).join(', ') || '-'}</td>
+                  <td style={previewCell}>{scopesLabel(r) || '-'}</td>
+                  <td style={previewCell}>{r.classification || '-'}</td>
+                  <td style={previewCell}>{r.status || '-'}</td>
+                  <td style={previewCell}>{r.datePublished || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
         <button
           type="button"
@@ -284,11 +155,7 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
     addTargetTypeOption(NO_TARGET_TYPE);
     onChange([...rows, noTargetRow()]);
   };
-  // Which panel is open under the buttons: '' | 'paste' | 'research'.
-  const [panel, setPanel] = useState('');
-  const pasting = panel === 'paste';
-  const researching = panel === 'research';
-  const domain = bareDomain(website) || bareDomain(emailDomain);
+  const [pasting, setPasting] = useState(false);
   const remove = (row) => {
     const named = row.type ? `the "${row.type}" target` : 'this target';
     if (window.confirm(`Delete ${named}?`)) onChange(removeTarget(rows, row.id));
@@ -461,9 +328,8 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
       <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5 }}>
         The sustainability targets {company ? <strong>{company}</strong> : 'this company'} has set:
         the kind of target, the year it was set, its base year, up to two target years, and which
-        scopes it covers. Research targets looks them up on the web and lists what it finds in
-        these columns for you to check. Paste targets takes a whole table at once, such as the SBTi
-        dashboard's, or a target written as text. Each target is due a refresh {REFRESH_CYCLE_YEARS} years after the year
+        scopes it covers. Search web can ask ChatGPT or Claude (free) for them as a table. Paste targets takes
+        that table, or the SBTi dashboard's, or a target written as text. Each target is due a refresh {REFRESH_CYCLE_YEARS} years after the year
         it was set. Changes save as you type.
       </div>
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -479,44 +345,19 @@ export function TargetsTab({ company = '', website = '', emailDomain = '', targe
         >
           No Target Set
         </button>
-        <button
-          type="button"
-          onClick={() => setPanel('research')}
-          disabled={!company.trim() || researching}
-          title={company.trim()
-            ? 'Look this company\'s targets up on the web and list them in this table\'s columns, to check before adding'
-            : 'Give the company a name to research it'}
-          style={{ ...secondaryBtn, opacity: !company.trim() || researching ? 0.5 : 1, cursor: !company.trim() || researching ? 'default' : 'pointer' }}
-        >
-          Research targets
-        </button>
         {!pasting && (
-          <button type="button" onClick={() => setPanel('paste')} style={secondaryBtn}
+          <button type="button" onClick={() => setPasting(true)} style={secondaryBtn}
             title="Paste a table of targets or a target written as text, such as the SBTi dashboard's Targets / Commitments table">
             Paste targets
           </button>
         )}
         <TargetSearchMenu company={company} website={website} emailDomain={emailDomain} buttonStyle={secondaryBtn} />
       </div>
-      {researching && (
-        <ResearchTargetsPanel
-          // A different company is a different search: start the panel over.
-          key={`${company.trim()}|${domain}`}
-          company={company.trim()}
-          domain={domain}
-          typeOptions={typeOptions}
-          existing={rows}
-          noTargetLogged={noTargetLogged}
-          onAdd={(next) => { onChange(next); setPanel(''); }}
-          onNoTarget={() => { addNoTarget(); setPanel(''); }}
-          onClose={() => setPanel('')}
-        />
-      )}
       {pasting && (
         <PasteTargetsPanel
           existing={rows}
-          onAdd={(next) => { onChange(next); setPanel(''); }}
-          onClose={() => setPanel('')}
+          onAdd={(next) => { onChange(next); setPasting(false); }}
+          onClose={() => setPasting(false)}
         />
       )}
       {/* DataTable fills a flex column, so it needs a box with a height.
