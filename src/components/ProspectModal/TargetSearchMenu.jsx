@@ -17,7 +17,9 @@ const itemStyle = {
   textDecoration: 'none', whiteSpace: 'nowrap', outline: 'none',
 };
 
-export function TargetSearchMenu({ company, website, emailDomain, buttonStyle }) {
+// `onSearch` is called whenever one of the links is opened (click, Cmd/Ctrl
+// or middle click), so the Targets tab can stamp Last Searched.
+export function TargetSearchMenu({ company, website, emailDomain, buttonStyle, onSearch }) {
   // Each link carries its position among the links (dividers skipped), which
   // is what the arrow keys move through.
   const items = useMemo(() => {
@@ -97,7 +99,8 @@ export function TargetSearchMenu({ company, website, emailDomain, buttonStyle })
                 rel="noopener noreferrer"
                 tabIndex={isActive ? 0 : -1}
                 onMouseEnter={() => setActive(idx)}
-                onClick={() => close(false)}
+                onClick={() => { onSearch?.(); close(false); }}
+                onAuxClick={(e) => { if (e.button === 1) onSearch?.(); }}
                 style={{ ...itemStyle, background: isActive ? '#EFF6FF' : 'transparent', color: isActive ? '#1D4ED8' : itemStyle.color }}
               >
                 {item.label}

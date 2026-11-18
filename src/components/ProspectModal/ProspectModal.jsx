@@ -13120,6 +13120,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               emailDomain={fields.emailDomain}
               targets={fields.climateTargets}
               onChange={(next) => set('climateTargets', next)}
+              searchedAt={fields.targetsSearchedAt || ''}
+              onSearchedChange={(day) => set('targetsSearchedAt', day)}
               settings={settings}
               updateSettings={updateSettings}
             />
