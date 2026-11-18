@@ -14,8 +14,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import {
-  clientRetention, retentionPercent, withRetentionMark, RETENTION_MARKS_KEY,
+  clientRetention, retentionPercent, withRetentionMark, withoutBrookfield, RETENTION_MARKS_KEY,
 } from '../../utils/clientRetention';
+import { userLsGet, userLsSet } from '../../utils/userLs';
+
+// Whether the Brookfield companies are hidden, remembered per user.
+const HIDE_BROOKFIELD_LS = 'client-retention:hide-brookfield';
 
 const usd = (n) => (n ? `$${Math.round(n).toLocaleString('en-US')}` : '-');
 
@@ -163,7 +167,12 @@ function OtherList({ rows, onMark }) {
 
 export function ClientRetentionView({ oppsRecords, prospects = [], settings, updateSettings, updateProspect, onSelectProspect }) {
   const marks = settings?.[RETENTION_MARKS_KEY];
-  const result = useMemo(() => clientRetention(oppsRecords || [], prospects, marks || {}), [oppsRecords, prospects, marks]);
+  const [hideBrookfield, setHideBrookfieldState] = useState(() => userLsGet(HIDE_BROOKFIELD_LS) === '1');
+  const setHideBrookfield = (on) => { setHideBrookfieldState(on); try { userLsSet(HIDE_BROOKFIELD_LS, on ? '1' : '0'); } catch { /* a convenience */ } };
+  const result = useMemo(() => {
+    const all = clientRetention(oppsRecords || [], prospects, marks || {});
+    return hideBrookfield ? withoutBrookfield(all) : all;
+  }, [oppsRecords, prospects, marks, hideBrookfield]);
   const selectById = useCallback((id) => {
     const p = prospects.find(x => x.id === id);
     if (p) onSelectProspect(p);
@@ -194,11 +203,16 @@ export function ClientRetentionView({ oppsRecords, prospects = [], settings, upd
           {loading
             ? 'Loading opps…'
             : `${result.retained.length} of ${result.total} ${result.total === 1 ? 'company' : 'companies'} still with us, ${result.left.length} left.`
-              + (result.expired.length ? ` ${result.expired.length} scope expired, not counted.` : '')}
+              + (result.expired.length ? ` ${result.expired.length} scope expired, not counted.` : '')
+              + (hideBrookfield ? ` ${result.hidden} Brookfield ${result.hidden === 1 ? 'company' : 'companies'} hidden.` : '')}
           <div style={{ fontSize: '0.7rem', color: '#94A3B8', marginTop: 2 }}>
             Every company with a Sold opp on the Opps tab. Status Old Client moves it to They left us. Expired and Other are marks kept here: neither counts in the rate.
           </div>
         </div>
+        <label data-retention-hide-brookfield title="Leave every Brookfield company off this page and work the rate out without them" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 600, color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <input type="checkbox" checked={hideBrookfield} onChange={e => setHideBrookfield(e.target.checked)} />
+          Hide Brookfield
+        </label>
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: '0.75rem' }}>
         <Side
