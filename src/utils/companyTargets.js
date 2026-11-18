@@ -503,9 +503,24 @@ export function mergePastedTargets(existing, pasted) {
   return { list, added, duplicates, updated };
 }
 
+// A company's `climateTargets` with one field of one target changed, for an
+// edit made away from the company popup (Prospecting > Targets). The target
+// is found by its place in the list; null when there is none there or the
+// value is what it already holds, so the caller saves nothing.
+export function editSavedTarget(prospect, targetIndex, key, value) {
+  const list = normalizeTargets(prospect?.climateTargets);
+  const cur = list[targetIndex];
+  if (!cur) return null;
+  const next = updateTarget(list, cur.id, key, value);
+  return next[targetIndex][key] === cur[key] ? null : next;
+}
+
 // ---- Every company's targets, as one list ------------------------------
 // Prospecting > Targets lists the targets saved on every company popup:
-// [{ ...target, id: '<prospect id>:<target id>', targetId, prospect, company }]
+// [{ ...target, id: '<prospect id>:<target id>', targetId, targetIndex, prospect, company }]
+// targetIndex is the target's place in the company's list, which is what an
+// edit made from that page goes by: a target saved without an id gets a new
+// one each time the list is read, so its id cannot be relied on to find it.
 // Companies with none add nothing. Hidden targets are included (the page
 // decides whether to show them).
 export function allSavedTargets(prospects) {
@@ -513,8 +528,8 @@ export function allSavedTargets(prospects) {
   for (const p of prospects || []) {
     const list = normalizeTargets(p?.climateTargets);
     if (!list.length) continue;
-    for (const t of list) {
-      out.push({ ...t, id: `${p.id}:${t.id}`, targetId: t.id, prospect: p, company: String(p.company || '') });
+    for (const [targetIndex, t] of list.entries()) {
+      out.push({ ...t, id: `${p.id}:${t.id}`, targetId: t.id, targetIndex, prospect: p, company: String(p.company || '') });
     }
   }
   return out;

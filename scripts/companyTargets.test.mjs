@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues } from '../src/utils/companyTargets.js';
+import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues, editSavedTarget } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -228,6 +228,20 @@ check('link: kept on the row, trimmed', normalizeTargets([{ id: 'a', sourceUrl: 
   const re2 = mergePastedTargets(re1.list, [{ ...t[0], value: '30%' }]);
   check('value: a different percentage is a different target', [re2.added, re2.list.map(r => r.value)], [1, ['50%', '30%']]);
   check('value: a row holding only a value counts as filled in', hasTargetValues([{ id: 'v', action: 'Target', value: '20%' }]), true);
+}
+
+// An edit made on Prospecting > Targets: one field of one target, found by
+// its place in the company's list (a target saved without an id included).
+{
+  const p = { id: 'p1', company: 'Acme', climateTargets: [{ id: 'a', type: 'Net zero', targetYear1: '2050' }, { type: '', commitmentType: 'Net zero', baseYear: '2050' }] };
+  const saved = allSavedTargets([p]);
+  check('edit: rows carry their place in the list', saved.map(t => t.targetIndex), [0, 1]);
+  const next = editSavedTarget(p, 1, 'type', 'Net zero');
+  check('edit: changes that target only, id or not', next.map(t => [t.type, t.commitmentType, t.baseYear]), [['Net zero', '', ''], ['Net zero', 'Net zero', '2050']]);
+  check('edit: years are cleaned', editSavedTarget(p, 0, 'baseYear', '2019x')[0].baseYear, '2019');
+  check('edit: scope tick', editSavedTarget(p, 0, 'scope3', true)[0].scope3, true);
+  check('edit: same value saves nothing', editSavedTarget(p, 0, 'type', 'Net zero'), null);
+  check('edit: no such target saves nothing', editSavedTarget(p, 5, 'type', 'x'), null);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }

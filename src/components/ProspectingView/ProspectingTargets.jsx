@@ -1,22 +1,27 @@
 // Prospecting > Targets: the sustainability targets saved on the company
 // popups' Targets tabs, one row per company: the target whose refresh is due
 // soonest (utils/companyTargets soonestTargetPerCompany), with a count of
-// how many targets the company has. Read here, edited on the company: the
-// company name opens its popup. Targets hidden on a company's tab stay out
+// how many targets the company has. The row's target can be edited in place
+// (saved straight onto the company's `climateTargets`); the company name
+// opens its popup, where its other targets are. Targets hidden on a company's tab stay out
 // unless "Show hidden" is ticked, and a row that is a hidden target then
 // reads greyed out the way it does there.
-// The one thing edited here is Reached Out: a tick per company, saved on
-// the company record as `targetsReachedOut`, for whether it has been
-// contacted about its targets.
+// Reached Out is a tick per company, saved on the company record as
+// `targetsReachedOut`, for whether it has been contacted about its targets.
+// Typed cells save when the box is left (or on Enter), not on each key: a
+// change can re-sort the row, move it to another type's subtab or drop it
+// from a filter, and none of that should happen mid-word.
 // Each target type saved gets its own subtab (targetTypeTabs): there the row
 // is the company's soonest target OF THAT TYPE, and only companies that
 // have one are listed. "All" is the page as it was. The open subtab is
 // remembered, and each subtab keeps its own column layout (targetsTableId).
 import { targetsSearchedAt, fmtSearched } from '../../utils/targetsSearched';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTypeKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
+import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, editSavedTarget, cleanYear, TARGET_ACTIONS, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTypeKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
 import { reportingTier } from '../../utils/tierSource';
+import { TargetTypeSelect } from '../ProspectModal/TargetTypeSelect';
+import { useTargetTypeOptions } from '../ProspectModal/useTargetTypeOptions';
 
 const REFRESH_COLORS = {
   overdue: { background: '#FEE2E2', color: '#991B1B' },
@@ -31,6 +36,52 @@ const YEAR_COLUMNS = [
 ];
 const SCOPE_LABELS = { scope1: 'Scope 1', scope2: 'Scope 2', scope3: 'Scope 3' };
 const dash = <span style={{ color: '#CBD5E1' }}>-</span>;
+const inputStyle = {
+  width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.4rem', fontSize: '0.8rem',
+  border: '1px solid #E2E8F0', borderRadius: 4, fontFamily: 'inherit', background: '#fff',
+};
+
+// A typed cell. It holds what is being typed and hands it over when the box
+// is left or Enter is pressed; Escape puts back what was saved.
+function EditCell({ value, onCommit, label, clean, ...rest }) {
+  const [draft, setDraft] = useState(null);
+  const finish = () => { if (draft != null && draft !== value) onCommit(draft); setDraft(null); };
+  return (
+    <input
+      type="text"
+      value={draft ?? value}
+      aria-label={label}
+      onChange={e => setDraft(clean ? clean(e.target.value) : e.target.value)}
+      onBlur={finish}
+      onKeyDown={e => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') { setDraft(null); }
+      }}
+      style={inputStyle}
+      {...rest}
+    />
+  );
+}
+
+// The Target Type picker from the company popup, saving the same way: on a
+// pick from its list, or when the box is left after typing.
+function TypeCell({ value, options, onCommit }) {
+  const [draft, setDraft] = useState(null);
+  const latest = useRef(null);
+  const change = (v) => {
+    // A pick (or a name typed out in full) is a finished answer.
+    if (options.includes(v)) { latest.current = null; setDraft(null); if (v !== value) onCommit(v); return; }
+    latest.current = v;
+    setDraft(v);
+  };
+  const leave = () => {
+    const v = latest.current;
+    latest.current = null;
+    setDraft(null);
+    if (v != null && v.trim() !== value) onCommit(v.trim());
+  };
+  return <div onBlur={leave}><TargetTypeSelect value={draft ?? value} options={options} onChange={change} /></div>;
+}
 const TYPE_TAB_KEY = 'prospecting-targets:type-tab';
 const ALL_TAB = '\u0000all';
 // Each subtab keeps its own column layout (shown, order, widths, stars,
@@ -58,6 +109,16 @@ function readSavedTypeTab() {
 
 export function ProspectingTargets({ prospects, settings, updateSettings, updateProspect, onSelectProspect }) {
   const [showHidden, setShowHidden] = useState(false);
+  const typeOptions = useTargetTypeOptions();
+  const canEdit = !!updateProspect;
+  const edit = (r, key, value) => {
+    const next = editSavedTarget(r.prospect, r.targetIndex, key, value);
+    if (next) updateProspect(r.prospect.id, { climateTargets: next });
+  };
+  // A typed cell, or the plain value where nothing can be saved.
+  const textCell = (r, key, label, extra = {}) => (canEdit
+    ? <EditCell value={r[key]} label={`${label} for ${r.company}`} onCommit={v => edit(r, key, v)} {...extra} />
+    : r[key] || dash);
   const all = useMemo(() => allSavedTargets(prospects), [prospects]);
   const hiddenCount = all.filter(t => t.hidden).length;
   const listed = useMemo(() => (showHidden ? all : all.filter(t => !t.hidden)), [all, showHidden]);
@@ -93,7 +154,7 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
         <button
           type="button"
           onClick={() => onSelectProspect(r.prospect)}
-          title={`Open ${r.company} (its Targets tab is where these are edited)`}
+          title={`Open ${r.company} (its Targets tab lists all of its targets)`}
           style={{ padding: 0, border: 0, background: 'none', font: 'inherit', fontWeight: 600, color: '#1D4ED8', cursor: 'pointer', textAlign: 'left' }}
         >{r.company}</button>
       ) : <span style={{ fontWeight: 600 }}>{r.company}</span>),
@@ -148,43 +209,55 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
       render: r => reportingTier(r.prospect) || dash,
     },
     {
-      key: 'action', label: 'Action', defaultWidth: 110,
+      key: 'action', label: 'Action', defaultWidth: 135,
       getFilterValue: r => r.action,
       exportValue: r => r.action,
-      render: r => r.action || dash,
+      render: r => (canEdit ? (
+        <select value={r.action} aria-label={`Action for ${r.company}`} onChange={e => edit(r, 'action', e.target.value)} style={inputStyle}>
+          <option value="">-</option>
+          {TARGET_ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+          {r.action && !TARGET_ACTIONS.includes(r.action) && <option value={r.action}>{r.action}</option>}
+        </select>
+      ) : r.action || dash),
     },
     {
-      key: 'type', label: 'Target Type', defaultWidth: 180,
+      key: 'type', label: 'Target Type', defaultWidth: 230,
       getFilterValue: r => r.type,
       exportValue: r => r.type,
-      render: r => r.type || dash,
+      render: r => (canEdit ? <TypeCell value={r.type} options={typeOptions} onCommit={v => edit(r, 'type', v)} /> : r.type || dash),
     },
     {
       key: 'value', label: 'Value', defaultWidth: 90,
       getSortValue: r => r.value.toLowerCase() || null,
       getFilterValue: r => r.value,
       exportValue: r => r.value,
-      render: r => r.value || dash,
+      render: r => textCell(r, 'value', 'Value'),
     },
     {
       key: 'commitmentType', label: 'Commitment Type', defaultWidth: 140,
       getFilterValue: r => r.commitmentType,
       exportValue: r => r.commitmentType,
-      render: r => r.commitmentType || dash,
+      render: r => textCell(r, 'commitmentType', 'Commitment Type'),
     },
     ...YEAR_COLUMNS.map(c => ({
       key: c.key, label: c.label, defaultWidth: 105,
       getSortValue: r => (r[c.key] ? Number(r[c.key]) : null),
       getFilterValue: r => r[c.key],
       exportValue: r => r[c.key],
-      render: r => (r[c.key] ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{r[c.key]}</span> : dash),
+      render: r => (canEdit
+        ? <EditCell value={r[c.key]} label={`${c.label} for ${r.company}`} onCommit={v => edit(r, c.key, v)} clean={cleanYear} inputMode="numeric" maxLength={4} placeholder="YYYY" />
+        : r[c.key] ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{r[c.key]}</span> : dash),
     })),
     ...TARGET_SCOPES.map(k => ({
       key: k, label: SCOPE_LABELS[k], defaultWidth: 80,
       getSortValue: r => (r[k] ? 1 : 0),
       getFilterValue: r => (r[k] ? 'Yes' : 'No'),
       exportValue: r => (r[k] ? 'Yes' : 'No'),
-      render: r => (r[k] ? <span style={{ color: '#16A34A', fontWeight: 800 }} aria-label="Yes">{'✓'}</span> : dash),
+      render: r => (canEdit ? (
+        <label style={{ display: 'flex', justifyContent: 'center', cursor: 'pointer' }}>
+          <input type="checkbox" checked={r[k]} aria-label={`${SCOPE_LABELS[k]} for ${r.company}`} onChange={e => edit(r, k, e.target.checked)} style={{ cursor: 'inherit' }} />
+        </label>
+      ) : r[k] ? <span style={{ color: '#16A34A', fontWeight: 800 }} aria-label="Yes">{'✓'}</span> : dash),
     })),
     {
       key: 'scopes', label: 'Scopes', defaultWidth: 90,
@@ -196,19 +269,20 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
       key: 'classification', label: 'Classification', defaultWidth: 130,
       getFilterValue: r => r.classification,
       exportValue: r => r.classification,
-      render: r => r.classification || dash,
+      render: r => textCell(r, 'classification', 'Classification'),
     },
     {
       key: 'status', label: 'Status', defaultWidth: 150,
       getFilterValue: r => r.status,
       exportValue: r => r.status,
-      render: r => r.status || dash,
+      render: r => textCell(r, 'status', 'Status'),
     },
     {
       key: 'datePublished', label: 'Date Published', defaultWidth: 120,
       getFilterValue: r => r.datePublished,
       exportValue: r => r.datePublished,
-      render: r => (r.datePublished ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{r.datePublished}</span> : dash),
+      render: r => (canEdit ? textCell(r, 'datePublished', 'Date Published', { placeholder: 'YYYY-MM-DD' })
+        : r.datePublished ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{r.datePublished}</span> : dash),
     },
     {
       key: 'sourceUrl', label: 'Link', defaultWidth: 190,
@@ -217,6 +291,15 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
       exportValue: r => targetLinkHref(r.sourceUrl),
       render: r => {
         const href = targetLinkHref(r.sourceUrl);
+        // The address to type or paste, with a way to open it beside it.
+        if (canEdit) {
+          return (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <EditCell value={r.sourceUrl} label={`Link for ${r.company}`} onCommit={v => edit(r, 'sourceUrl', v.trim())} placeholder="https://" />
+              {href && <a href={href} target="_blank" rel="noopener noreferrer" title={`Open ${href}`} aria-label={`Open the link for ${r.company}`} style={{ color: '#1D4ED8', textDecoration: 'none', flex: 'none' }}>{'↗'}</a>}
+            </span>
+          );
+        }
         if (!href) return <span style={{ color: '#CBD5E1' }} title="No link saved. Add one on the company's Targets tab.">-</span>;
         return (
           <a href={href} target="_blank" rel="noopener noreferrer" title={`Open ${href}`} style={{ color: '#1D4ED8' }}>
@@ -253,8 +336,8 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
           <strong style={{ color: '#1E293B' }}>{companies}</strong> {companies === 1 ? 'company' : 'companies'} with
           {' '}<strong style={{ color: '#1E293B' }}>{shown.length}</strong> {typeLabel ? `${typeLabel} ` : ''}{shown.length === 1 ? 'target' : 'targets'} saved
           {dueNow > 0 && <>; <strong style={{ color: '#92400E' }}>{dueNow}</strong> due a refresh this year or overdue</>}.
-          {' '}Each row is the company's {typeLabel ? `${typeLabel} target` : 'target'} with the soonest refresh. Add and edit them on each company's
-          Targets tab; click a company to open it. Tick Reached Out once you have contacted a company about its targets.
+          {' '}Each row is the company's {typeLabel ? `${typeLabel} target` : 'target'} with the soonest refresh. Edit that target right here: a typed
+          change saves when you leave the box. Click a company to open its Targets tab for its other targets or to add one. Tick Reached Out once you have contacted a company about its targets.
         </span>
         {hiddenCount > 0 && (
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
