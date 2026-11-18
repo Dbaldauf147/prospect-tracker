@@ -104,6 +104,27 @@ export function clientRetention(oppRecords, prospects, marks = {}) {
   return { retained, left, expired, other, total, rate: total ? retained.length / total : null };
 }
 
+/** Is this row a Brookfield company, by its name or an Account it sold under? */
+export const isBrookfieldRow = (r) => [r?.company, ...(r?.accounts || [])].some(n => /brookfield/i.test(String(n ?? '')));
+
+/**
+ * A clientRetention result with the Brookfield companies taken out of every
+ * list and the rate worked out again without them. `hidden` is how many
+ * came out.
+ */
+export function withoutBrookfield(result) {
+  const keep = (rows) => rows.filter(r => !isBrookfieldRow(r));
+  const retained = keep(result.retained), left = keep(result.left);
+  const expired = keep(result.expired), other = keep(result.other);
+  const total = retained.length + left.length;
+  const before = result.retained.length + result.left.length + result.expired.length + result.other.length;
+  return {
+    retained, left, expired, other, total,
+    rate: total ? retained.length / total : null,
+    hidden: before - (total + expired.length + other.length),
+  };
+}
+
 /** The marks map with `id` set to `mark`, or cleared when `mark` is ''. */
 export function withRetentionMark(marks, id, mark) {
   const next = { ...(marks || {}) };

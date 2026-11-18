@@ -1,6 +1,6 @@
 // Clients > Retention (utils/clientRetention). Plain Node. Run:
 //   node scripts/clientRetention.test.mjs
-import { clientRetention, retentionPercent, withRetentionMark } from '../src/utils/clientRetention.js';
+import { clientRetention, retentionPercent, withRetentionMark, withoutBrookfield } from '../src/utils/clientRetention.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -67,6 +67,23 @@ eq(withRetentionMark({ a: 'other' }, 'b', 'expired'), { a: 'other', b: 'expired'
 eq(withRetentionMark({ a: 'other', b: 'expired' }, 'a', ''), { b: 'expired' }, 'clear a mark');
 eq(withRetentionMark(undefined, 'a', 'nope'), {}, 'an unknown mark clears');
 eq(retentionPercent(null), '-', 'no rate reads as a dash');
+
+// Hide Brookfield: out of every list, and the rate is worked out again.
+{
+  const row = (company, accounts = [company]) => ({ id: company, company, accounts });
+  const res = withoutBrookfield({
+    retained: [row('Prologis'), row('Brookfield (Self Storage)')],
+    left: [row('Brookfield Property Group'), row('BROOKFIELD (Dubai)'), row('Maymont Homes', ['Brookfield Residential'])],
+    expired: [row('Brookfield (Kor)'), row('URA')],
+    other: [],
+    total: 5, rate: 0.4,
+  });
+  eq(names(res.retained), ['Prologis'], 'Brookfield leaves Sold');
+  eq(names(res.left), [], 'Brookfield leaves They left us, by name or by the Account sold under');
+  eq(names(res.expired), ['URA'], 'Brookfield leaves Scope expired');
+  eq([res.total, res.rate, res.hidden], [1, 1, 5], 'the rate and the count hidden follow');
+  eq(withoutBrookfield({ retained: [], left: [row('Brookfield')], expired: [], other: [] }).rate, null, 'nothing left to rate reads as no rate');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
