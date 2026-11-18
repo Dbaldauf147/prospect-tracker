@@ -3,6 +3,7 @@
 import {
   outreachLog, sendsInWindow, readinessOn, targetDate, plannedSends,
   buildEmailSchedule, audienceMembers, addDays, nextWeekday,
+  calendarWeeks, addMonths, scheduleCalendarEntries,
 } from '../src/utils/emailSchedule.js';
 
 let passed = 0, failed = 0;
@@ -61,6 +62,27 @@ const m = audienceMembers([
   { email: 'C@x.com', t: 'client' }, { email: 'k@x.com', t: 'key' }, { email: 'd@x.com', t: 'dm' }, { email: 'e@x.com', t: 'client', x: 1 }, { email: '', t: 'key' },
 ], gates);
 check('audiences are disjoint', [[...m.clients], [...m.keyContacts], [...m.prospects]], [['c@x.com'], ['k@x.com'], ['d@x.com']]);
+
+const nov = calendarWeeks('2026-11');
+check('November 2026 is five weeks, Sunday first', [nov.length, nov[0][0], nov[4][6]], [5, '2026-11-01', '2026-12-05']);
+const aug = calendarWeeks('2026-08');
+check('a month starting on Saturday takes six weeks', [aug.length, aug[0][0], aug[5][6]], [6, '2026-07-26', '2026-09-05']);
+check('February 2026 fits four weeks exactly', calendarWeeks('2026-02').length, 4);
+check('addMonths crosses the year both ways', [addMonths('2026-11', 2), addMonths('2026-01', -1)], ['2027-01', '2025-12']);
+
+const cal = scheduleCalendarEntries({
+  rows: [
+    { id: 'r1', sendDay: '2026-11-24', target: '2026-11-30', early: true },
+    { id: 'r2', sendDay: '2026-11-30', target: '2026-11-18', early: false },
+    { id: 'r3', sendDay: '2026-12-01', target: '', early: false },
+  ],
+  groups: [{ key: 'clients', nextTarget: '2026-11-30' }, { key: 'prospects', nextTarget: '' }],
+});
+const kinds = (day) => (cal.get(day) || []).map(e => `${e.kind}:${e.row?.id || e.group?.key}`);
+check('a send sits on its day', kinds('2026-11-24'), ['send:r1']);
+check('sends, then targets, then open days', kinds('2026-11-30'), ['send:r2', 'target:r1', 'open:clients']);
+check('an on-track send gets no target marker', kinds('2026-11-18'), []);
+check('no target and no open day adds nothing', [kinds('2026-12-01'), cal.size], [['send:r3'], 3]);
 
 console.log(`emailSchedule: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
