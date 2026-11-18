@@ -119,6 +119,18 @@ check('config: every entry is a search, a link or a divider', TARGET_WEB_SEARCHE
   // As a rendered markdown table copied back out, and with no fence.
   const md = ['| Action | Target Type | Base Year | Target Year | Scope |', '|---|---|:--:|---|---|', '| Target | Net-zero | 2019 | 2050 | 1, 2 |'].join('\n');
   check('ai answer: markdown table with a rule row', parsePastedTargets(md).rows.map(r => [r.type, r.baseYear, r.targetYear1, r.scope1, r.scope3]), [['Net zero', '2019', '2050', true, false]]);
+  // An investor's portfolio target (Apollo's 15% median carbon intensity
+  // cut over a five-year hold): the prompt asks for it by name, and the
+  // row it describes, with no target year, is kept with its own type.
+  check('prompt: asks for portfolio targets and rolling deadlines', ['portfolio companies', 'financed emissions', 'holding period', 'Portfolio intensity reduction', 'leave Target Year empty', 'not only the web page'].filter(t => !TARGET_RESEARCH_PROMPT.includes(t)), []);
+  const pe = parsePastedTargets([header,
+    'Target | Portfolio intensity reduction | | 2025 | | | | 1, 2 | | Self-declared | | https://example.com/report.pdf',
+    'Target | Emissions intensity reduction | | 2022 | 2019 | 2030 | | 1, 2 | | Self-declared | | https://example.com/esg',
+  ].join('\n')).rows;
+  check('ai answer: a portfolio target with no target year is kept apart from the company\'s own', pe.map(r => [r.type, r.yearSet, r.targetYear1, r.scope1, r.scope2, r.scope3, r.sourceUrl]), [
+    ['Portfolio intensity reduction', '2025', '', true, true, false, 'https://example.com/report.pdf'],
+    ['Emissions intensity reduction', '2022', '2030', true, true, false, 'https://example.com/esg'],
+  ]);
   const none = parsePastedTargets([header, '- | No target set'].join('\n')).rows;
   check('ai answer: no target set', none.map(r => [r.action, r.type]), [['', 'No target set']]);
   check('prose with a stray pipe is still read as prose', parsePastedTargets('Realterm aims to achieve net-zero Scope 1 and Scope 2 emissions by 2050 | source').rows.map(r => [r.type, r.targetYear1]), [['Net zero', '2050']]);
