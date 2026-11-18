@@ -2418,6 +2418,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
           prospects={prospects}
           cdmName={cdmName}
           onOpenCampaign={(i) => { setSubTab('campaigns'); viewCampaign(i); }}
+          onReschedule={(r, day) => setCampaignSchedule(r.index, r.audience, day)}
           settings={settings}
           updateSettings={updateSettings}
         />
