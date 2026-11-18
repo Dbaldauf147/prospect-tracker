@@ -8,9 +8,13 @@
 // The one thing edited here is Reached Out: a tick per company, saved on
 // the company record as `targetsReachedOut`, for whether it has been
 // contacted about its targets.
+// Each target type saved gets its own subtab (targetTypeTabs): there the row
+// is the company's soonest target OF THAT TYPE, and only companies that
+// have one are listed. "All" is the page as it was. The open subtab is
+// remembered; the column layout is one layout shared by all of them.
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
+import { allSavedTargets, soonestTargetPerCompany, isNoTargetRow, refreshDue, scopesLabel, targetTypeTabs, targetTypeKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
 import { reportingTier } from '../../utils/tierSource';
 
 const REFRESH_COLORS = {
@@ -26,16 +30,33 @@ const YEAR_COLUMNS = [
 ];
 const SCOPE_LABELS = { scope1: 'Scope 1', scope2: 'Scope 2', scope3: 'Scope 3' };
 const dash = <span style={{ color: '#CBD5E1' }}>-</span>;
+const TYPE_TAB_KEY = 'prospecting-targets:type-tab';
+const ALL_TAB = '\u0000all';
+function readSavedTypeTab() {
+  try { return localStorage.getItem(TYPE_TAB_KEY) ?? ALL_TAB; } catch { return ALL_TAB; }
+}
 
 export function ProspectingTargets({ prospects, settings, updateSettings, updateProspect, onSelectProspect }) {
   const [showHidden, setShowHidden] = useState(false);
   const all = useMemo(() => allSavedTargets(prospects), [prospects]);
   const hiddenCount = all.filter(t => t.hidden).length;
+  const listed = useMemo(() => (showHidden ? all : all.filter(t => !t.hidden)), [all, showHidden]);
+  const typeTabs = useMemo(() => targetTypeTabs(listed), [listed]);
+  const [savedTab, setSavedTab] = useState(readSavedTypeTab);
+  // A remembered type nobody has any more falls back to All.
+  const typeTab = savedTab !== ALL_TAB && typeTabs.some(t => t.key === savedTab) ? savedTab : ALL_TAB;
+  const pickTab = key => {
+    setSavedTab(key);
+    try { localStorage.setItem(TYPE_TAB_KEY, key); } catch { /* private mode */ }
+  };
+  const inTab = t => typeTab === ALL_TAB || targetTypeKey(t) === typeTab;
   const rows = useMemo(
-    () => soonestTargetPerCompany(showHidden ? all : all.filter(t => !t.hidden)),
-    [all, showHidden],
+    () => soonestTargetPerCompany(typeTab === ALL_TAB ? listed : listed.filter(t => targetTypeKey(t) === typeTab)),
+    [listed, typeTab],
   );
-  const shown = all.filter(t => !t.hidden);
+  const shown = all.filter(t => !t.hidden && inTab(t));
+  const typeLabel = typeTab === ALL_TAB ? '' : typeTabs.find(t => t.key === typeTab)?.label || '';
+  const allCompanies = new Set(listed.map(t => t.prospect.id)).size;
   const companies = new Set(shown.map(t => t.prospect.id)).size;
   // Companies whose soonest refresh is due this year or overdue.
   const dueNow = soonestTargetPerCompany(shown).filter(t => ['due', 'overdue'].includes(refreshDue(t)?.status)).length;
@@ -63,7 +84,7 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
       render: r => (
         <span
           style={{ fontVariantNumeric: 'tabular-nums' }}
-          title={`${r.company} has ${r.targetCount} ${r.targetCount === 1 ? 'target' : 'targets'}; this row is the one due a refresh soonest`}
+          title={`${r.company} has ${r.targetCount} ${typeLabel ? `${typeLabel} ` : ''}${r.targetCount === 1 ? 'target' : 'targets'}; this row is the one due a refresh soonest`}
         >{r.targetCount}</span>
       ),
     },
@@ -174,9 +195,9 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', fontSize: '0.8rem', color: '#475569' }}>
         <span>
           <strong style={{ color: '#1E293B' }}>{companies}</strong> {companies === 1 ? 'company' : 'companies'} with
-          {' '}<strong style={{ color: '#1E293B' }}>{shown.length}</strong> {shown.length === 1 ? 'target' : 'targets'} saved
+          {' '}<strong style={{ color: '#1E293B' }}>{shown.length}</strong> {typeLabel ? `${typeLabel} ` : ''}{shown.length === 1 ? 'target' : 'targets'} saved
           {dueNow > 0 && <>; <strong style={{ color: '#92400E' }}>{dueNow}</strong> due a refresh this year or overdue</>}.
-          {' '}Each row is the company's target with the soonest refresh. Add and edit them on each company's
+          {' '}Each row is the company's {typeLabel ? `${typeLabel} target` : 'target'} with the soonest refresh. Add and edit them on each company's
           Targets tab; click a company to open it. Tick Reached Out once you have contacted a company about its targets.
         </span>
         {hiddenCount > 0 && (
@@ -186,6 +207,28 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
           </label>
         )}
       </div>
+      {typeTabs.length > 0 && (
+        <div role="tablist" aria-label="Target type" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', borderBottom: '1px solid #E2E8F0' }}>
+          {[{ key: ALL_TAB, label: 'All', companies: allCompanies }, ...typeTabs].map(t => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={typeTab === t.key}
+              onClick={() => pickTab(t.key)}
+              title={t.key === ALL_TAB
+                ? 'Every company, on its target with the soonest refresh'
+                : `${t.companies} ${t.companies === 1 ? 'company' : 'companies'} with a ${t.label} target`}
+              style={{
+                padding: '0.35rem 0.8rem', border: 'none', background: 'none', fontFamily: 'inherit',
+                fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap',
+                color: typeTab === t.key ? '#0A66C2' : '#64748B',
+                borderBottom: `2px solid ${typeTab === t.key ? '#0A66C2' : 'transparent'}`,
+              }}
+            >{t.label} <span style={{ fontWeight: 500, opacity: 0.75 }}>({t.companies})</span></button>
+          ))}
+        </div>
+      )}
       <div style={{ height: '70vh', minHeight: 300, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
         <DataTable
           tableId="prospecting-targets"
@@ -200,7 +243,7 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
           rowStyle={r => (isNoTargetRow(r) ? { opacity: 0.6, background: '#F1F5F9', filter: 'grayscale(1)' }
             : r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
           emptyMessage={all.length ? 'No targets match the filters.' : 'No targets saved yet. Add them on a company popup\'s Targets tab.'}
-          exportFileName="Company targets"
+          exportFileName={typeLabel ? `Company targets - ${typeLabel}` : 'Company targets'}
           settings={settings}
           updateSettings={updateSettings}
         />
