@@ -42,6 +42,7 @@ import { bfoHistoryTargets, BFO_HISTORY_HEADER, BFO_HISTORY_FRESH_DAYS } from '.
 import { bfoCompanyNamesOf } from '../../utils/bfoCompanyNames';
 import { DataTable } from '../common/DataTable';
 import { TEAM_OPPS_HEADER, teamOppsDue } from '../../utils/teamOpps';
+import { targetsAgentRows, targetsAgentPromptBlock, DEFAULT_AI_PROMPT_TARGETS, TARGETS_AGENT_DEFAULT_BATCH } from '../../utils/targetsAgent';
 import { jobDescriptionTargets, jobDescriptionPromptBlock, parseJobDescriptionPaste, jobDescriptionsPasteUpdate, locationUpdatesFor, DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS } from '../../utils/jobDescriptionAgent';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
@@ -72,6 +73,8 @@ const MARKETING_LEAD_STATUS_UPDATE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-market
 const DUPLICATE_LEADS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-duplicate-leads';
 const BFO_HISTORY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-history';
 const JOB_DESCRIPTIONS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-job-descriptions';
+const TARGETS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-targets';
+const TARGETS_BATCH_STORAGE_KEY = 'agents-targets-batch';
 const TEAM_ACTIVITY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-team-activity';
 
 // The BFO Activity page's "Leads" subtab (pasted Salesforce Leads
@@ -1035,6 +1038,29 @@ function writeJobDescriptionsPrompt(next) {
   try { writeWorkKey(JOB_DESCRIPTIONS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
+function readTargetsPrompt() {
+  try {
+    const raw = userLsGet(TARGETS_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_TARGETS : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_TARGETS;
+  }
+}
+
+function writeTargetsPrompt(next) {
+  try { writeWorkKey(TARGETS_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
+}
+
+// How many companies one copy of the Targets prompt lists.
+function readTargetsBatch() {
+  try {
+    const n = Math.floor(Number(userLsGet(TARGETS_BATCH_STORAGE_KEY)));
+    return n > 0 ? n : TARGETS_AGENT_DEFAULT_BATCH;
+  } catch {
+    return TARGETS_AGENT_DEFAULT_BATCH;
+  }
+}
+
 function readImportMarketingLeadsPrompt() {
   try {
     const raw = userLsGet(IMPORT_MARKETING_LEADS_PROMPT_STORAGE_KEY);
@@ -1795,7 +1821,7 @@ function PromptLibrary({ prompts, onChange }) {
   );
 }
 
-export function AgentsView({ prospects = [], settings, updateProspect, updateSettings, cdmName = '', onSelectProspect = null }) {
+export function AgentsView({ prospects = [], settings, updateProspect, updateSettings, cdmName = '', onSelectProspect = null, issues = null }) {
   const { user } = useAuth();
   // "Run the prompts" reminder. The stamp lives on synced settings, so the
   // banner here and the Sidebar's red badge always agree — and marking a run
@@ -1907,6 +1933,9 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   // Job Descriptions agent: Key Contacts with a blank Job Description.
   const [jobDescriptionsPrompt, setJobDescriptionsPrompt] = useState(readJobDescriptionsPrompt);
   const [jobDescriptionsCopyFlash, setJobDescriptionsCopyFlash] = useState('');
+  const [targetsPrompt, setTargetsPrompt] = useState(readTargetsPrompt);
+  const [targetsCopyFlash, setTargetsCopyFlash] = useState('');
+  const [targetsBatch, setTargetsBatch] = useState(readTargetsBatch);
   const [jobDescriptionsPasteOpen, setJobDescriptionsPasteOpen] = useState(false);
   const [jobDescriptionsPaste, setJobDescriptionsPaste] = useState('');
   const [jobDescriptionsPasteMsg, setJobDescriptionsPasteMsg] = useState(null);
@@ -1954,6 +1983,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       setDuplicateLeadsPrompt(readDuplicateLeadsPrompt());
       setBfoHistoryPrompt(readBfoHistoryPrompt());
       setJobDescriptionsPrompt(readJobDescriptionsPrompt());
+      setTargetsPrompt(readTargetsPrompt());
     };
     window.addEventListener(AGENT_SETTINGS_EVENT, onMirror);
     return () => window.removeEventListener(AGENT_SETTINGS_EVENT, onMirror);
@@ -2093,6 +2123,17 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     writeJobDescriptionsPrompt(next);
   };
   const resetJobDescriptionsPrompt = () => updateJobDescriptionsPrompt(DEFAULT_AI_PROMPT_JOB_DESCRIPTIONS);
+  const updateTargetsPrompt = (next) => {
+    setTargetsPrompt(next);
+    writeTargetsPrompt(next);
+  };
+  const resetTargetsPrompt = () => updateTargetsPrompt(DEFAULT_AI_PROMPT_TARGETS);
+  const updateTargetsBatch = (raw) => {
+    const n = Math.floor(Number(raw));
+    const next = n > 0 ? Math.min(n, 500) : TARGETS_AGENT_DEFAULT_BATCH;
+    setTargetsBatch(next);
+    try { userLsSet(TARGETS_BATCH_STORAGE_KEY, String(next)); } catch { /* ignore persistence failures */ }
+  };
 
   const updateUpdateBfoActivityPrompt = (next) => {
     setUpdateBfoActivityPrompt(next);
@@ -2552,6 +2593,8 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     [hubspotCache, settings?.contactJobDescriptions, settings?.contactLocalFields],
   );
   const jobDescriptionReady = useMemo(() => jobDescriptionRows.filter(r => r.linkedin), [jobDescriptionRows]);
+  // Targets: the companies the Issues tab lists as missing their targets.
+  const targetsRows = useMemo(() => targetsAgentRows(issues, prospects), [issues, prospects]);
 
   // Opps cache (IndexedDB) — drives the BFO Opportunity Name tagging.
   // Each opp record carries Contact (recipient email[s]), Account
@@ -5447,6 +5490,115 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                   rows={jobDescriptionRows}
                   alwaysVisible={['name']}
                   emptyMessage="Every Key Contact has a Job Description or is marked N/A."
+                  settings={settings}
+                  updateSettings={updateSettings}
+                />
+              </div>
+            )}
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+      {(() => {
+        // Targets: not a BFO task, so no Update BFO Activity suffix, and
+        // left out of Copy all (a run is one ChatGPT search per company).
+        const inPrompt = Math.min(targetsRows.length, targetsBatch);
+        const fullPrompt = `${targetsPrompt}\n\n${targetsAgentPromptBlock(targetsRows, targetsBatch)}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(fullPrompt);
+            setTargetsCopyFlash('Copied!');
+          } catch {
+            setTargetsCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setTargetsCopyFlash(''), 1500);
+        };
+        const columns = [
+          {
+            key: 'company', label: 'Company', defaultWidth: 260,
+            getSortValue: r => r.company.toLowerCase() || null, getFilterValue: r => r.company, exportValue: r => r.company,
+            render: r => (onSelectProspect
+              ? <button type="button" className={styles.linkBtn} style={{ textAlign: 'left', fontWeight: 600 }} title="Open the company (its Targets tab is where the targets are pasted)" onClick={() => onSelectProspect(r.prospect)}>{r.company}</button>
+              : r.company),
+          },
+          {
+            key: 'source', label: 'Listed under', defaultWidth: 130,
+            getSortValue: r => r.source.toLowerCase() || null, getFilterValue: r => r.source, exportValue: r => r.source,
+            render: r => r.source || <span className={styles.muted}>-</span>,
+          },
+          {
+            key: 'status', label: 'Status', defaultWidth: 130,
+            getSortValue: r => r.status.toLowerCase() || null, getFilterValue: r => r.status, exportValue: r => r.status,
+            render: r => r.status || <span className={styles.muted}>-</span>,
+          },
+          {
+            key: 'tier', label: 'Tier', defaultWidth: 90,
+            getSortValue: r => r.tier.toLowerCase() || null, getFilterValue: r => r.tier, exportValue: r => r.tier,
+            render: r => r.tier || <span className={styles.muted}>-</span>,
+          },
+          {
+            key: 'chatgpt', label: 'Ask ChatGPT', defaultWidth: 130,
+            getFilterValue: () => '', exportValue: r => r.chatgptUrl,
+            render: r => (r.chatgptUrl
+              ? <a href={r.chatgptUrl} target="_blank" rel="noopener noreferrer" title="Open ChatGPT with this company's targets prompt typed in, the same link as Search web on its Targets tab">Open ChatGPT</a>
+              : <span className={styles.muted}>-</span>),
+          },
+        ];
+        return (
+          <section className={styles.section} data-agent="targets">
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (Targets)
+              <span className={styles.sectionCount}>{targetsRows.length}</span>
+            </h2>
+            <p className={styles.subnote}>
+              Every company the Issues tab lists as missing its target information. The assistant opens each company, goes to its Targets tab, picks Search web, then &ldquo;Ask ChatGPT for a targets table (free)&rdquo;, sends the prompt in the ChatGPT tab that opens, waits for the table and pastes it back with &ldquo;Paste targets&rdquo;. A company drops off this list once its targets (or a &ldquo;No target set&rdquo; row) are saved. Run it in a browser assistant that is signed in to ChatGPT. Not part of Copy all.
+            </p>
+            {revealedPrompts.targets && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={targetsPrompt}
+                onChange={(e) => updateTargetsPrompt(e.target.value)}
+                rows={12}
+                spellCheck={false}
+              />
+            )}
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy} disabled={!targetsRows.length}>Copy full prompt</button>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: '#475569' }} title="How many companies one copy of the prompt lists. A free ChatGPT account only allows so many web searches in a row.">
+                Companies per run
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={targetsBatch}
+                  onChange={(e) => updateTargetsBatch(e.target.value)}
+                  style={{ width: 64, padding: '0.2rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.78rem' }}
+                />
+              </label>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('targets')}>
+                {revealedPrompts.targets ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.targets && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetTargetsPrompt}>Reset to default</button>
+              )}
+              {targetsCopyFlash && <span className={styles.copyFlash}>{targetsCopyFlash}</span>}
+            </div>
+            {targetsRows.length > 0 && (
+              <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+                {inPrompt} of {targetsRows.length} in the prompt (the first {inPrompt} by name).
+              </div>
+            )}
+            {!issues ? (
+              <div className={styles.subnote}>Loading issues...</div>
+            ) : (
+              <div style={{ marginTop: '0.5rem', height: Math.min(480, 120 + targetsRows.length * 36), minHeight: 160, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                <DataTable
+                  tableId="agents-targets"
+                  exportFileName="Companies Missing Targets"
+                  columns={columns}
+                  rows={targetsRows}
+                  alwaysVisible={['company']}
+                  emptyMessage="No company on the Issues tab is missing its targets."
                   settings={settings}
                   updateSettings={updateSettings}
                 />
