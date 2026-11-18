@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow } from '../src/utils/companyTargets.js';
+import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -174,6 +174,20 @@ check('types: dedupe keeps first spelling', types.dedupeTypes(['A', 'a', ' b ', 
   check('free text: unrelated sentence skipped', report.skipped, 1);
   check('free text: year set', parsePastedTargets('In 2021, Foo pledged to source 100% renewable electricity by 2025.').rows.map(pick),
     [['Target', 'Renewable electricity (RE100)', '2021', '', '2025', '', '', '', '']]);
+}
+
+{
+  // The Prospecting > Targets subtabs, one per type saved.
+  const t = (id, type) => ({ type, prospect: { id }, company: id });
+  const tabs = targetTypeTabs([
+    t('a', 'SBTi net zero'), t('b', 'SBTi Net zero'), t('b', 'SBTi  Net zero'), t('a', 'Net zero'),
+    t('c', 'No target set'), t('d', 'No target set'), t('e', 'No target set'), t('f', ''),
+  ]);
+  check('type tabs: case and spacing fold, most companies first, no target and untyped last',
+    tabs.map(x => [x.key, x.label, x.companies, x.targets]),
+    [['sbti net zero', 'SBTi Net zero', 2, 3], ['net zero', 'Net zero', 1, 1], ['no target set', 'No target set', 3, 3], ['', 'No type', 1, 1]]);
+  check('type tabs: key folds', targetTypeKey({ type: '  SBTi   NET zero ' }), 'sbti net zero');
+  check('type tabs: nothing saved', targetTypeTabs([]), []);
 }
 
 // The link to where a target is stated.

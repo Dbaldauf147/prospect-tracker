@@ -506,3 +506,33 @@ export function soonestTargetPerCompany(targets) {
   }
   return [...best.values()].map(({ row, count }) => ({ ...row, targetCount: count }));
 }
+
+// The Prospecting > Targets subtabs: one per target type that is actually
+// saved, most companies first, with "No target set" and untyped targets
+// last. Types are free text, so spellings that differ only in case or
+// spacing ("SBTi net zero" / "SBTi Net zero") are one type, labelled with
+// whichever spelling is used most. `key` is the folded spelling ('' for no
+// type); `companies` is how many companies have a target of that type.
+export const targetTypeKey = t => String(t?.type || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+export function targetTypeTabs(targets) {
+  const groups = new Map();
+  for (const t of targets || []) {
+    const key = targetTypeKey(t);
+    let g = groups.get(key);
+    if (!g) { g = { key, spellings: new Map(), companies: new Set(), targets: 0 }; groups.set(key, g); }
+    const spelling = String(t?.type || '').trim().replace(/\s+/g, ' ');
+    g.spellings.set(spelling, (g.spellings.get(spelling) || 0) + 1);
+    g.companies.add(t.prospect?.id ?? t.company);
+    g.targets += 1;
+  }
+  const last = k => (k === '' ? 2 : k === NO_TARGET_TYPE.toLowerCase() ? 1 : 0);
+  return [...groups.values()]
+    .map(g => ({
+      key: g.key,
+      label: g.key === '' ? 'No type' : [...g.spellings.entries()].sort((a, b) => b[1] - a[1])[0][0],
+      companies: g.companies.size,
+      targets: g.targets,
+    }))
+    .sort((a, b) => last(a.key) - last(b.key) || b.companies - a.companies || a.label.localeCompare(b.label));
+}
