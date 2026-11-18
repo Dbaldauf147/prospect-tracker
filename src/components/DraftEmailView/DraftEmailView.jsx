@@ -40,6 +40,7 @@ import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 import { responseRateOf } from '../../utils/campaignContactHold';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
+import { companyGoesByGaps } from '../../utils/companyGoesByGaps';
 import { recentCampaignWarnings, sentThisCampaign, RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
 import RecentCampaignNotice from './RecentCampaignNotice';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
@@ -415,7 +416,7 @@ const COVERAGE_EDITABLE = {
 // One editable coverage cell — click to edit, commit on blur / Enter,
 // cancel on Escape. Read-only tokens just render the value (or the red
 // missing dash) without the click affordance.
-function CoverageEditCell({ value, editable, missingTitle, cellStyle, onCommit }) {
+function CoverageEditCell({ value, editable, missingTitle, warnTitle = '', cellStyle, onCommit }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   useEffect(() => { setDraft(value); }, [value]);
@@ -434,6 +435,15 @@ function CoverageEditCell({ value, editable, missingTitle, cellStyle, onCommit }
           }}
           style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', fontSize: '0.74rem', border: '1px solid #2563EB', borderRadius: 3, fontFamily: 'inherit', outline: 'none' }}
         />
+      </td>
+    );
+  }
+  // Filled, but by a fallback worth knowing about (a company with no Goes
+  // By showing its full name): amber, with the reason on hover.
+  if (has && warnTitle) {
+    return (
+      <td style={{ ...cellStyle, color: '#B45309', fontWeight: 700 }} title={warnTitle}>
+        <span aria-hidden="true">&#9888; </span>{value}
       </td>
     );
   }
@@ -538,6 +548,48 @@ function CoverageWarning({ gaps, affected, total }) {
   );
 }
 
+// The draft uses {companyGoesBy} and some recipients' companies have no
+// Goes By on their card. Not a blank (the send falls back to the full
+// company name), so it is amber rather than the red of CoverageWarning,
+// but it sits in the same place for the same reason: the long name going
+// out where the short one was meant is something to know before sending.
+// Each chip opens that company's card when the page can open one.
+function CompanyGoesByWarning({ gaps, onOpenCompany }) {
+  if (!gaps || gaps.length === 0) return null;
+  const recipients = gaps.reduce((n, g) => n + g.recipients, 0);
+  return (
+    <div className={`${styles.coverageAlert} ${styles.goesByAlert}`} role="alert">
+      <span className={styles.coverageAlertIcon} aria-hidden="true">&#9888;</span>
+      <div className={styles.coverageAlertBody}>
+        <p className={styles.coverageAlertTitle}>
+          {gaps.length === 1 ? '1 company has' : `${gaps.length} companies have`} no Goes By
+        </p>
+        <p className={styles.coverageAlertText}>
+          This draft uses <strong>Company Goes By</strong>, but the Goes By field on {gaps.length === 1 ? 'this company card is' : 'these company cards is'} empty,
+          so {recipients} recipient{recipients === 1 ? '' : 's'} will get the full company name instead.
+          {onOpenCompany ? ' Click a company to open its card and fill in Goes By.' : ' Fill in Goes By on the company card.'}
+        </p>
+        <div className={styles.coverageAlertList}>
+          {gaps.map(g => {
+            const label = `${g.company} (${g.recipients} recipient${g.recipients === 1 ? '' : 's'})`;
+            return onOpenCompany ? (
+              <button
+                key={g.company}
+                type="button"
+                className={styles.coverageAlertChip}
+                title={`Open ${g.company} to add a Goes By`}
+                onClick={() => onOpenCompany(g.company)}
+              >{label}</button>
+            ) : (
+              <span key={g.company} className={styles.coverageAlertChip}>{label}</span>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Variable coverage table — one row per selected contact, one column
 // per variable token that's actually used in the current subject /
 // body. Helps spot gaps in the data BEFORE sending: missing values
@@ -602,7 +654,7 @@ function AddFieldColumn({ fieldKeys, onChangeFieldKeys }) {
   );
 }
 
-function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null, onOpenContact = null }) {
+function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFor = null, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null, onOpenContact = null }) {
   const fields = fieldKeys.map(contactFieldColumn).filter(Boolean);
   const fieldValue = (c, f) => {
     const raw = rawOf ? rawOf(c) : null;
@@ -729,6 +781,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, isEdit
                       editable={editable}
                       missingTitle={`Missing: ${v.label} will render blank for this recipient`}
                       cellStyle={cellStyle}
+                      warnTitle={val && warnFor ? warnFor(c, v.token) : ''}
                       onCommit={nv => onEditField && onEditField(c, v.token, nv)}
                     />
                   );
@@ -2664,6 +2717,24 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     [subject, body, selectedContacts, resolveVariable],
   );
 
+  // Companies whose card has no Goes By, when the draft uses
+  // {companyGoesBy}. Those emails fall back to the full company name, which
+  // the coverage counts above read as filled, so it gets its own warning.
+  const usesCompanyGoesBy = varCoverage.usedTokens.some(v => v.token === '{companyGoesBy}');
+  const goesByGaps = useMemo(
+    () => (usesCompanyGoesBy
+      ? companyGoesByGaps(selectedContacts, name => lookupCompany(companyTypeIndex.goesBy, name))
+      : []),
+    // lookupCompany only reads companyTypeIndex.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [usesCompanyGoesBy, selectedContacts, companyTypeIndex],
+  );
+  const goesByMissingFor = (c, token) => (
+    token === '{companyGoesBy}' && c.company && !lookupCompany(companyTypeIndex.goesBy, c.company)
+      ? 'No Goes By on this company card, so the email will use the full company name'
+      : ''
+  );
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -2678,6 +2749,10 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
         gaps={varCoverage.gaps}
         affected={varCoverage.affected}
         total={varCoverage.total}
+      />
+      <CompanyGoesByWarning
+        gaps={goesByGaps}
+        onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
       />
 
       <div className={styles.layout}>
@@ -3340,6 +3415,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               usedTokens={varCoverage.usedTokens}
               coverage={varCoverage.coverage}
               resolve={resolveVariable}
+              warnFor={goesByMissingFor}
               isEditable={token => !!COVERAGE_EDITABLE[token]}
               onEditField={handleCoverageEdit}
               categorize={categorizeRecipient}

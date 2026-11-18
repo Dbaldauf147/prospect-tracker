@@ -67,6 +67,14 @@
   white-space: nowrap;
 }
 
+/* Amber variant: Company Goes By is empty on a company card. The email
+   still reads (full company name), so it warns without the red. */
+.goesByAlert { background: #FEF3C7; border-color: #D97706; color: #78350F; }
+.goesByAlert .coverageAlertTitle { color: #92400E; }
+.goesByAlert .coverageAlertChip { border-color: #FCD34D; color: #92400E; font-family: inherit; }
+.goesByAlert button.coverageAlertChip { cursor: pointer; text-decoration: underline; }
+.goesByAlert button.coverageAlertChip:hover { background: #FFFBEB; }
+
 .field { margin-bottom: 1rem; }
 .label { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.72rem; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
 .labelHint { font-size: 0.65rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--color-text-muted); }
