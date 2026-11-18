@@ -18,7 +18,8 @@ const TABLE_ID = 'email-campaign-schedule';
 const MOST_KEY = 'email-schedule:most';
 const MOST_CHOICES = [0.5, 0.67, 0.75, 0.8, 0.9, 1];
 const VIEW_KEY = 'email-schedule:view';
-const VIEWS = [['list', 'List'], ['calendar', 'Calendar']];
+// Calendar first: it is the view the tab opens on until List is picked.
+const VIEWS = [['calendar', 'Calendar'], ['list', 'List']];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const fmt = (day) => (day ? new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '');
@@ -184,7 +185,7 @@ export function EmailSchedulePanel({ campaigns, prospects, cdmName, onOpenCampai
   });
   const setMost = (v) => { setMostState(v); try { userLsSet(MOST_KEY, String(v)); } catch { /* a convenience */ } };
 
-  const [view, setViewState] = useState(() => (userLsGet(VIEW_KEY) === 'calendar' ? 'calendar' : 'list'));
+  const [view, setViewState] = useState(() => (userLsGet(VIEW_KEY) === 'list' ? 'list' : 'calendar'));
   const setView = (v) => { setViewState(v); try { userLsSet(VIEW_KEY, v); } catch { /* a convenience */ } };
 
   const { clientStatusMap, clientUntrackedMap } = useClientFlagMaps();
