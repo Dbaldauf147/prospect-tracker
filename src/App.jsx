@@ -684,7 +684,7 @@ function App() {
         onCreateCompany={handleCreateCompany}
       />
       <div className="main">
-        {(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' || view === 'table' || view === 'kanban') && (
+        {(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' || view === 'pe' || view === 'table' || view === 'kanban') && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', padding: '0 0.25rem' }}>
             {[
               { key: 'accounts', label: 'My Accounts', active: view === 'accounts' },
@@ -710,6 +710,10 @@ function App() {
               { key: 'nameMatcher', label: 'Name Matcher', active: view === 'nameMatcher' },
               // The Company Data gaps summed, day by day.
               { key: 'missingHistory', label: 'All Missing History', active: view === 'missingHistory' },
+              // The PE firms and their portfolio companies. Its own page (it
+              // was a sidebar entry until it moved here), so it keeps the
+              // 'pe' view key the Prospecting steps point at.
+              { key: 'pe', label: 'PE Portfolio', active: view === 'pe' },
               // Pipeline (kanban) is a mode of the Table experience, so the
               // Table subtab stays highlighted for both.
               { key: 'table', label: 'Table', active: view === 'table' || view === 'kanban' },
