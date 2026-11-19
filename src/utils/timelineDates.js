@@ -637,15 +637,17 @@ export function resolveMonthWindow(template, needed) {
   // collapsing to a single one.
   const extent = Number(needed) > 0 ? Math.floor(Number(needed)) : timelineMonthsNeeded(template);
   const auto = extent > 0 ? extent + 1 : 12;
+  const calendar = template?.monthMode === 'calendar';
   return {
-    anchor: String(template?.anchorMonth || '').trim(),
+    // A calendar timeline with no month 1 picked starts at the current month.
+    anchor: String(template?.anchorMonth || '').trim() || (calendar ? currentMonthAnchor() : ''),
     monthCount: Math.max(
       1,
       Math.min(36, Number(template?.monthCount) > 0
         ? Math.floor(template.monthCount)
         : auto),
     ),
-    calendar: template?.monthMode === 'calendar',
+    calendar,
     fromRange: false,
   };
 }
