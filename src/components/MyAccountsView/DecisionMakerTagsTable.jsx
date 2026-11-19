@@ -17,6 +17,11 @@
 // in when nobody there is covered. A tick in the picker also leaves out the accounts whose title
 // search for that tag is already logged on Bulk Add > Zoom Search Log, and
 // another leaves out the Qualifying accounts.
+//
+// A category tag (ESG, Procurement, Utilities, Climate Risk, Capital
+// Planning) that is closed out at an account, its services all Not Sold or
+// N/A or the category marked N/A on the company popup, says so in the cell
+// in place of the dash, and that account is left out of the tag's export.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { Badge } from '../common/Badge';
@@ -29,6 +34,9 @@ import { ZoomExcludedCell } from './ZoomExcludedCell';
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, buildTitleSearchedMatcher } from '../../utils/zoomSearchLog';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { OWN_TARGET_TIER_LABEL } from '../../utils/tierSource';
+import { companyClosedBucketReasons, serviceBucketContext } from '../../utils/bucketServices';
+import { BUCKETS } from '../ProspectModal/contactTags';
+import { tagKey } from '../../utils/contactTagReview';
 
 const TIER_INK = { 'Tier 1': '#DC2626', 'Tier 2': '#3B82F6', [OWN_TARGET_TIER_LABEL]: '#7C3AED', 'Tier 3': '#F59E0B' };
 
@@ -139,10 +147,36 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
   const tags = useMemo(() => tagMatrixColumns(contacts || []), [contacts]);
   const review = settings?.contactTagReview || null;
   // A-Z going in, so the tier sort (stable) keeps each tier alphabetical.
-  const rows = useMemo(() => tagMatrixRows(
+  const matrixRows = useMemo(() => tagMatrixRows(
     [...(accounts || [])].sort((a, b) => String(a.company || '').localeCompare(String(b.company || ''))),
     dmLookup, tags, review,
   ), [accounts, dmLookup, tags, review]);
+  // Per row, the tags whose category is closed out at the company: every
+  // service tagged to it Not Sold or N/A, or the category marked N/A. The
+  // rule the company popup's By Category table and Company Data use
+  // (bucketServices), so the three can't disagree. Only the tags that are a
+  // category (BUCKETS) can be closed this way.
+  const bucketCtx = useMemo(() => serviceBucketContext(settings), [settings]);
+  const prospectById = useMemo(() => new Map((prospects || []).map(p => [p.id, p])), [prospects]);
+  const rows = useMemo(() => {
+    const bucketKeyToColumn = new Map();
+    for (const b of BUCKETS) {
+      const tag = tags.find(t => tagKey(t) === tagKey(b.label));
+      if (tag) bucketKeyToColumn.set(b.key, tagColumnKey(tag));
+    }
+    return matrixRows.map((r) => {
+      const record = prospectById.get(r.id) || r;
+      const reasons = companyClosedBucketReasons(record, bucketCtx, BUCKETS, {
+        contacts: dmLookup ? dmLookup.forAccount(record) : [], tagReview: review || {},
+      });
+      const closedByTag = {};
+      for (const [bucketKey, reason] of reasons) {
+        const col = bucketKeyToColumn.get(bucketKey);
+        if (col) closedByTag[col] = reason;
+      }
+      return { ...r, closedByTag };
+    });
+  }, [matrixRows, tags, prospectById, bucketCtx, dmLookup, review]);
   const coverage = useMemo(() => tagMatrixCoverage(rows, tags), [rows, tags]);
   // Same match the Zoom CSV download drops rows by, so the column says
   // exactly which accounts the export will leave out.
@@ -194,15 +228,18 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
     ...tags.map(tag => {
       const key = tagColumnKey(tag);
       const maybes = r => r.maybeByTag?.[key] || [];
+      const closed = r => r.closedByTag?.[key] || null;
+      // A closed-out cell with nobody in it reads as its reason (N/A, Not
+      // Sold), so it filters and exports as that rather than as a blank.
       const value = r => [
         namesOf(r.byTag[key]),
         ...maybes(r).map(c => `${nameOf(c)} (maybe)`),
-      ].filter(Boolean).join(', ');
+      ].filter(Boolean).join(', ') || closed(r)?.label || '';
       return {
         key,
         label: tag,
         defaultWidth: 160,
-        headerTitle: `Decision makers also tagged ${tag}, then in amber the ones marked Not sure for it (shown, not counted in the percentages)`,
+        headerTitle: `Decision makers also tagged ${tag}, then in amber the ones marked Not sure for it (shown, not counted in the percentages). N/A or Not Sold means ${tag} is closed out at the company, so there is nobody to look for`,
         renderHeader: label => (
           <div style={{ display: 'inline-block', verticalAlign: 'top' }}>
             <div>{label}</div>
@@ -216,7 +253,16 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
         render: r => {
           const list = r.byTag[key];
           const maybe = maybes(r);
-          if (!list.length && !maybe.length) return <span style={{ color: '#CBD5E1' }}>-</span>;
+          if (!list.length && !maybe.length) {
+            const why = closed(r);
+            if (!why) return <span style={{ color: '#CBD5E1' }}>-</span>;
+            return (
+              <span
+                title={`${why.why} No contact search needed.`}
+                style={{ padding: '1px 7px', borderRadius: 999, background: '#F1F5F9', color: '#64748B', fontSize: '0.68rem', fontWeight: 600, whiteSpace: 'nowrap' }}
+              >{why.label}</span>
+            );
+          }
           const line = (c) => [nameOf(c), c.jobtitle].filter(Boolean).join(', ');
           return (
             <span title={[...list.map(line), ...maybe.map(c => `${line(c)} (maybe: marked Not sure)`)].join('\n')}>
@@ -234,7 +280,6 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
   ], [tags, coverage, zoomExcludedOf]);
 
   const zoomSource = onScreen || rows;
-  const prospectById = useMemo(() => new Map((prospects || []).map(p => [p.id, p])), [prospects]);
   // Per tag: the accounts the file would hold before the skip-searched tick
   // (Qualifying already dropped when that box is ticked), and how many of
   // them have that tag's title search logged.

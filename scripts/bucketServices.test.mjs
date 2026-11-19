@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   isClosingStatus, servicesForBucket, bucketServiceState, closedBucketKeys,
-  setServiceBucket, companyClosedBuckets, serviceBucketContext,
+  setServiceBucket, companyClosedBuckets, companyClosedBucketReasons, serviceBucketContext,
 } from '../src/utils/bucketServices.js';
 import { companyStepsRemaining, bucketStepsLeft } from '../src/utils/dmSteps.js';
 import { BUCKETS } from '../src/components/ProspectModal/contactTags.js';
@@ -66,5 +66,26 @@ assert.equal(getEffectiveServiceMetadata(real, settingsOv).contactTags.includes(
 assert.ok(companyClosedBuckets({ servicesExplored: { [real]: 'Not Sold' } }, ctx2, BUCKETS).has('procurement'));
 assert.ok(!companyClosedBuckets({ servicesExplored: { [real]: 'Sold' } }, ctx2, BUCKETS).has('procurement'));
 assert.ok(!companyClosedBuckets({ servicesExplored: {} }, ctx2, BUCKETS).has('procurement'));
+
+// Why a category is closed, for the DM Tags cell: the label a cell shows.
+const reasonOf = (record, opts) => companyClosedBucketReasons(record, ctx2, BUCKETS, opts).get('procurement')?.label;
+assert.equal(reasonOf({ servicesExplored: { [real]: 'Not Sold' } }), 'Not Sold');
+assert.equal(reasonOf({ servicesExplored: { [real]: 'N/A' } }), 'N/A');
+assert.equal(reasonOf({ servicesExplored: { [real]: 'Sold' } }), undefined);
+// The heading's own N/A wins over what the services say, and needs no ctx.
+assert.equal(reasonOf({ servicesExplored: { [real]: 'Not Sold' }, dmSearchSteps: { procurement: { na: '2026-01-01' } } }), 'N/A');
+assert.equal(companyClosedBucketReasons({ dmSearchSteps: { procurement: { na: '2026-01-01' } } }, null, BUCKETS).get('procurement').label, 'N/A');
+// Two services on the category, one each way: a mix.
+const second = ctx.names[1];
+const ctx3 = { ...ctx, overrides: setServiceBucket(settingsOv, second, proc, true) };
+assert.equal(
+  companyClosedBucketReasons({ servicesExplored: { [real]: 'Not Sold', [second]: 'N/A' } }, ctx3, BUCKETS).get('procurement').label,
+  'Not Sold / N/A',
+);
+// The set is the map's keys.
+assert.deepEqual(
+  [...companyClosedBuckets({ servicesExplored: { [real]: 'Not Sold' } }, ctx2, BUCKETS)],
+  [...companyClosedBucketReasons({ servicesExplored: { [real]: 'Not Sold' } }, ctx2, BUCKETS).keys()],
+);
 
 console.log('bucketServices: ok');

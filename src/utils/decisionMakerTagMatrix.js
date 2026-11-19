@@ -177,9 +177,13 @@ export const isQualifyingStatus = (status) => statusKey(status) === 'qualifying'
  * one: PNC has Robert Lincoln on Procurement, so a maybe next to him is not
  * a reason to search PNC again. An account with only maybes is still in,
  * because nobody there is covered. No decision maker at all is in.
+ * An account where the tag's category is closed out (`closedByTag`, set by
+ * the DM Tags table: its services all Not Sold or N/A, or the category
+ * marked N/A) is out, since there is nobody to look for.
  * `key` is tagColumnKey(tag).
  */
 export function zoomExportRowsForTag(rows, key) {
   return (rows || []).filter(r => ZOOM_TAG_EXPORT_STATUS_KEYS.has(statusKey(r.status))
-    && !(r.byTag?.[key] || []).length && !(r.saleByTag?.[key] || []).length);
+    && !(r.byTag?.[key] || []).length && !(r.saleByTag?.[key] || []).length
+    && !r.closedByTag?.[key]);
 }
