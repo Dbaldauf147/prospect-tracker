@@ -29,7 +29,7 @@ import { ContactsTable } from '../ProspectModal/ContactsTable';
 import { applyTagPresetToContact, presetSummary } from '../../utils/tagPresets';
 import { tagVocabulary, planTagEdit } from '../../utils/contactTagReview';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
-import { companyPopupTarget } from '../../utils/companyLookup';
+import { companyPopupTarget, prospectForRowCompany } from '../../utils/companyLookup';
 import { BulkCompaniesModal } from './BulkCompaniesModal';
 import styles from './AgendaView.module.css';
 
@@ -1108,6 +1108,22 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     return map;
   }, [allTargetReps, prospects, settings]);
 
+  // The account whose CDM / Other Reps a row shows: the one its Company
+  // names (see prospectForRowCompany), not whichever the email domain
+  // matched. Cached per Company + match, since a drop has hundreds of rows
+  // and a handful of companies, and the fuzzy pass reads every prospect.
+  const cdmProspectFor = useMemo(() => {
+    const cache = new Map();
+    return (r) => {
+      const matched = r?._matchedProspectId ? prospects.find(p => p.id === r._matchedProspectId) : null;
+      const key = `${String(r?.company || '').trim().toLowerCase()}|${matched?.id || ''}`;
+      if (!cache.has(key)) {
+        cache.set(key, prospectForRowCompany(prospects, r?.company, matched, { fuzzy: companiesMatch }));
+      }
+      return cache.get(key);
+    };
+  }, [prospects]);
+
   // One line per company across every Bulk Add row, for the Companies
   // popup. A row matched to a prospect (and not dismissed) groups under
   // that prospect, so "Nuveen" and "Nuveen Real Estate" land together;
@@ -2031,11 +2047,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
 
       const tier = dismissed ? '' : bulkTierOf(prospect, cdmName);
 
-      // CDM / Other Reps stay on a dismissed row, as the cell shows them.
+      // CDM / Other Reps: the account the Company names, dismissed or not,
+      // as the cell shows them.
       let cdmReps = '';
-      if (prospect) {
-        const cdm = String(prospect.cdm || '').trim();
-        const reps = otherRepsByProspect.get(prospect.id) || [];
+      const cdmProspect = cdmProspectFor(r);
+      if (cdmProspect) {
+        const cdm = String(cdmProspect.cdm || '').trim();
+        const reps = otherRepsByProspect.get(cdmProspect.id) || [];
         const seen = new Set();
         const repNames = [];
         for (const rep of reps) {
@@ -2092,7 +2110,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [rows, bulkColShown, orderedBulkCols, hubspotByEmail, results, lookupMatch, prospects, dismissedSuggestedCompanies, otherRepsByProspect, cdmName, rowLeadSource]);
+  }, [rows, bulkColShown, orderedBulkCols, hubspotByEmail, results, lookupMatch, prospects, dismissedSuggestedCompanies, otherRepsByProspect, cdmProspectFor, cdmName, rowLeadSource]);
 
   // The best company name we can put on the wire for this row. Priority:
   //   1. The explicit row.company the user typed in the cell.
@@ -2665,7 +2683,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         // when the company suggestion was dismissed - who owns the account
         // is still worth knowing, the dismissal is about the company name.
         case 'cdmReps': {
-          const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
+          const p = cdmProspectFor(r);
           if (!p) return '';
           const reps = (otherRepsByProspect.get(p.id) || []).map(x => x.rep);
           return [String(p.cdm || '').trim(), ...reps].filter(Boolean).join(' ');
@@ -2674,7 +2692,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       }
   // rowBucket is a plain function of the state already listed here.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lookupMatch, suggestionFor, rowLeadSource, prospects, cdmName, dismissedSuggestedCompanies, otherRepsByProspect, hubspotByEmail, results]);
+  }, [lookupMatch, suggestionFor, rowLeadSource, prospects, cdmName, dismissedSuggestedCompanies, otherRepsByProspect, cdmProspectFor, hubspotByEmail, results]);
 
   // The rows the toolbar toggles leave, before any column filter: what
   // the column filters narrow, and what their pick lists are built from.
@@ -4426,10 +4444,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                         // entries the user has confirmed for that
                         // prospect on the Lists page. Kept when the
                         // company suggestion is dismissed: Dan wants to
-                        // see who owns the account either way.
-                        if (!prospect) return <span className={styles.metaText}>-</span>;
-                        const cdm = String(prospect.cdm || '').trim();
-                        const reps = otherRepsByProspect.get(prospect.id) || [];
+                        // see who owns the account either way. Read off
+                        // the account the Company column names, not the
+                        // email-domain match (cdmProspectFor).
+                        const cdmProspect = cdmProspectFor(r);
+                        if (!cdmProspect) return <span className={styles.metaText}>-</span>;
+                        const cdm = String(cdmProspect.cdm || '').trim();
+                        const reps = otherRepsByProspect.get(cdmProspect.id) || [];
                         // Dedup reps by name and roll their target
                         // companies into the tooltip.
                         const byRep = new Map();
