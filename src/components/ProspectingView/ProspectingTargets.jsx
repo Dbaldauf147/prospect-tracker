@@ -19,10 +19,14 @@
 // is the company's soonest target OF THAT TYPE, and only companies that
 // have one are listed. "All" is the page as it was. The open subtab is
 // remembered, and each subtab keeps its own column layout (targetsTableId).
+// "Group types" puts several types on one subtab: tick the subtabs, name
+// the group, save. The groups are the user's own (settings.targetTypeGroups,
+// synced); the targets keep their types. An open group lists its types
+// underneath, each removable, with Ungroup to undo it.
 import { targetsSearchedAt, fmtSearched } from '../../utils/targetsSearched';
 import { useMemo, useRef, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { allSavedTargets, soonestTargetPerCompany, targetsOfCompaniesMatching, isNoTargetRow, refreshDue, scopesLabel, editSavedTarget, cleanYear, TARGET_ACTIONS, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTypeKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
+import { allSavedTargets, soonestTargetPerCompany, targetsOfCompaniesMatching, isNoTargetRow, refreshDue, scopesLabel, editSavedTarget, cleanYear, TARGET_ACTIONS, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTabKeyFn, normalizeTypeGroups, saveTypeGroup, removeTypeFromGroup, removeTypeGroup, typeGroupKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
 import { reportingTier } from '../../utils/tierSource';
 import { TargetTypeSelect } from '../ProspectModal/TargetTypeSelect';
 import { useTargetTypeOptions } from '../ProspectModal/useTargetTypeOptions';
@@ -86,6 +90,10 @@ function TypeCell({ value, options, onCommit }) {
   };
   return <div onBlur={leave}><TargetTypeSelect value={draft ?? value} options={options} onChange={change} /></div>;
 }
+const smallButton = {
+  padding: '0.25rem 0.6rem', fontSize: '0.76rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+  border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#334155',
+};
 const TYPE_TAB_KEY = 'prospecting-targets:type-tab';
 const ALL_TAB = '\u0000all';
 // Each subtab keeps its own column layout (shown, order, widths, stars,
@@ -126,7 +134,16 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
   const all = useMemo(() => allSavedTargets(prospects), [prospects]);
   const hiddenCount = all.filter(t => t.hidden).length;
   const listed = useMemo(() => (showHidden ? all : all.filter(t => !t.hidden)), [all, showHidden]);
-  const typeTabs = useMemo(() => targetTypeTabs(listed), [listed]);
+  const typeGroups = useMemo(() => normalizeTypeGroups(settings?.targetTypeGroups), [settings?.targetTypeGroups]);
+  const tabKey = useMemo(() => targetTabKeyFn(typeGroups), [typeGroups]);
+  const typeTabs = useMemo(() => targetTypeTabs(listed, typeGroups), [listed, typeGroups]);
+  // What each type is called, for an open group's list of its types.
+  const typeNames = useMemo(() => new Map(targetTypeTabs(all).map(t => [t.key, t.label])), [all]);
+  // Grouping: null when off, else the subtab keys ticked so far.
+  const [picking, setPicking] = useState(null);
+  const [groupName, setGroupName] = useState('');
+  const canGroup = !!updateSettings;
+  const saveGroups = next => updateSettings({ targetTypeGroups: next });
   const [savedTab, setSavedTab] = useState(readSavedTypeTab);
   // A remembered type nobody has any more falls back to All.
   const typeTab = savedTab !== ALL_TAB && typeTabs.some(t => t.key === savedTab) ? savedTab : ALL_TAB;
@@ -137,22 +154,38 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
     setSavedTab(key);
     try { localStorage.setItem(TYPE_TAB_KEY, key); } catch { /* private mode */ }
   };
-  const inTab = t => typeTab === ALL_TAB || targetTypeKey(t) === typeTab;
   const found = useMemo(() => targetsOfCompaniesMatching(all, search), [all, search]);
   const foundCompanies = new Set(found.map(t => t.prospect.id)).size;
   const tabRows = useMemo(
-    () => soonestTargetPerCompany(typeTab === ALL_TAB ? listed : listed.filter(t => targetTypeKey(t) === typeTab)),
-    [listed, typeTab],
+    () => soonestTargetPerCompany(typeTab === ALL_TAB ? listed : listed.filter(t => tabKey(t) === typeTab)),
+    [listed, typeTab, tabKey],
   );
   const rows = searching ? found : tabRows;
-  const shown = all.filter(t => !t.hidden && inTab(t));
   const tableId = targetsTableId(searching ? ALL_TAB : typeTab);
   const tableSettings = useMemo(() => settingsForTable(settings, tableId), [settings, tableId]);
-  const typeLabel = typeTab === ALL_TAB ? '' : typeTabs.find(t => t.key === typeTab)?.label || '';
+  const openTab = typeTabs.find(t => t.key === typeTab);
+  const typeLabel = openTab?.label || '';
   const allCompanies = new Set(listed.map(t => t.prospect.id)).size;
-  const companies = new Set(shown.map(t => t.prospect.id)).size;
-  // Companies whose soonest refresh is due this year or overdue.
-  const dueNow = soonestTargetPerCompany(shown).filter(t => ['due', 'overdue'].includes(refreshDue(t)?.status)).length;
+  const togglePick = (t) => {
+    const next = picking.includes(t.key) ? picking.filter(k => k !== t.key) : [...picking, t.key];
+    setPicking(next);
+    // A group ticked on its own, or first, lends its name.
+    const firstGroup = typeTabs.find(x => x.group && next.includes(x.key));
+    if (!groupName.trim() && t.group && firstGroup?.key === t.key) setGroupName(t.label);
+  };
+  const stopPicking = () => { setPicking(null); setGroupName(''); };
+  const pickedGroupOnly = picking?.length === 1 && typeTabs.some(t => t.group && t.key === picking[0]);
+  const canSaveGroup = !!picking && !!groupName.trim() && (picking.length > 1 || pickedGroupOnly);
+  const saveGroup = () => {
+    if (!canSaveGroup) return;
+    const newId = `g${Date.now().toString(36)}`;
+    // A picked group takes the rest in and keeps its id; else a new one.
+    const id = picking.map(k => typeTabs.find(t => t.key === k)?.group).find(Boolean) || newId;
+    const next = saveTypeGroup(typeGroups, { name: groupName, keys: picking, newId });
+    saveGroups(next);
+    stopPicking();
+    pickTab(typeGroupKey(id));
+  };
 
   const columns = [
     {
@@ -344,13 +377,6 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
   return (
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }} data-prospecting-targets>
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', fontSize: '0.8rem', color: '#475569' }}>
-        <span style={{ display: searching ? 'none' : undefined }}>
-          <strong style={{ color: '#1E293B' }}>{companies}</strong> {companies === 1 ? 'company' : 'companies'} with
-          {' '}<strong style={{ color: '#1E293B' }}>{shown.length}</strong> {typeLabel ? `${typeLabel} ` : ''}{shown.length === 1 ? 'target' : 'targets'} saved
-          {dueNow > 0 && <>; <strong style={{ color: '#92400E' }}>{dueNow}</strong> due a refresh this year or overdue</>}.
-          {' '}Each row is the company's {typeLabel ? `${typeLabel} target` : 'target'} with the soonest refresh. Edit that target right here: a typed
-          change saves when you leave the box. Click a company to open its Targets tab for its other targets or to add one. Tick Reached Out once you have contacted a company about its targets.
-        </span>
         <span data-targets-search style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexBasis: '100%' }}>
           <input
             type="search"
@@ -374,27 +400,79 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
             Show hidden ({hiddenCount})
           </label>
         )}
+        {canGroup && !searching && !picking && typeTabs.length > 1 && (
+          <button type="button" data-group-types onClick={() => setPicking([])} title="Put several target types on one subtab" style={smallButton}>Group types</button>
+        )}
       </div>
+      {picking && !searching && (
+        <div data-group-bar style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: '0.8rem', color: '#475569', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, padding: '0.4rem 0.6rem' }}>
+          <span>Click the types to group ({picking.length} picked), then name the group.</span>
+          <input
+            type="text"
+            value={groupName}
+            onChange={e => setGroupName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') saveGroup(); else if (e.key === 'Escape') stopPicking(); }}
+            placeholder="Group name"
+            aria-label="Group name"
+            style={{ ...inputStyle, width: 200, padding: '0.3rem 0.5rem' }}
+          />
+          <button type="button" onClick={saveGroup} disabled={!canSaveGroup} title={canSaveGroup ? 'Save the group' : 'Pick two or more types and give the group a name'} style={{ ...smallButton, background: canSaveGroup ? '#0A66C2' : '#E2E8F0', color: canSaveGroup ? '#fff' : '#94A3B8', borderColor: 'transparent', cursor: canSaveGroup ? 'pointer' : 'not-allowed' }}>Save group</button>
+          <button type="button" onClick={stopPicking} style={smallButton}>Cancel</button>
+        </div>
+      )}
       {typeTabs.length > 0 && (
         <div role="tablist" aria-label="Target type" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', borderBottom: '1px solid #E2E8F0' }}>
-          {[{ key: ALL_TAB, label: 'All', companies: allCompanies }, ...typeTabs].map(t => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={!searching && typeTab === t.key}
-              onClick={() => pickTab(t.key)}
-              title={t.key === ALL_TAB
-                ? 'Every company, on its target with the soonest refresh'
-                : `${t.companies} ${t.companies === 1 ? 'company' : 'companies'} with a ${t.label} target`}
-              style={{
-                padding: '0.35rem 0.8rem', border: 'none', background: 'none', fontFamily: 'inherit',
-                fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap',
-                color: !searching && typeTab === t.key ? '#0A66C2' : '#64748B',
-                borderBottom: `2px solid ${!searching && typeTab === t.key ? '#0A66C2' : 'transparent'}`,
-              }}
-            >{t.label} <span style={{ fontWeight: 500, opacity: 0.75 }}>({t.companies})</span></button>
+          {[{ key: ALL_TAB, label: 'All', companies: allCompanies }, ...typeTabs].map(t => {
+            const grouping = !!picking && !searching;
+            const pickable = grouping && t.key !== ALL_TAB;
+            const picked = pickable && picking.includes(t.key);
+            const open = !searching && typeTab === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={open}
+                aria-pressed={pickable ? picked : undefined}
+                disabled={grouping && !pickable}
+                onClick={() => (pickable ? togglePick(t) : pickTab(t.key))}
+                title={pickable
+                  ? (picked ? `Take ${t.label} out of the group` : `Add ${t.label} to the group`)
+                  : t.key === ALL_TAB
+                    ? 'Every company, on its target with the soonest refresh'
+                    : t.group
+                      ? `${t.companies} ${t.companies === 1 ? 'company' : 'companies'} with a target in the ${t.label} group`
+                      : `${t.companies} ${t.companies === 1 ? 'company' : 'companies'} with a ${t.label} target`}
+                style={{
+                  padding: '0.35rem 0.8rem', border: 'none', background: picked ? '#DBEAFE' : 'none', fontFamily: 'inherit',
+                  fontSize: '0.76rem', fontWeight: 600, cursor: grouping && !pickable ? 'default' : 'pointer', marginBottom: -1, whiteSpace: 'nowrap',
+                  borderRadius: picked ? '4px 4px 0 0' : 0, opacity: grouping && !pickable ? 0.4 : 1,
+                  color: picked || open ? '#0A66C2' : '#64748B',
+                  borderBottom: `2px solid ${picked || (open && !grouping) ? '#0A66C2' : 'transparent'}`,
+                }}
+              >{pickable && <span aria-hidden="true">{picked ? '☑ ' : '☐ '}</span>}{t.group && <span aria-hidden="true">{'▣ '}</span>}{t.label} <span style={{ fontWeight: 500, opacity: 0.75 }}>({t.companies})</span></button>
+            );
+          })}
+        </div>
+      )}
+      {openTab?.group && !searching && !picking && (
+        <div data-group-members style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: '0.76rem', color: '#475569' }}>
+          <span>Grouped types:</span>
+          {openTab.types.map(k => (
+            <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 999, padding: '1px 4px 1px 8px' }}>
+              {typeNames.get(k) || k || 'No type'}
+              {canGroup && (
+                <button
+                  type="button"
+                  onClick={() => saveGroups(removeTypeFromGroup(typeGroups, openTab.group, k))}
+                  title={`Take ${typeNames.get(k) || k || 'No type'} out of this group`}
+                  aria-label={`Take ${typeNames.get(k) || k || 'No type'} out of this group`}
+                  style={{ border: 0, background: 'none', cursor: 'pointer', color: '#64748B', padding: '0 2px', fontSize: '0.8rem', lineHeight: 1 }}
+                >{'×'}</button>
+              )}
+            </span>
           ))}
+          {canGroup && <button type="button" data-ungroup onClick={() => saveGroups(removeTypeGroup(typeGroups, openTab.group))} title="Give each of these types its own subtab again" style={smallButton}>Ungroup</button>}
         </div>
       )}
       <div style={{ height: '70vh', minHeight: 300, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>

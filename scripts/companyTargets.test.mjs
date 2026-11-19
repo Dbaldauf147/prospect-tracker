@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues, editSavedTarget, targetsOfCompaniesMatching } from '../src/utils/companyTargets.js';
+import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues, editSavedTarget, targetsOfCompaniesMatching, normalizeTypeGroups, targetTabKeyFn, saveTypeGroup, removeTypeFromGroup, removeTypeGroup } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -188,6 +188,30 @@ check('types: dedupe keeps first spelling', types.dedupeTypes(['A', 'a', ' b ', 
     [['sbti net zero', 'SBTi Net zero', 2, 3], ['net zero', 'Net zero', 1, 1], ['no target set', 'No target set', 3, 3], ['', 'No type', 1, 1]]);
   check('type tabs: key folds', targetTypeKey({ type: '  SBTi   NET zero ' }), 'sbti net zero');
   check('type tabs: nothing saved', targetTypeTabs([]), []);
+
+  // Type groups: several types on one subtab.
+  const all = [t('a', 'SBTi near-term'), t('a', 'SBTi long-term'), t('b', 'SBTi Long-Term'), t('c', 'Net zero'), t('d', 'RE100')];
+  let groups = saveTypeGroup([], { name: ' SBTi ', keys: ['sbti near-term', 'sbti long-term'], newId: 'g1' });
+  check('type groups: saved', groups, [{ id: 'g1', name: 'SBTi', types: ['sbti near-term', 'sbti long-term'] }]);
+  check('type groups: one subtab for the group, companies counted once',
+    targetTypeTabs(all, groups).map(x => [x.key, x.label, x.companies, x.targets]),
+    [['group:g1', 'SBTi', 2, 3], ['net zero', 'Net zero', 1, 1], ['re100', 'RE100', 1, 1]]);
+  check('type groups: tab key of a target', all.map(targetTabKeyFn(groups)), ['group:g1', 'group:g1', 'group:g1', 'net zero', 're100']);
+  groups = saveTypeGroup(groups, { name: 'Energy', keys: ['re100', 'net zero'], newId: 'g2' });
+  // A group picked with a type takes the type in and keeps its id.
+  groups = saveTypeGroup(groups, { name: 'SBTi all', keys: ['group:g1', 'net zero'], newId: 'g3' });
+  check('type groups: merge into a picked group, type leaves its old group', groups, [
+    { id: 'g1', name: 'SBTi all', types: ['sbti near-term', 'sbti long-term', 'net zero'] },
+    { id: 'g2', name: 'Energy', types: ['re100'] },
+  ]);
+  check('type groups: two groups picked become the first', saveTypeGroup(groups, { name: 'Everything', keys: ['group:g2', 'group:g1'], newId: 'g4' }),
+    [{ id: 'g2', name: 'Everything', types: ['re100', 'sbti near-term', 'sbti long-term', 'net zero'] }]);
+  check('type groups: no name, nothing changes', saveTypeGroup(groups, { name: ' ', keys: ['re100'], newId: 'g5' }), groups);
+  check('type groups: take a type out', removeTypeFromGroup(groups, 'g1', 'net zero')[0].types, ['sbti near-term', 'sbti long-term']);
+  check('type groups: a group of one is dropped', removeTypeFromGroup(groups, 'g2', 're100').map(g => g.id), ['g1']);
+  check('type groups: ungroup', removeTypeGroup(groups, 'g1').map(g => g.id), ['g2']);
+  check('type groups: junk dropped, a type in one group only', normalizeTypeGroups([null, { id: 'x', name: 'X', types: ['A  b', 'c'] }, { id: 'y', name: 'Y', types: ['a B'] }, { id: 'z', name: '', types: ['q'] }]),
+    [{ id: 'x', name: 'X', types: ['a b', 'c'] }]);
 }
 
 // The link to where a target is stated.
