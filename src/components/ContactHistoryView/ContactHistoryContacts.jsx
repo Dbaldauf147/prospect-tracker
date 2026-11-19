@@ -1,11 +1,13 @@
-// Contacts > History: the people behind the chart. Everyone on the Key,
-// Client and DM at Tier 1-3 rosters right now, with the date HubSpot created
-// each contact, so a week the lines jump can be read as "these were added".
+// Contacts > History: every contact with the date HubSpot created it, newest
+// first, so a batch added today can be found, bulk edited and tagged whether
+// or not it has landed on a roster yet. Contacts tagged Hide are left out,
+// as on the All tab.
 //
-// The rosters are the ones the weekly counts are taken over (the same gates,
-// the same account exclusions, the Company override applied), so the rows
-// here add up to the stat cards above. Tick rows to Bulk Edit them or to
-// apply a saved tag preset (common/BulkContactEditModal).
+// The Roster column and the "On a roster" chip narrow it to the people the
+// chart counts: the Key, Client and DM at Tier 1-3 rosters, by the same
+// gates, account exclusions and Company override as the weekly counts, so
+// that view adds up to the stat cards above. Tick rows to Bulk Edit them or
+// to apply a saved tag preset (common/BulkContactEditModal).
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
@@ -27,6 +29,11 @@ const toIso = (ms) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
+const NO_ROSTER = 'Not on a roster';
+const SCOPES = [
+  { key: 'all', label: 'All contacts' },
+  { key: 'roster', label: 'On a roster' },
+];
 const tagsOf = (c) => contactTagString(c).split(';').map(t => t.trim()).filter(Boolean);
 const chip = (on) => ({
   padding: '0.2rem 0.65rem', borderRadius: 999, fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
@@ -61,13 +68,15 @@ export function ContactHistoryContacts({ prospects, cdmName = '', settings, upda
   // selection while the page sits open.
   const [now] = useState(() => Date.now());
   const [windowDays, setWindowDays] = useState(null);
+  const [scope, setScope] = useState('all');
 
   const allRows = useMemo(() => {
     const out = [];
     for (const base of contacts || []) {
       const c = applyCompanyOverride(base, localFields);
-      const on = ROSTERS.filter(r => gates.gateFor[r.key](c));
-      if (!on.length || gates.clientExclusionOf(c)) continue;
+      const tags = tagsOf(base);
+      if (tags.some(t => t.toLowerCase() === 'hide')) continue;
+      const on = gates.clientExclusionOf(c) ? [] : ROSTERS.filter(r => gates.gateFor[r.key](c));
       out.push({
         id: String(base.id || base.vid || base.email),
         // The record as HubSpot holds it: a bulk write must not send the
@@ -77,17 +86,26 @@ export function ContactHistoryContacts({ prospects, cdmName = '', settings, upda
         company: String(c.company || '').trim(),
         rosters: on,
         addedMs: contactAddedMs(base),
-        tags: tagsOf(base),
+        tags,
       });
     }
     return out;
   }, [contacts, gates, localFields]);
 
+  const scopeRows = useMemo(() => (scope === 'roster' ? allRows.filter(r => r.rosters.length) : allRows), [allRows, scope]);
   const rows = useMemo(
-    () => (windowDays == null ? allRows : allRows.filter(r => addedWithin(r.addedMs, windowDays, now))),
-    [allRows, windowDays, now],
+    () => (windowDays == null ? scopeRows : scopeRows.filter(r => addedWithin(r.addedMs, windowDays, now))),
+    [scopeRows, windowDays, now],
   );
-  const countIn = (days) => (days == null ? allRows.length : allRows.filter(r => addedWithin(r.addedMs, days, now)).length);
+  // What each chip would show: the Added chips within the picked scope, the
+  // scope chips within the picked window.
+  const windowCounts = useMemo(() => new Map(ADDED_WINDOWS.map(w => [
+    w.days, w.days == null ? scopeRows.length : scopeRows.filter(r => addedWithin(r.addedMs, w.days, now)).length,
+  ])), [scopeRows, now]);
+  const scopeCounts = useMemo(() => {
+    const inWindow = windowDays == null ? allRows : allRows.filter(r => addedWithin(r.addedMs, windowDays, now));
+    return { all: inWindow.length, roster: inWindow.filter(r => r.rosters.length).length };
+  }, [allRows, windowDays, now]);
 
   // The tag vocabulary a preset is matched against: the standard list plus
   // every tag any contact carries, as the contact popup builds it.
@@ -149,17 +167,17 @@ export function ContactHistoryContacts({ prospects, cdmName = '', settings, upda
     },
     {
       key: 'rosters', label: 'Roster', defaultWidth: 190,
-      headerTitle: 'Which of the charted rosters the contact is on today: Key, Client, DM at Tier 1-3.',
-      getSortValue: r => r.rosters.map(x => x.label).join(', ').toLowerCase(),
-      getFilterValue: r => r.rosters.map(x => x.label).join(', '),
+      headerTitle: 'Which of the charted rosters the contact is on today: Key, Client, DM at Tier 1-3. Blank when they are on none of them.',
+      getSortValue: r => r.rosters.map(x => x.label).join(', ').toLowerCase() || null,
+      getFilterValue: r => r.rosters.map(x => x.label).join(', ') || NO_ROSTER,
       exportValue: r => r.rosters.map(x => x.label).join(', '),
-      render: r => (
+      render: r => (!r.rosters.length ? blank : (
         <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
           {r.rosters.map(x => (
             <span key={x.key} style={{ padding: '0 7px', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, background: x.bg, border: `1px solid ${x.border}`, color: x.color, whiteSpace: 'nowrap' }}>{x.label}</span>
           ))}
         </span>
-      ),
+      )),
     },
     {
       key: 'jobtitle', label: 'Job Title', defaultWidth: 230,
@@ -202,17 +220,26 @@ export function ContactHistoryContacts({ prospects, cdmName = '', settings, upda
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
       <div>
-        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Contacts on the rosters</div>
+        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Contacts by date added</div>
         <div style={{ fontSize: '0.68rem', color: '#64748B' }}>
-          Everyone on the Key, Client and DM at Tier 1-3 rosters today, newest first. Date Added is the day the contact
-          was created in HubSpot. Tick rows to bulk edit them or apply a tag preset.
+          Every contact, newest first, whether or not they are on a roster yet (contacts tagged Hide are left out).
+          Date Added is the day the contact was created in HubSpot. Tick rows to bulk edit them or apply a tag preset.
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+        {SCOPES.map(sc => (
+          <button
+            key={sc.key} type="button" aria-pressed={scope === sc.key} onClick={() => setScope(sc.key)} style={chip(scope === sc.key)}
+            title={sc.key === 'roster' ? 'Only the contacts on the Key, Client or DM at Tier 1-3 rosters, the people the chart counts.' : 'Every contact, on a roster or not.'}
+          >
+            {sc.label}{contacts ? ` (${scopeCounts[sc.key].toLocaleString()})` : ''}
+          </button>
+        ))}
+        <span style={{ width: 1, alignSelf: 'stretch', background: '#E2E8F0', margin: '0 0.2rem' }} />
         <span style={{ fontSize: '0.7rem', color: '#64748B', fontWeight: 600 }}>Added</span>
         {ADDED_WINDOWS.map(w => (
           <button key={w.days ?? 'any'} type="button" aria-pressed={windowDays === w.days} onClick={() => setWindowDays(w.days)} style={chip(windowDays === w.days)}>
-            {w.label}{contacts ? ` (${countIn(w.days).toLocaleString()})` : ''}
+            {w.label}{contacts ? ` (${windowCounts.get(w.days).toLocaleString()})` : ''}
           </button>
         ))}
       </div>
@@ -241,17 +268,19 @@ export function ContactHistoryContacts({ prospects, cdmName = '', settings, upda
       {contacts == null ? (
         <div style={{ fontSize: '0.8rem', color: '#64748B' }}>Loading...</div>
       ) : (
-        <div style={{ height: '70vh', display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+        <div style={{ height: 'calc(100vh - 150px)', minHeight: 520, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
           <DataTable
             tableId="contact-history-contacts"
-            exportFileName="Roster Contacts by Date Added"
+            exportFileName="Contacts by Date Added"
             columns={columns}
             rows={rows}
             alwaysVisible={['__select__', 'name']}
             onFilteredRowsChange={onFilteredRowsChange}
             defaultSort={{ key: 'added', direction: 'desc' }}
             defaultHidden={['city', 'country']}
-            emptyMessage={windowDays == null ? 'No contacts are on the Key, Client or DM at Tier 1-3 rosters yet.' : `No roster contacts were added in the last ${windowDays} days.`}
+            emptyMessage={windowDays == null
+              ? (scope === 'roster' ? 'No contacts are on the Key, Client or DM at Tier 1-3 rosters yet.' : 'No contacts yet.')
+              : `No ${scope === 'roster' ? 'roster ' : ''}contacts were added in the last ${windowDays} days.`}
             settings={settings}
             updateSettings={updateSettings}
           />
