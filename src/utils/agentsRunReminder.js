@@ -139,3 +139,30 @@ export function agentsDaysUntilDue(lastRunAt, now = Date.now()) {
   if (due == null) return null;
   return Math.max(0, Math.ceil((due - now) / MS_PER_DAY));
 }
+
+// A span as "2 days 5 hours" / "5 hours" / "under an hour", for the strip at
+// the top of the Agents page. Hours round up, like the snooze copy, so the
+// last minutes of an hour never read as nothing left; a day here is 24
+// clock hours, not a business day, because this is a countdown.
+export function daysHoursLabel(spanMs) {
+  if (!(spanMs > 0)) return '';
+  if (spanMs <= MS_PER_HOUR) return 'under an hour';
+  const totalHours = Math.ceil(spanMs / MS_PER_HOUR);
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  const parts = [];
+  if (days) parts.push(`${days} day${days === 1 ? '' : 's'}`);
+  if (hours) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+  return parts.join(' ');
+}
+
+// Where the run clock stands: when the next run comes due and how far off
+// (or how far past) that is. Null when no run has ever been marked. Snoozes
+// are left out on purpose - a snooze hides the alert, it doesn't move the
+// date the run is owed.
+export function agentsNextRunCountdown(lastRunAt, now = Date.now()) {
+  const dueAt = agentsRunDueAt(lastRunAt);
+  if (dueAt == null) return null;
+  const overdue = now >= dueAt;
+  return { dueAt, overdue, label: daysHoursLabel(overdue ? now - dueAt : dueAt - now) || 'under an hour' };
+}

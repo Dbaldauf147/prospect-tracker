@@ -23,6 +23,8 @@ import {
   agentsDaysUntilDue,
   agentsSnoozeEndAt,
   agentsSnoozeRemainingLabel,
+  daysHoursLabel,
+  agentsNextRunCountdown,
   agentsSnoozedUntilMs,
   isAgentsRunSnoozed,
 } from '../src/utils/agentsRunReminder.js';
@@ -144,6 +146,27 @@ eq(agentsSnoozeRemainingLabel(mondayEvening + 3.2 * 3600000, mondayEvening), '4 
 eq(agentsSnoozeRemainingLabel(mondayEvening + 26 * 3600000, mondayEvening), '2 days', 'days round up');
 eq(agentsSnoozeRemainingLabel(null, mondayEvening), '', 'no snooze, no copy');
 eq(agentsSnoozeRemainingLabel(mondayEvening - 1000, mondayEvening), '', 'a lapsed snooze has no copy');
+
+// The countdown on the Agents page's top strip: days and hours, hours
+// rounded up, and it flips to "overdue by" once the due time passes.
+const H = 3600000;
+eq(daysHoursLabel(2 * 24 * H + 4.2 * H), '2 days 5 hours', 'days and hours, hours rounded up');
+eq(daysHoursLabel(24 * H), '1 day', 'a whole day drops the hours');
+eq(daysHoursLabel(23.5 * H), '1 day', 'rounding up into a day carries');
+eq(daysHoursLabel(5 * H), '5 hours', 'under a day is hours only');
+eq(daysHoursLabel(20 * 60000), 'under an hour', 'sub-hour copy');
+eq(daysHoursLabel(0), '', 'no span, no copy');
+eq(agentsNextRunCountdown('', mondayEvening), null, 'never run, no countdown');
+{
+  const due = agentsRunDueAt(iso(thu));
+  const before = agentsNextRunCountdown(iso(thu), due - 27 * H);
+  eq(before.overdue, false, 'before the due time it is not overdue');
+  eq(before.label, '1 day 3 hours', 'time left until due');
+  eq(before.dueAt, due, 'reports the due time');
+  const after = agentsNextRunCountdown(iso(thu), due + 3 * H);
+  eq(after.overdue, true, 'past the due time it is overdue');
+  eq(after.label, '3 hours', 'how far past due');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

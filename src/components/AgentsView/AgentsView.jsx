@@ -32,6 +32,7 @@ import {
   agentsDaysSinceRun,
   agentsDaysUntilDue,
   agentsLastRunMs,
+  agentsNextRunCountdown,
   agentsSnoozeEndAt,
   agentsSnoozeRemainingLabel,
   agentsSnoozedUntilMs,
@@ -1852,6 +1853,16 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     const ms = agentsLastRunMs(agentsLastRunAt);
     return ms == null ? '' : new Date(ms).toLocaleString();
   })();
+  // The strip at the very top of the page: when the prompts were last run
+  // and how long until they're due again. Ticks once a minute so the
+  // hours count down while the page sits open.
+  const [runClockNow, setRunClockNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setRunClockNow(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, []);
+  const agentsNextRun = agentsNextRunCountdown(agentsLastRunAt, runClockNow);
+  const runClockDate = (ms) => new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
   const snoozeMenuRef = useRef(null);
   useEffect(() => {
@@ -3711,6 +3722,26 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
 
   return (
     <div className={styles.wrap}>
+      <div className={styles.runClock} role="status">
+        <span className={styles.runClockItem}>
+          <span className={styles.runClockLabel}>Last refresh</span>
+          <strong>{agentsNextRun ? runClockDate(agentsLastRunMs(agentsLastRunAt)) : 'None recorded yet'}</strong>
+        </span>
+        <span className={styles.runClockItem}>
+          <span className={styles.runClockLabel}>Next refresh</span>
+          {!agentsNextRun ? (
+            <strong className={styles.runClockOverdue}>Due now</strong>
+          ) : agentsNextRun.overdue ? (
+            <strong className={styles.runClockOverdue}>Overdue by {agentsNextRun.label}</strong>
+          ) : (
+            <strong>In {agentsNextRun.label}</strong>
+          )}
+          {agentsNextRun && <span className={styles.runClockWhen}>({runClockDate(agentsNextRun.dueAt)})</span>}
+        </span>
+        {agentsSnoozeUntilMs != null && (
+          <span className={styles.runClockWhen}>Reminder snoozed until {runClockDate(agentsSnoozeUntilMs)}</span>
+        )}
+      </div>
       <div className={styles.header}>
         <h1 className={styles.title}>Agents</h1>
         <button
