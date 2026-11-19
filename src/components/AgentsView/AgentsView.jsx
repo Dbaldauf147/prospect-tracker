@@ -3974,11 +3974,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           Refresh failed: {activityRefreshError}
         </div>
       )}
-      {senderEmail ? (
-        <p className={styles.subnote}>
-          The Activity table merges outbound emails from <strong>{senderEmail}</strong> (to non-SE recipients, past 2 business days), logged calls from the Opps tab, and meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar: the Type column marks each row as Email, Call, or Meeting. Meetings come from HubSpot and from the Granola notes the Call Recordings page has stored - a Granola call that nobody has logged in HubSpot yet is added if it ties to an opportunity, badged <em>Granola</em>, and linked to its note. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then estimates by company name: fuzzy-matching the HubSpot company (or, when there&rsquo;s no HubSpot contact, the company guessed from the email domain) against the Opps tab&rsquo;s Account field. Use the inline picker to set or change any tag (it shows that company&rsquo;s opportunities first); your selection is remembered for that recipient on future emails. The BFO Company Name column is resolved from the Company. Use the Columns menu to choose which columns are shown.
-        </p>
-      ) : (
+      {!senderEmail && (
         <div className={styles.staleBanner}>
           Set your work email in Settings → CDM Name so this section can match your outbound HubSpot emails. Until then, no Sent emails will appear.
         </div>
