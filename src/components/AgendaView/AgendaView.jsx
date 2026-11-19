@@ -20,6 +20,8 @@ import {
   companyTextEquals, companyRuleKey, groupCompanyMappings, pendingSuggestionActions, summarizeSuggestionActions,
 } from '../../utils/bulkSuggestionActions';
 import { ColumnToggle } from '../common/ColumnToggle';
+import { NotTitlesFilter } from './NotTitlesFilter';
+import { notTitleSources, activeNotTerms, matchedNotTerm } from '../../utils/notTitleTerms';
 import { orderColumns, mergeColumnOrder } from '../../utils/tableColumnPrefs';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { parseContactPaste } from '../../utils/contactPaste';
@@ -716,6 +718,24 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   const [progress, setProgress] = useState(null); // { done, total }
   const [results, setResults] = useState({}); // email -> 'added' | 'exists' | 'error: msg'
   const [tvMissingOnly, setTvMissingOnly] = useState(false);
+  // "NOT titles": only the rows whose job title contains a Not term from
+  // the Titles page. notTitlesOff holds the Not lists left out of it.
+  const [notTitlesOnly, setNotTitlesOnly] = useState(false);
+  const [notTitlesOff, setNotTitlesOff] = useState(() => new Set());
+  const notSources = useMemo(() => notTitleSources(settings), [settings]);
+  const notTerms = useMemo(() => activeNotTerms(notSources, notTitlesOff), [notSources, notTitlesOff]);
+  const notTitleCounts = useMemo(() => {
+    const bySource = {};
+    for (const s of notSources) bySource[s.key] = rows.filter(r => matchedNotTerm(r.jobtitle, s.terms)).length;
+    return { bySource, total: rows.filter(r => matchedNotTerm(r.jobtitle, notTerms)).length };
+  }, [rows, notSources, notTerms]);
+  const toggleNotSource = useCallback((key) => {
+    setNotTitlesOff(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
   const [activeTab, setActiveTab] = useState('contacts'); // 'contacts' | 'tableview'
   const [pendingUpload, setPendingUpload] = useState(null); // { fileName, headers, rows, mapping }
   const [sortKey, setSortKey] = useState(null); // column key; null = original insertion order
@@ -2698,6 +2718,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // the column filters narrow, and what their pick lists are built from.
   const toggleFilteredRows = useMemo(() => {
     let out = rows;
+    if (notTitlesOnly) out = out.filter(r => matchedNotTerm(r.jobtitle, notTerms));
     if (tvMissingOnly) {
       out = out.filter(r => {
         const s = rowTableViewState(r);
@@ -2717,7 +2738,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       out = out.filter(r => !!suggestionFor(r._matchedProspectId, field));
     }
     return out;
-  }, [rows, tvMissingOnly, columnFilters, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies]);
+  }, [rows, notTitlesOnly, notTerms, tvMissingOnly, columnFilters, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies]);
 
   // A column's pick list: its values on the rows every OTHER column's
   // filter leaves on screen, with row counts. Only called while that
@@ -3868,6 +3889,15 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 onRestore={restoreBulkCol}
                 onReorder={reorderBulkCols}
                 onResetColumns={resetBulkCols}
+              />
+              <NotTitlesFilter
+                sources={notSources}
+                off={notTitlesOff}
+                onToggleSource={toggleNotSource}
+                active={notTitlesOnly}
+                onToggleActive={() => setNotTitlesOnly(v => !v)}
+                matchCount={notTitleCounts.total}
+                sourceCounts={notTitleCounts.bySource}
               />
               <button
                 type="button"
