@@ -251,7 +251,15 @@ export function ContactsView({
           />
         )}
         {subtab === 'titles' && <ContactTitlesView settings={settings} updateSettings={updateSettings} />}
-        {subtab === 'history' && <ContactHistoryView />}
+        {subtab === 'history' && (
+          <ContactHistoryView
+            prospects={prospects}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+          />
+        )}
         {subtab === 'relationships' && (
           <RelationshipsView
             prospects={prospects}

@@ -1,6 +1,6 @@
 // Assertion tests for the shared contact Bulk Edit plan. Plain Node:
 //   node scripts/bulkContactEdit.test.mjs
-import { planBulkContactEdit } from '../src/utils/bulkContactEdit.js';
+import { planBulkContactEdit, planBulkTagPreset } from '../src/utils/bulkContactEdit.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -31,6 +31,19 @@ check('tags replace',
 const notes = planBulkContactEdit(cs.slice(0, 2), { field: 'notes', mode: 'append', value: 'call in Q1' }, { 1: 'met at expo' });
 check('notes append: per-user map, no HubSpot writes', [notes.writes, notes.notes], [[], { 1: 'met at expo\ncall in Q1', 2: 'call in Q1' }]);
 check('notes replace with blank clears', planBulkContactEdit([cs[0]], { field: 'notes', mode: 'replace', value: '' }, { 1: 'x', 9: 'keep' }).notes, { 9: 'keep' });
+
+const preset = { id: 'p1', name: 'ESG Director', tags: { ESG: { answer: 'yes', status: '' }, Utilities: { answer: 'no', status: '' } } };
+const pc = [
+  { id: '1', dans_tags: 'Decision Maker;Utilities' },
+  { id: '2', dans_tags: 'ESG' },
+  { dans_tags: 'no id' },
+];
+const pp = planBulkTagPreset(pc, preset, { 2: { ESG: { answer: 'yes', status: '' }, Utilities: { answer: 'no', status: '' } } }, ['ESG', 'Utilities', 'Decision Maker']);
+check('preset: tag list follows the answers, other tags kept',
+  pp.writes, [{ cid: '1', properties: { dans_tags: 'Decision Maker;ESG' } }]);
+check('preset: answers recorded only where they change',
+  pp.records, { 1: { ESG: { answer: 'yes', status: '' }, Utilities: { answer: 'no', status: '' } } });
+check('preset: already-answered and no-id contacts are skipped', pp.skipped, 2);
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll passed');

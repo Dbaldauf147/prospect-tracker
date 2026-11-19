@@ -1,11 +1,17 @@
 // Bulk edit for a list of HubSpot contacts outside the company popup (the
 // popup has its own, with Company moves and tag answers on top). The fields
 // are the ones that are a plain HubSpot property write or the per-user Notes:
-// Title, City, Country, Tags (add / remove / replace) and Notes.
+// Title, City, Country, Tags (add / remove / replace) and Notes, plus a saved
+// tag preset (planBulkTagPreset), which writes both the HubSpot tag list and
+// the per-user tag answers.
 //
 // planBulkContactEdit is pure: it says what to write for each contact, and
 // the caller sends it (api/hubspot update-contact) and patches the cache.
 import { planTagEdit } from './contactTagReview.js';
+import { applyTagPresetToContact } from './tagPresets.js';
+
+// The Field choice that applies a saved tag preset (settings.tagPresets).
+export const TAG_PRESET_FIELD = '__tag_preset__';
 
 export const BULK_CONTACT_FIELDS = [
   { key: 'jobtitle', label: 'Title', kind: 'text' },
@@ -13,6 +19,7 @@ export const BULK_CONTACT_FIELDS = [
   { key: 'country', label: 'Country', kind: 'text' },
   { key: 'dans_tags', label: 'Tags', kind: 'tags', modes: [['add', 'Add'], ['remove', 'Remove'], ['replace', 'Replace all']] },
   { key: 'notes', label: 'Notes (per-user)', kind: 'notes', modes: [['append', 'Append'], ['replace', 'Replace']] },
+  { key: TAG_PRESET_FIELD, label: 'Tag preset', kind: 'preset' },
 ];
 
 export const contactIdOf = (c) => String(c?.id || c?.vid || '');
@@ -54,4 +61,29 @@ export function planBulkContactEdit(contacts, { field, mode = 'replace', value =
     writes.push({ cid, properties: { [field]: text } });
   }
   return { writes, notes: null, skipped };
+}
+
+/**
+ * A saved tag preset applied to every selected contact, as the company
+ * popup's Bulk Edit does it (utils/tagPresets applyTagPresetToContact).
+ * `review` is settings.contactTagReview; `tags` the tag vocabulary. Returns
+ *   { records: { cid: recordMap }, writes: [{ cid, properties }], skipped }
+ * records are the contacts whose tag answers change (each one's whole new
+ * map, for contactTagReview), writes the ones whose HubSpot tag list
+ * changes, and skipped the contacts already answered the way the preset
+ * answers (or with no id).
+ */
+export function planBulkTagPreset(contacts, preset, review = {}, tags = null) {
+  const records = {};
+  const writes = [];
+  let skipped = 0;
+  for (const c of contacts || []) {
+    const cid = contactIdOf(c);
+    if (!cid) { skipped += 1; continue; }
+    const out = applyTagPresetToContact({ dansTags: tagsOf(c) || '', records: review?.[cid] || {}, preset, tags });
+    if (out.recordsChanged) records[cid] = out.records;
+    if (out.tagsChanged) writes.push({ cid, properties: { dans_tags: out.dansTags } });
+    if (!out.recordsChanged && !out.tagsChanged) skipped += 1;
+  }
+  return { records, writes, skipped };
 }

@@ -3,20 +3,27 @@
 // Writes each change to HubSpot through update-contact, patches the local
 // contacts cache so the table updates without a re-sync, and keeps Notes in
 // the per-user settings.contactNotes as the company popup's Bulk Edit does.
-// What to write per contact comes from utils/bulkContactEdit.
+// A saved tag preset (the contact popup's tag table presets) can be applied
+// too: its answers go to settings.contactTagReview and each contact's HubSpot
+// tag list follows them. What to write per contact comes from
+// utils/bulkContactEdit.
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
 import { updateHubspotCache } from '../../utils/hubspotContactsCache';
-import { TAG_OPTIONS } from '../../utils/contactTagReview';
-import { BULK_CONTACT_FIELDS, planBulkContactEdit } from '../../utils/bulkContactEdit';
+import { TAG_OPTIONS, tagVocabulary } from '../../utils/contactTagReview';
+import { presetSummary } from '../../utils/tagPresets';
+import { BULK_CONTACT_FIELDS, TAG_PRESET_FIELD, planBulkContactEdit, planBulkTagPreset } from '../../utils/bulkContactEdit';
 
 const label = { display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', color: '#334155', fontWeight: 600 };
 const input = { padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit' };
 const btn = { padding: '0.35rem 0.85rem', borderRadius: 4, fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' };
 
-export function BulkContactEditModal({ contacts, settings, updateSettings, onClose, onDone }) {
-  const [field, setField] = useState('jobtitle');
+// `initialField` opens the popup on that Field (TAG_PRESET_FIELD for a page's
+// "Apply Tag Preset" button). `tagOptions` is the tag vocabulary a preset is
+// matched against; left out, it is the standard list plus the selection's tags.
+export function BulkContactEditModal({ contacts, settings, updateSettings, updateSettingsPath = null, onClose, onDone, initialField = 'jobtitle', tagOptions = null }) {
+  const [field, setField] = useState(initialField);
   const def = BULK_CONTACT_FIELDS.find(f => f.key === field) || BULK_CONTACT_FIELDS[0];
   const [mode, setMode] = useState('replace');
   const [value, setValue] = useState('');
@@ -39,7 +46,10 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, onClo
     setValue('');
     setError('');
   };
-  const blank = value.trim() === '';
+  const presets = settings?.tagPresets || [];
+  const isPreset = def.kind === 'preset';
+  const preset = isPreset ? presets.find(p => p.id === value) : null;
+  const blank = isPreset ? !preset : value.trim() === '';
   // Clearing a field on every selected contact is a Notes "Replace" only.
   const canApply = !busy && n > 0 && !(blank && !(def.kind === 'notes' && mode === 'replace'));
 
@@ -47,7 +57,21 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, onClo
     if (!canApply) return;
     setBusy(true);
     setError('');
-    const plan = planBulkContactEdit(contacts, { field, mode, value }, settings?.contactNotes || {});
+    let plan;
+    if (isPreset) {
+      // The answers first, in one settings write (a path per contact where
+      // the caller has one, so a burst can't drop any), then the HubSpot tag
+      // lists below, only where the preset changed them.
+      const review = settings?.contactTagReview || {};
+      plan = planBulkTagPreset(contacts, preset, review, tagOptions || tagVocabulary(tagChoices));
+      if (Object.keys(plan.records).length > 0) {
+        if (updateSettingsPath) {
+          updateSettingsPath(Object.fromEntries(Object.entries(plan.records).map(([cid, map]) => [`contactTagReview.${cid}`, map])));
+        } else {
+          updateSettings({ contactTagReview: { ...review, ...plan.records } });
+        }
+      }
+    } else plan = planBulkContactEdit(contacts, { field, mode, value }, settings?.contactNotes || {});
     if (plan.notes) {
       updateSettings({ contactNotes: plan.notes });
       setBusy(false);
@@ -84,6 +108,10 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, onClo
       setError(`${done} saved, ${errors.length} failed: ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? `; and ${errors.length - 3} more` : ''}`);
       return;
     }
+    if (isPreset) {
+      onDone?.(`"${preset.name}" applied to ${n - plan.skipped} of ${n}${plan.skipped ? ` (${plan.skipped} already matched it)` : ''}.`);
+      return;
+    }
     onDone?.(`${def.label} updated on ${done} of ${n}${plan.skipped ? ` (${plan.skipped} already had it)` : ''}.`);
   };
 
@@ -95,7 +123,7 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, onClo
       <div role="dialog" aria-label="Bulk edit contacts" style={{ width: 440, maxWidth: '92vw', background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)', overflow: 'hidden' }}>
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0' }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>Bulk Edit {n} contact{n === 1 ? '' : 's'}</div>
-          <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Writes to HubSpot for every selected contact. Notes are yours only and skip HubSpot.</div>
+          <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Writes to HubSpot for every selected contact. Notes are yours only and skip HubSpot. A tag preset saves its answers and updates the HubSpot tags to match.</div>
         </div>
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
           <label style={label}>
@@ -112,14 +140,32 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, onClo
               </select>
             </label>
           )}
-          <label style={label}>
+          {isPreset && (presets.length === 0 ? (
+            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>
+              No tag presets saved yet. Open a contact, answer its tag table, then click + Save as preset above the table.
+            </div>
+          ) : (
+            <label style={label}>
+              Preset
+              <select value={value} onChange={e => setValue(e.target.value)} disabled={busy} style={input} autoFocus>
+                <option value="">Choose a preset...</option>
+                {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <span style={{ fontWeight: 400, fontSize: '0.7rem', color: '#64748B' }}>
+                {preset
+                  ? `${presetSummary(preset)}.`
+                  : 'Sets every tag answer the preset names on each selected contact and leaves their other tags alone.'}
+              </span>
+            </label>
+          ))}
+          {!isPreset && <label style={label}>
             {def.kind === 'tags' ? 'Tags (separate several with ;)' : 'New value'}
             {def.kind === 'notes' ? (
               <textarea rows={3} value={value} onChange={e => setValue(e.target.value)} disabled={busy} style={{ ...input, resize: 'vertical' }} />
             ) : (
               <input type="text" list={def.kind === 'tags' ? 'bulk-contact-tags' : undefined} value={value} onChange={e => setValue(e.target.value)} disabled={busy} style={input} autoFocus />
             )}
-          </label>
+          </label>}
           {def.kind === 'tags' && <datalist id="bulk-contact-tags">{tagChoices.map(t => <option key={t} value={t} />)}</datalist>}
           {progress && <div style={{ fontSize: '0.75rem', color: '#475569' }}>{progress}</div>}
           {error && <div style={{ fontSize: '0.75rem', color: '#B91C1C' }}>{error}</div>}
