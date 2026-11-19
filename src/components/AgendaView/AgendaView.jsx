@@ -1991,9 +1991,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     headerRow.height = 28;
 
     // Per-row context — keeps the export in lockstep with the on-screen
-    // cells. Suggested Company / Tier / CDM-Other Reps / TV fields
-    // hide when the user dismissed the company suggestion, the same
-    // way the table cells do.
+    // cells. Suggested Company / Tier / TV fields hide when the user
+    // dismissed the company suggestion, the same way the table cells
+    // do; CDM / Other Reps stay.
     const buildCtx = (r) => {
       const hubspotContact = hubspotByEmail.get(r.email);
       const exists = !!hubspotContact;
@@ -2025,8 +2025,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         else if (matchesCdm(prospect.cdm, cdmName)) tier = 'Tier 3';
       }
 
+      // CDM / Other Reps stay on a dismissed row, as the cell shows them.
       let cdmReps = '';
-      if (!dismissed && prospect) {
+      if (prospect) {
         const cdm = String(prospect.cdm || '').trim();
         const reps = otherRepsByProspect.get(prospect.id) || [];
         const seen = new Set();
@@ -2655,10 +2656,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
           return '';
         }
-        // What the cell prints: the CDM and the other reps, or nothing
-        // when the company match was dismissed.
+        // What the cell prints: the CDM and the other reps. Shown even
+        // when the company suggestion was dismissed - who owns the account
+        // is still worth knowing, the dismissal is about the company name.
         case 'cdmReps': {
-          if (dismissedSuggestedCompanies.has(r.email)) return '';
           const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
           if (!p) return '';
           const reps = (otherRepsByProspect.get(p.id) || []).map(x => x.rep);
@@ -4372,10 +4373,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                         // is the prospect's own owner; Other Reps
                         // pills come from the Target Accounts workbook
                         // entries the user has confirmed for that
-                        // prospect on the Lists page. If the user
-                        // dismissed the company suggestion, the badge
-                        // hides too — the match is no longer trusted.
-                        if (dismissedSuggestedCompanies.has(r.email)) return <span className={styles.metaText}>-</span>;
+                        // prospect on the Lists page. Kept when the
+                        // company suggestion is dismissed: Dan wants to
+                        // see who owns the account either way.
                         if (!prospect) return <span className={styles.metaText}>-</span>;
                         const cdm = String(prospect.cdm || '').trim();
                         const reps = otherRepsByProspect.get(prospect.id) || [];
