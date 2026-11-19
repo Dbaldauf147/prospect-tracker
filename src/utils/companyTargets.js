@@ -517,6 +517,15 @@ export function editSavedTarget(prospect, targetIndex, key, value) {
 
 // ---- Every company's targets, as one list ------------------------------
 // Prospecting > Targets lists the targets saved on every company popup:
+// How many targets a company has, for a count beside its name: the rows on
+// its Targets tab with something filled in, less the hidden ones and less a
+// "No target set" row (that row says the company has none). 0 for a company
+// with no targets, checked or not.
+export function companyTargetCount(prospect) {
+  return normalizeTargets(prospect?.climateTargets)
+    .filter(t => !t.hidden && !isNoTargetRow(t) && hasTargetValues([t])).length;
+}
+
 // [{ ...target, id: '<prospect id>:<target id>', targetId, targetIndex, prospect, company }]
 // targetIndex is the target's place in the company's list, which is what an
 // edit made from that page goes by: a target saved without an id gets a new
