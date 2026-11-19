@@ -1390,7 +1390,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         });
       }
       if (p.website) {
-        const d = p.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase();
+        // "www.acme.com" is how most cards hold it, with no scheme in front.
+        const d = p.website.trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/.*$/, '').toLowerCase();
         recordDomain(p, d, 'website');
       }
       // Tokens from company name — 3+ chars, lowercased, deduped. Skip generic suffixes.
@@ -2807,6 +2808,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // the emails the user just dropped, so we push it to the matched
   // prospect without waiting for a click. Deduped per session via a
   // ref so we never re-fire the same (prospect, value) pair.
+  //
+  // Only when the company is confirmed for that domain: some row on it
+  // has, as its Company, this card's exact name. A row merely guessed onto
+  // a card (a word in its domain) used to write its domain onto that card
+  // unasked, and from then on every address there matched the wrong
+  // company "exactly". Unconfirmed, it stays a pill with a tick.
   const autoAppliedEmailDomainsRef = useRef(new Set());
   useEffect(() => {
     if (!onUpdateProspect) return;
@@ -2815,10 +2822,16 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       if (!cell || !cell.sugg || cell.dismissed) continue;
       const dedupeKey = `${prospect.id}::${cell.sugg.value}`;
       if (autoAppliedEmailDomainsRef.current.has(dedupeKey)) continue;
+      const suggDomain = '@' + String(cell.sugg.value).slice(String(cell.sugg.value).lastIndexOf('@') + 1).toLowerCase();
+      const cardName = String(prospect.company || '').trim().toLowerCase();
+      const confirmed = !!cardName && rows.some(r => r._matchedProspectId === prospect.id
+        && String(r.email || '').toLowerCase().endsWith(suggDomain)
+        && String(r.company || '').trim().toLowerCase() === cardName);
+      if (!confirmed) continue;
       autoAppliedEmailDomainsRef.current.add(dedupeKey);
       applySingleSuggestion(prospect, 'emailDomain', cell.sugg.value);
     }
-  }, [prospectSuggestionRows, applySingleSuggestion, onUpdateProspect]);
+  }, [prospectSuggestionRows, applySingleSuggestion, onUpdateProspect, rows]);
 
   async function applyProspectBackfill() {
     if (!onUpdateProspect || prospectBackfillUpdates.length === 0) return;
@@ -3070,15 +3083,36 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // a card that no longer exists), or the match only becomes possible
   // later (the Company is typed, the domain is mapped, the card is added).
   // So a row whose stored match is missing takes whatever the matcher
-  // finds for it now. A stored match that still resolves is left alone.
+  // finds for it now.
+  //
+  // A stored match that still resolves is kept unless something exact now
+  // says otherwise. The row's Company being, letter for letter, a card's
+  // name comes first: that cell is what goes to HubSpot, and it is a
+  // deliberate answer where a domain on a card may have been learned from
+  // a wrong guess (Equity Lifestyle Properties rows were showing another
+  // company's CDM and website that way). Failing that, the email domain
+  // being saved on a different card. A fuzzy live match never replaces a
+  // stored one.
   // This is also what hands a Do-not-map row back its Company match after
   // marking the domain cleared it.
   useEffect(() => {
     if (rows.length === 0 || prospects.length === 0) return;
     const ids = new Set(prospects.map(p => p.id));
+    const nameById = new Map(prospects.map(p => [p.id, String(p.company || '').trim().toLowerCase()]));
     const fixes = new Map();
     for (const r of rows) {
-      if (r._matchedProspectId && ids.has(r._matchedProspectId)) continue;
+      if (r._matchedProspectId && ids.has(r._matchedProspectId)) {
+        const typed = String(r.company || '').trim().toLowerCase();
+        // Two cards can share a name; one of them already stored is fine.
+        if (typed && nameById.get(r._matchedProspectId) === typed) continue;
+        let exact = (typed && prospectByCompanyKey.get(typed)) || null;
+        if (!exact) {
+          const live = lookupMatch(r.email, r);
+          if (live.wasExactMatch) exact = live.matched;
+        }
+        if (exact && exact.id !== r._matchedProspectId) fixes.set(r.email, exact.id);
+        continue;
+      }
       const m = lookupMatch(r.email, r).matched;
       if (m && m.id !== r._matchedProspectId) fixes.set(r.email, m.id);
     }
@@ -3088,7 +3122,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       saveCache(next);
       return next;
     });
-  }, [rows, prospects, lookupMatch]);
+  }, [rows, prospects, lookupMatch, prospectByCompanyKey]);
 
   // "Do not map": this domain belongs to no Table View company and should
   // stop being guessed at. A domain that is mapped today is unmapped first,
