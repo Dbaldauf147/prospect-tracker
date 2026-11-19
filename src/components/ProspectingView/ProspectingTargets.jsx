@@ -6,6 +6,12 @@
 // opens its popup, where its other targets are. Targets hidden on a company's tab stay out
 // unless "Show hidden" is ticked, and a row that is a hidden target then
 // reads greyed out the way it does there.
+// Only My Accounts are listed: companies on the signed-in CDM's book
+// (utils/tieredAccountActivity myAccounts: their CDM, or an own target),
+// the same rule the History subtab counts firms by. That covers the
+// subtab counts and the company search too. "Show other accounts" lists
+// everybody's again, for this visit; with no CDM name set in Settings
+// there is no book to go by, so every company is listed.
 // Reached Out is a tick per company, saved on the company record as
 // `targetsReachedOut`, for whether it has been contacted about its targets.
 // The search box finds companies by name and lists ALL of their targets,
@@ -28,6 +34,7 @@ import { useMemo, useRef, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { allSavedTargets, soonestTargetPerCompany, targetsOfCompaniesMatching, isNoTargetRow, refreshDue, scopesLabel, editSavedTarget, cleanYear, TARGET_ACTIONS, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTabKeyFn, normalizeTypeGroups, saveTypeGroup, removeTypeFromGroup, removeTypeGroup, typeGroupKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
 import { reportingTier } from '../../utils/tierSource';
+import { myAccounts } from '../../utils/tieredAccountActivity';
 import { TargetTypeSelect } from '../ProspectModal/TargetTypeSelect';
 import { useTargetTypeOptions } from '../ProspectModal/useTargetTypeOptions';
 
@@ -120,8 +127,9 @@ function readSavedTypeTab() {
   try { return localStorage.getItem(TYPE_TAB_KEY) ?? ALL_TAB; } catch { return ALL_TAB; }
 }
 
-export function ProspectingTargets({ prospects, settings, updateSettings, updateProspect, onSelectProspect }) {
+export function ProspectingTargets({ prospects, settings, updateSettings, updateProspect, onSelectProspect, cdmName = '' }) {
   const [showHidden, setShowHidden] = useState(false);
+  const [showOthers, setShowOthers] = useState(false);
   const typeOptions = useTargetTypeOptions();
   const canEdit = !!updateProspect;
   const edit = (r, key, value) => {
@@ -132,7 +140,18 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
   const textCell = (r, key, label, extra = {}) => (canEdit
     ? <EditCell value={r[key]} label={`${label} for ${r.company}`} onCommit={v => edit(r, key, v)} {...extra} />
     : r[key] || dash);
-  const all = useMemo(() => allSavedTargets(prospects), [prospects]);
+  const everyone = useMemo(() => allSavedTargets(prospects), [prospects]);
+  const mine = useMemo(() => {
+    if (!String(cdmName || '').trim()) return everyone;
+    const ids = new Set(myAccounts(prospects, cdmName).map(p => p.id));
+    return everyone.filter(t => ids.has(t.prospect.id));
+  }, [everyone, prospects, cdmName]);
+  // Companies with targets saved that are not on My Accounts.
+  const otherCompanies = useMemo(() => {
+    const mineIds = new Set(mine.map(t => t.prospect.id));
+    return new Set(everyone.filter(t => !mineIds.has(t.prospect.id)).map(t => t.prospect.id)).size;
+  }, [everyone, mine]);
+  const all = showOthers ? everyone : mine;
   const hiddenCount = all.filter(t => t.hidden).length;
   const listed = useMemo(() => (showHidden ? all : all.filter(t => !t.hidden)), [all, showHidden]);
   const typeGroups = useMemo(() => normalizeTypeGroups(settings?.targetTypeGroups), [settings?.targetTypeGroups]);
@@ -401,6 +420,12 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
             Show hidden ({hiddenCount})
           </label>
         )}
+        {otherCompanies > 0 && (
+          <label data-show-others title="Only My Accounts are listed: companies whose CDM is you, plus your own targets. Tick to list every company's targets." style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={showOthers} onChange={e => setShowOthers(e.target.checked)} />
+            Show other accounts ({otherCompanies})
+          </label>
+        )}
         {canGroup && !searching && !picking && typeTabs.length > 1 && (
           <button type="button" data-group-types onClick={() => setPicking([])} title="Put several target types on one subtab" style={smallButton}>Group types</button>
         )}
@@ -519,7 +544,7 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
           rowStyle={r => (r.prospect.targetsReachedOut ? { background: '#DCFCE7' }
             : isNoTargetRow(r) ? { opacity: 0.6, background: '#F1F5F9', filter: 'grayscale(1)' }
               : r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
-          emptyMessage={searching && !found.length ? 'No company with saved targets matches that name.' : all.length ? 'No targets match the filters.' : 'No targets saved yet. Add them on a company popup\'s Targets tab.'}
+          emptyMessage={searching && !found.length ? 'No company with saved targets matches that name.' : all.length ? 'No targets match the filters.' : everyone.length ? 'None of My Accounts has targets saved yet. Tick Show other accounts to see everyone\'s.' : 'No targets saved yet. Add them on a company popup\'s Targets tab.'}
           exportFileName={searching ? `Company targets - ${search.trim()}` : typeLabel ? `Company targets - ${typeLabel}` : 'Company targets'}
           settings={tableSettings}
           updateSettings={updateSettings}
