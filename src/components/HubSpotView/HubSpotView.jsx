@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
+import { buildCompanyRecordLookup, hubspotCompanyNamesFor } from '../../utils/contactCompanyNames';
 import { apiFetch } from '../../utils/apiFetch';
 import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { createPortal } from 'react-dom';
@@ -2199,6 +2200,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
     for (const p of prospects) {
       prospectMap.set((p.company || '').toLowerCase(), p);
     }
+    const findCompanyRecord = buildCompanyRecordLookup(prospects);
 
     return contacts
       .filter(c => {
@@ -2226,6 +2228,14 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
           c._companyIsOverride = true;
           c._companyHubspotValue = hsCompany || '';
         }
+        // Every contact carries its company twice: the name Prospect
+        // Tracker files it under, and the name(s) that company goes by in
+        // HubSpot. Those are the company record's own HubSpot Names where
+        // it has any (all of them kept), else the company name again
+        // (utils/contactCompanyNames).
+        c.ptCompanyName = c.company || '';
+        c.hubspotCompanyNameList = hubspotCompanyNamesFor(c.company, findCompanyRecord(c.company));
+        c.hubspotCompanyName = c.hubspotCompanyNameList.join(', ');
         const companyKey = (c.company || '').toLowerCase();
         const prospect = prospectMap.get(companyKey);
 
@@ -3280,7 +3290,29 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
               { key: 'lastname', label: 'Last Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="lastname" value={c.lastname} onSave={handleInlineUpdate} /> },
               { key: 'email', label: 'Email', defaultWidth: 200, render: (c) => <HubSpotInlineCell contact={c} field="email" value={c.email} onSave={handleInlineUpdate} /> },
               { key: 'phone', label: 'Phone', defaultWidth: 130, render: (c) => <HubSpotInlineCell contact={c} field="phone" value={c.phone} onSave={handleInlineUpdate} /> },
-              { key: 'company', label: 'Company', defaultWidth: 180, render: (c) => (
+              // The company, twice. Prospect Tracker Company Name is the
+              // old Company column under its new name: same key, so its
+              // saved width, place and visibility carry over, and it is
+              // still the one that is edited. HubSpot Company Name is the
+              // name(s) that company goes by in HubSpot, read off the
+              // company record, so it is changed on the company popup.
+              { key: 'hubspotCompanyName', label: 'HubSpot Company Name', defaultWidth: 200,
+                headerTitle: "The name(s) the contact's company goes by in HubSpot: the HubSpot Names on its company popup, or the company name when none are recorded there",
+                render: (c) => {
+                  const names = c.hubspotCompanyNameList || [];
+                  if (!names.length) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+                  return (
+                    <span
+                      title={names.length > 1
+                        ? `${names.length} HubSpot names recorded for ${c.company}:\n${names.join('\n')}`
+                        : names[0]}
+                      style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >{names.join(', ')}</span>
+                  );
+                } },
+              { key: 'company', label: 'Prospect Tracker Company Name', defaultWidth: 220,
+                headerTitle: 'The company name Prospect Tracker uses for the contact: matching to accounts, tiers and filters all read this one',
+                render: (c) => (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
                   <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
