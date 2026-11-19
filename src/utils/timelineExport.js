@@ -11,6 +11,8 @@
 
 import { buildTimelineSvg, ownerColor } from './timelineGraphic';
 import { buildPicturePptx } from './pptxSlide.js';
+import { buildTimelineBrief } from './claudeSlidesBrief.js';
+import { apiFetch } from './apiFetch';
 import { schneiderLogoSvg, SE_GREEN, SE_GREEN_DARK } from './schneiderLogo';
 
 const SE_INK = '#0F172A';
@@ -188,9 +190,10 @@ export function downloadTimelineSvg(template) {
 // widescreen slide. It goes in as SVG with a PNG behind it (utils/pptxSlide),
 // so in PowerPoint it is sharp at any size and Convert to Shape makes every
 // bar and label editable; the slide can be copied straight into a deck.
-export async function downloadTimelinePptx(template) {
+// The slide-shaped graphic as a PNG, plus the SVG it was drawn from.
+async function slidePng(template) {
   const svg = buildTimelineSvg(template, { branded: true, slide: true });
-  if (!svg) return false;
+  if (!svg) return null;
   const match = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
   const width = match ? Number(match[1]) : 1200;
   const height = match ? Number(match[2]) : 675;
@@ -210,9 +213,16 @@ export async function downloadTimelinePptx(template) {
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('Could not rasterize the timeline');
+  return { png: new Uint8Array(await blob.arrayBuffer()), svg, width, height };
+}
+
+export async function downloadTimelinePptx(template) {
+  const pic = await slidePng(template);
+  if (!pic) return false;
+  const { png, svg, width, height } = pic;
   const { default: JSZip } = await import('jszip');
   const pptx = await buildPicturePptx(JSZip, {
-    png: new Uint8Array(await blob.arrayBuffer()),
+    png,
     svg, imgW: width, imgH: height,
     title: String(template?.name || 'Timeline').trim() || 'Timeline',
   });
@@ -221,6 +231,45 @@ export async function downloadTimelinePptx(template) {
     `${fileSlug(template)}.pptx`,
   );
   return true;
+}
+
+// The timeline as a deck Claude builds, steered by the user's "Slides and
+// One Pagers" Claude Project (its instructions and knowledge, pasted into
+// settings.claudeSlidesProject). Sends the brief and the slide graphic to
+// /api/claude-slides and downloads the .pptx that comes back. Resolves to
+// Claude's one-line note on what it built.
+export async function downloadTimelinePptxWithClaude(template, project, { request = '' } = {}) {
+  const pic = await slidePng(template);
+  if (!pic) return null;
+  let bin = '';
+  for (let i = 0; i < pic.png.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, pic.png.subarray(i, i + 0x8000));
+  }
+  const r = await apiFetch('/api/claude-slides', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: String(template?.name || 'Timeline').trim() || 'Timeline',
+      brief: buildTimelineBrief(template),
+      png: btoa(bin),
+      project,
+      request,
+    }),
+  });
+  const txt = await r.text();
+  let data = null;
+  try { data = JSON.parse(txt); } catch { data = null; }
+  if (!r.ok || !data?.pptx) {
+    throw new Error(data?.error || (r.status === 504 ? 'Claude took too long to build the deck. Try again.' : `HTTP ${r.status}`));
+  }
+  const raw = atob(data.pptx);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  triggerDownload(
+    new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
+    data.filename || `${fileSlug(template)}-Claude.pptx`,
+  );
+  return data.note || '';
 }
 
 // Raster export. Draws the SVG onto a canvas at `scale`× so the PNG stays
