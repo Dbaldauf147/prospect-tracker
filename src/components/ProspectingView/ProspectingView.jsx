@@ -1743,6 +1743,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           updateSettings={updateSettings}
           updateProspect={updateProspect}
           onSelectProspect={onSelectProspect}
+          cdmName={cdmName}
         />
       ) : subtab === 'dmsNoActivity' ? (
         <ProspectingDmsNoActivityTabs
