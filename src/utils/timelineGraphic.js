@@ -691,7 +691,11 @@ function groupPhases(stages, phaseColors) {
   }));
 }
 
-export function buildPhasedSvg(template, { branded = true } = {}) {
+// `slide: true` draws it as a 16:9 deck page (the PDF export): a chart with
+// few rows is wider than a slide, so the grid is carried on down, columns
+// and all, until the footer sits at the bottom of a 16:9 page. A chart
+// already taller than that is left at its own height.
+export function buildPhasedSvg(template, { branded = true, slide = false } = {}) {
   const stages = Array.isArray(template?.stages) ? template.stages : [];
   if (!stages.length) return null;
 
@@ -751,7 +755,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // just its own row. The old 62px floor existed to give the group name room
   // to sit centred beside the steps — it has its own bar now, and the step
   // names moved into the left column, so the body only has to fit its rows.
-  const bandH = groups.map(g => (g.phase ? PHASED.groupHeadH : 0)
+  const naturalBandH = groups.map(g => (g.phase ? PHASED.groupHeadH : 0)
     + subHeadCount(g.steps) * PHASED.subHeadH
     + Math.max(44, g.steps.length * PHASED.rowStep + PHASED.phasePad));
   const monthsBottom = PHASED.headH + PHASED.monthsRowH;
@@ -765,7 +769,17 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
   // timeline anchored to a past month has steps that genuinely ran before
   // today, and clamping those would redate real history.
   const clampBars = template?.clampBarsToToday === true;
-  const gridH = bandH.reduce((a, b) => a + b, 0);
+  // On a slide with room to spare, the bands take some of it first (their
+  // rows sit in the middle of the taller band), so a short plan reads as
+  // open rows rather than a strip of work over an empty page. Capped per
+  // step: past that a row is mostly air, and the rest stays as open grid.
+  const naturalRowsH = naturalBandH.reduce((a, b) => a + b, 0);
+  const spare = slide ? Math.max(0, Math.round(width * 9 / 16) - (gridTop + naturalRowsH + PHASED.footH + 8)) : 0;
+  const bandGrow = groups.map(g => (spare ? Math.floor(Math.min(spare / groups.length, 26 * g.steps.length)) : 0));
+  const bandH = naturalBandH.map((h, i) => h + bandGrow[i]);
+  const rowsH = bandH.reduce((a, b) => a + b, 0);
+  const slidePad = slide ? Math.max(0, Math.round(width * 9 / 16) - (gridTop + rowsH + PHASED.footH + 8)) : 0;
+  const gridH = rowsH + slidePad;
   const height = gridTop + gridH + PHASED.footH + 8;
 
   const x0 = PHASED.labelW;
@@ -898,7 +912,7 @@ export function buildPhasedSvg(template, { branded = true } = {}) {
 
     // Rows and sub-headings interleave, so the vertical position walks rather
     // than being computed from the step's index.
-    let rowTop = y + (group.phase ? PHASED.groupHeadH : 0) + PHASED.phasePad / 2;
+    let rowTop = y + (group.phase ? PHASED.groupHeadH : 0) + PHASED.phasePad / 2 + bandGrow[gi] / 2;
     subRuns(group.steps).forEach((run) => {
       // A sub-heading is subordinate to the band's own header: shorter, and
       // written in its colour on a wash of it rather than white on solid, so
