@@ -493,6 +493,8 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         </button>
       </nav>
 
+      <KeepAwake />
+
       <div className={styles.settingsWrap} ref={settingsWrapRef}>
         <button
           className={(settingsOpen || activeInSettings) ? styles.settingsBtnActive : styles.settingsBtn}
@@ -534,8 +536,6 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           </div>
         )}
       </div>
-
-      <KeepAwake />
 
       <div className={styles.userSection}>
         <div className={styles.avatar}>
