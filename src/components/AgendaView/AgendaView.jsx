@@ -8,6 +8,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { BULK_ADD_LEAD_SOURCE, LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import { isOwnTarget, OWN_TARGET_TIER_LABEL } from '../../utils/tierSource';
 import { pickFilterMatches, pickFilterIsActive, pickListOptions } from '../../utils/columnFilter';
 import { ColumnFilterCell } from '../common/DataTable';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
@@ -408,6 +409,19 @@ function contactOutsideNorthAmerica(country) {
   if (!raw) return false;
   if (/^(us|ca|mx|pr)$/i.test(raw)) return false;
   return classifyHqCountry(raw) === OUTSIDE_NORTH_AMERICA;
+}
+
+// The Tier a matched company shows on this page: its own Tier 1 or Tier 2;
+// otherwise Strategic Target when the card's "Not on tier list, but Dan
+// target" box is ticked (whoever its CDM is); otherwise Tier 3 when it is
+// on this CDM's book, as My Accounts reads it. '' when it is none of those.
+function bulkTierOf(prospect, cdmName) {
+  if (!prospect) return '';
+  const explicit = String(prospect.tier || '').trim();
+  if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
+  if (isOwnTarget(prospect)) return OWN_TARGET_TIER_LABEL;
+  if (matchesCdm(prospect.cdm, cdmName)) return 'Tier 3';
+  return '';
 }
 
 // What the Bulk Add Contacts table's layout is called in settings.tablePrefs.
@@ -1110,12 +1124,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       const key = p ? `p:${p.id}` : `c:${name.toLowerCase()}`;
       let entry = byKey.get(key);
       if (!entry) {
-        let tier = '';
-        if (p) {
-          const explicit = (p.tier || '').trim();
-          if (explicit === 'Tier 1' || explicit === 'Tier 2') tier = explicit;
-          else if (matchesCdm(p.cdm, cdmName)) tier = 'Tier 3';
-        }
+        const tier = bulkTierOf(p, cdmName);
         entry = {
           key, name, prospect: p, tier,
           status: String(p?.status || '').trim(),
@@ -2020,12 +2029,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           : live.suggestedCompany;
       }
 
-      let tier = '';
-      if (!dismissed && prospect) {
-        const explicit = (prospect.tier || '').trim();
-        if (explicit === 'Tier 1' || explicit === 'Tier 2') tier = explicit;
-        else if (matchesCdm(prospect.cdm, cdmName)) tier = 'Tier 3';
-      }
+      const tier = dismissed ? '' : bulkTierOf(prospect, cdmName);
 
       // CDM / Other Reps stay on a dismissed row, as the cell shows them.
       let cdmReps = '';
@@ -2655,11 +2659,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         case 'notes':            return r.notes || '';
         case 'tier': {
           const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
-          if (!p) return '';
-          const explicit = (p.tier || '').trim();
-          if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
-          if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
-          return '';
+          return bulkTierOf(p, cdmName);
         }
         // What the cell prints: the CDM and the other reps. Shown even
         // when the company suggestion was dismissed - who owns the account
@@ -2748,11 +2748,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           case 'notes':            return r.notes || '';
           case 'tier': {
             const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
-            if (!p) return '';
-            const explicit = (p.tier || '').trim();
-            if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
-            if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
-            return '';
+            return bulkTierOf(p, cdmName);
           }
           default:                 return '';
         }
@@ -4410,22 +4406,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                         // alongside the dismissed pill.
                         if (dismissedSuggestedCompanies.has(r.email)) return <span className={styles.metaText}>-</span>;
                         if (!prospect) return <span className={styles.metaText}>-</span>;
-                        const explicit = (prospect.tier || '').trim();
-                        let t;
-                        if (explicit === 'Tier 1' || explicit === 'Tier 2') {
-                          t = explicit;
-                        } else if (matchesCdm(prospect.cdm, cdmName)) {
-                          // Prospect is in My Accounts (matching CDM) but
-                          // has no explicit Tier 1/2 marker — default
-                          // to Tier 3 the same way MyAccountsView does.
-                          t = 'Tier 3';
-                        } else {
-                          return <span className={styles.metaText}>-</span>;
-                        }
+                        const t = bulkTierOf(prospect, cdmName);
+                        if (!t) return <span className={styles.metaText}>-</span>;
                         const colors = t === 'Tier 1' ? { bg: '#DBEAFE', color: '#1E40AF' }
                           : t === 'Tier 2' ? { bg: '#FEF3C7', color: '#92400E' }
+                          : t === OWN_TARGET_TIER_LABEL ? { bg: '#EDE9FE', color: '#6D28D9' }
                           : { bg: '#F3F4F6', color: '#6B7280' };
-                        return <span style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, background: colors.bg, color: colors.color }}>{t}</span>;
+                        return <span title={t === OWN_TARGET_TIER_LABEL ? 'Not on the tier list, but ticked as your target on the company card' : undefined} style={{ whiteSpace: 'nowrap', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, background: colors.bg, color: colors.color }}>{t}</span>;
                       })()}</td>
                     ),
                     cdmReps: () => (
