@@ -90,6 +90,7 @@ const NO_RELATIONSHIP = () => null;
 // company's own people and, when it has an owner, a second for the owner's.
 function RosterTable({
   contacts,
+  competitorContactIds = null,
   company,
   settings,
   updateSettings,
@@ -204,9 +205,17 @@ function RosterTable({
         const name = fullNameOf(c);
         const standing = sentimentMark(sentimentFor(settings?.contactSentiment, c.id || c.vid));
         const isDM = contactHasTag(c, 'decision maker');
+        const isCompetitor = !!competitorContactIds?.has(String(c.id || c.vid || ''));
         return (
           <span style={{ display: 'inline-block', fontWeight: 600, color: '#1E293B' }}>
             {name || '-'}
+            {isCompetitor && (
+              <span
+                data-competitor-badge
+                title={`${name || 'This contact'} is marked as a competitor consultant: they work for another firm. Untick it on their card to undo.`}
+                style={{ marginLeft: '0.3rem', fontSize: '0.55rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 999, padding: '0 5px', textTransform: 'uppercase', letterSpacing: '0.03em', whiteSpace: 'nowrap' }}
+              >Competitor</span>
+            )}
             {standing && (
               <span
                 title={`${name || 'This contact'} - ${standing.label}`}
@@ -562,7 +571,7 @@ function RosterTable({
         );
       },
     },
-  ].filter(Boolean), [selectable, actionable, settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
+  ].filter(Boolean), [selectable, actionable, competitorContactIds, settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
     onHideContact, hidingContact, onDeleteContact, deletingContact, emailCountsFor, sourceOf, company,
     allSelected, someSelected, selectableIds, companyOf, relationshipOf]);
 
