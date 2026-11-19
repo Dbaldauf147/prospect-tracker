@@ -29,7 +29,7 @@ import {
   getTimelineRange, resolveMonthWindow, describeMonthWindow, stagesOutsideWindow,
   timelineBaseMonth, placeStages, placementBaseMonth, parseDependsOn,
 } from '../../utils/timelineDates';
-import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng, downloadTimelinePdf, downloadTimelinePptx } from '../../utils/timelineExport';
+import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng, downloadTimelinePptx } from '../../utils/timelineExport';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 import {
   stageTableColumnsForMode, resolveStageTableColumns,
@@ -631,17 +631,6 @@ function TimelineVisual({ template, onChangeFormat, onChange }) {
       setBusy('');
     }
   }
-  async function handlePdf() {
-    setBusy('pdf');
-    try {
-      await downloadTimelinePdf(template);
-    } catch (err) {
-      console.error('Timeline PDF export failed', err);
-      window.alert('Could not build the PDF: ' + (err?.message || 'unknown error'));
-    } finally {
-      setBusy('');
-    }
-  }
   const svg = useMemo(() => buildTimelineSvg(template, { branded: true }), [template]);
   // Steps the window leaves out are drawn nowhere and exported nowhere, so
   // this is the only place the user is told about them. Same helper the
@@ -740,16 +729,6 @@ function TimelineVisual({ template, onChangeFormat, onChange }) {
           title="Download as a one-slide PowerPoint in Schneider Electric format, ready to copy into a deck"
         >
           {busy === 'pptx' ? 'Building…' : 'PPT'}
-        </button>
-        <button
-          type="button"
-          className={styles.exportBtn}
-          data-timeline-pdf
-          onClick={handlePdf}
-          disabled={!svg || busy === 'pdf'}
-          title="Download as a one-page PDF slide in Schneider Electric format"
-        >
-          {busy === 'pdf' ? 'Building…' : 'PDF'}
         </button>
         <button type="button" className={styles.exportBtn} onClick={handlePng} disabled={!svg || busy === 'png'}>
           {busy === 'png' ? 'Building…' : 'PNG'}
