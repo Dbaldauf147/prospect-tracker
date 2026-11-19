@@ -8,6 +8,7 @@ import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { MAX_ITEMS, buildRequest, cleanItems, readSummaries } from './_lib/summarizeNotes.js';
 import { buildScopeRequest, readScopeSummaries } from './_lib/summarizeScope.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 // Each kind's request and reader. Both answer { [id]: string[] }.
 const KINDS = {
@@ -54,7 +55,7 @@ async function handler(req, res, auth) {
       return res.status(429).json({ error: 'Claude is rate-limited right now - try again in a minute.' });
     }
     if (err instanceof Anthropic.APIError) {
-      return res.status(502).json({ error: `Claude API error ${err.status ?? ''}: ${err.message}`.trim() });
+      return res.status(502).json({ error: claudeErrorMessage(err.status, err.message) });
     }
     throw err;
   }

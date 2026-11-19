@@ -14,6 +14,7 @@
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { researchBudgetMs } from './_lib/researchBudget.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 // The jurisdiction keys the client persists under, paired with the exact
 // question wording so Claude answers the same thing the UI screens for.
@@ -110,7 +111,7 @@ Every question key must appear in both answers and notes.`;
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return res.status(resp.status).json({ error: `Claude API error: ${errText}` });
+      return res.status(resp.status).json({ error: claudeErrorMessage(resp.status, errText) });
     }
 
     const data = await resp.json();

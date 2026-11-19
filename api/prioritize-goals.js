@@ -4,6 +4,7 @@
 // Daily Success Log bullets.
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') {
@@ -82,7 +83,7 @@ Rank every goal by leverage against the pipeline state above and produce 3-6 con
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return res.status(resp.status).json({ error: `Claude API error: ${errText}` });
+      return res.status(resp.status).json({ error: claudeErrorMessage(resp.status, errText) });
     }
 
     const data = await resp.json();

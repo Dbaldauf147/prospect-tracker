@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { buildRequest, cleanVerticals, readSuggestion } from './_lib/suggestVertical.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 // A list longer than this is not a dropdown somebody picks from, and an
 // enum that size is a schema to compile rather than a classification.
@@ -50,7 +51,7 @@ async function handler(req, res, auth) {
       return res.status(429).json({ error: 'Claude is rate-limited right now - try again in a minute.' });
     }
     if (err instanceof Anthropic.APIError) {
-      return res.status(502).json({ error: `Claude API error ${err.status ?? ''}: ${err.message}`.trim() });
+      return res.status(502).json({ error: claudeErrorMessage(err.status, err.message) });
     }
     throw err;
   }

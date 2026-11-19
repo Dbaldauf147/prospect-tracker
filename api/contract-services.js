@@ -12,6 +12,7 @@
 // newlines, and hand-parsed JSON breaks on them.
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 // Vercel caps a serverless request body at 4.5 MB. Base64 inflates by a
 // third, so this is the largest PDF that can reach the function at all; the
@@ -148,7 +149,7 @@ async function handler(req, res, auth) {
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return res.status(resp.status).json({ error: `Claude API error: ${errText}` });
+      return res.status(resp.status).json({ error: claudeErrorMessage(resp.status, errText) });
     }
 
     const data = await resp.json();

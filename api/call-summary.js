@@ -22,6 +22,7 @@
 // should not read like different documents.
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 // A two-hour call runs ~120k characters. Claude can take far more, but
 // the tail of a long call is where the commitments are, so an
@@ -213,7 +214,7 @@ Classify and summarize this meeting, and return the JSON described in the system
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return res.status(resp.status).json({ error: `Claude API error: ${errText}` });
+      return res.status(resp.status).json({ error: claudeErrorMessage(resp.status, errText) });
     }
 
     const data = await resp.json();

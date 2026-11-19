@@ -18,6 +18,7 @@ import { fetchHeadlines, nameVariants } from './newsFeeds.js';
 import { classifyHeadline, stripPublisher } from './dealHeadline.js';
 import { fetchNewsletterItems } from './newsletterInbox.js';
 import { dedupeDeals, sameDeal } from './dealDedupe.js';
+import { claudeErrorMessage } from './claudeError.js';
 
 // A prospect opts in with `trackAcquisitionNews: true`, written by the
 // checkbox on the company popup (ProspectModal).
@@ -244,7 +245,7 @@ Return the JSON object as specified.`;
     const errText = await resp.text();
     const halt = haltReasonFor(resp.status, errText);
     if (halt) throw new ResearchHaltedError(halt);
-    return { deals: [], error: `Claude API error ${resp.status}: ${errText.slice(0, 300)}` };
+    return { deals: [], error: claudeErrorMessage(resp.status, errText) };
   }
 
   const data = await resp.json();
@@ -457,7 +458,7 @@ Search the web before answering - do not answer from memory alone. Return the JS
       const errText = await resp.text();
       const halt = haltReasonFor(resp.status, errText);
       if (halt) throw new ResearchHaltedError(halt);
-      return { deals: [], error: `Claude API error ${resp.status}: ${errText.slice(0, 300)}` };
+      return { deals: [], error: claudeErrorMessage(resp.status, errText) };
     }
 
     const data = await resp.json();
