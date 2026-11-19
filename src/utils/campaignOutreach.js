@@ -79,16 +79,20 @@ function isManuallyPaused(c, nowMs) {
 /**
  * Is this campaign paused on its own, with nobody having pressed Pause?
  *
- * A campaign that has gone to everyone on its list (100% sent) and whose
- * three Sent To audiences are each either ticked or planned for a later
- * day has nothing to do today: the next move is a date that has not come.
- * So it reads Paused instead of Active, and leaves the Prospecting ladder,
- * without anyone parking it by hand.
+ * A campaign whose three Sent To audiences are each either ticked or
+ * planned for a later day has nothing to do today: the next move is a date
+ * that has not come. So it reads Paused instead of Active, and leaves the
+ * Prospecting ladder, without anyone parking it by hand.
  *
- * Like a manual pause it lifts by itself: on the day the earliest planned
- * date arrives (or once more contacts are added and it is no longer 100%
- * sent) the campaign is Active again. With all three audiences ticked there
- * is no date to wait for and it stays paused.
+ * While a date is still pending, how much of the list has been sent does
+ * not matter: the plan says the next send is on that day, so a campaign at
+ * 0% waits for it like one at 100%. Like a manual pause it lifts by itself,
+ * on the day the earliest planned date arrives.
+ *
+ * With all three audiences ticked there is no date to wait for, so the
+ * pause would never lift. That one only holds once the campaign has gone to
+ * everyone on its list (100% sent); short of that it is still work owed and
+ * stays Active.
  *
  * Inactive wins: a campaign marked inactive, or gone quiet for 60 days,
  * stays Inactive.
@@ -96,11 +100,11 @@ function isManuallyPaused(c, nowMs) {
 export function isCampaignAutoPaused(c, nowMs = Date.now()) {
   if (!c || typeof c !== 'object') return false;
   if (!isActiveUnderneath(c, nowMs)) return false;
-  if (!isCampaignFullySent(c)) return false;
   const sent = campaignAudience(c);
   const dates = campaignSchedule(c);
   const today = localDay(nowMs);
-  return CAMPAIGN_AUDIENCES.every(a => sent[a.key] || (dates[a.key] && dates[a.key] > today));
+  if (!CAMPAIGN_AUDIENCES.every(a => sent[a.key] || (dates[a.key] && dates[a.key] > today))) return false;
+  return CAMPAIGN_AUDIENCES.some(a => !sent[a.key]) || isCampaignFullySent(c);
 }
 
 /**
@@ -123,7 +127,7 @@ export function campaignAutoPauseUntil(c, nowMs = Date.now()) {
  * whatever it was before, with nothing to remember to undo. An unparseable
  * value reads as not paused — a campaign silently parked forever by a bad
  * date is the one outcome worth ruling out. The other is the automatic
- * pause (isCampaignAutoPaused): fully sent, every audience ticked or dated.
+ * pause (isCampaignAutoPaused): every audience ticked or dated.
  */
 export function isCampaignPaused(c, nowMs = Date.now()) {
   return isManuallyPaused(c, nowMs) || isCampaignAutoPaused(c, nowMs);
