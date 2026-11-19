@@ -11,10 +11,15 @@
 //                    the server with the page's own rule, plus a slim card
 //                    per prospect (src/utils/backupMembership), for the All
 //                    Missing History "who joined that day" popup
+//   part=quotedFigures → the YOY Quoted Projections figures as that
+//                    backup's Opps and BFO Activity stood, worked out here
+//                    so the page does not download the whole backup
+//                    (src/utils/quotedBackfill)
 
 import { withAuth } from './_lib/http.js';
 import { downloadGcsObject } from './_lib/gcs.js';
 import { membershipFromBackup } from '../src/utils/backupMembership.js';
+import { quotedFiguresFromBackup } from '../src/utils/quotedBackfill.js';
 
 async function handler(req, res, auth) {
   const bucket = process.env.BACKUP_GCS_BUCKET;
@@ -36,6 +41,9 @@ async function handler(req, res, auth) {
 
     if (part === 'membership') {
       return res.status(200).json({ name, generatedAt: backup?.generatedAt || null, part, value: membershipFromBackup(backup, String(req.query?.cdm || '').trim()) });
+    }
+    if (part === 'quotedFigures') {
+      return res.status(200).json({ name, generatedAt: backup?.generatedAt || null, part, value: quotedFiguresFromBackup(backup) });
     }
     if (part) {
       const value = backup?.collections ? backup.collections[part] : undefined;

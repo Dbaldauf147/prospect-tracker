@@ -15,6 +15,8 @@ import {
 } from '../../utils/oppsMetrics';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { liveQuotedFigures } from '../../utils/quotedLiveSnapshot';
+import { backupForMonthEnd, backfilledMonth } from '../../utils/quotedBackfill';
+import { apiFetch } from '../../utils/apiFetch';
 import { loadCommissions, COMMISSIONS_LIST_EVENT } from '../../utils/commissionsStore';
 import { loadDealsList } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
@@ -299,6 +301,9 @@ function quotedFiscalYear(nowMs = Date.now()) {
 // so it's identified by its values still matching).
 function quotedStoredSource(key, saved) {
   if (!saved) return 'No values recorded';
+  if (saved._fromBackup) {
+    return `Month-end figures recovered from the nightly backup taken ${String(saved._capturedAt || '').slice(0, 10)}, the first after the month closed`;
+  }
   if (saved._auto) return 'Auto-captured month-end snapshot (Opps + BFO Activity)';
   if (saved._rebuilt) {
     // A rebuild that comes out identical to the live month reconstructed
@@ -377,6 +382,21 @@ const CalcPanelContext = createContext(null);
 // space or eating pointer events just in case the portal target is
 // missing (then it falls back to a small floating box).
 const TOOLTIP_WRAPPER_STYLE = { pointerEvents: 'none', zIndex: 30 };
+
+// Months already looked for in the backups this session, found or not, so a
+// month with no backup to recover from is asked about once, not on every
+// change to the table.
+const backfillTried = new Set();
+
+// The two calendar months before the one `nowMs` is in, newest first. The
+// backups are a 30-deep ring, so nothing older can be recovered.
+function recentFinishedMonthKeys(nowMs = Date.now()) {
+  const d = new Date(nowMs);
+  return [1, 2].map((back) => {
+    const m = new Date(d.getFullYear(), d.getMonth() - back, 1);
+    return `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`;
+  });
+}
 
 export function YOYView() {
   const [opps, setOpps] = useState(null);
@@ -681,6 +701,49 @@ export function YOYView() {
     updateQuotedTable({ ...quotedTable, ...patch });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveCurrentMonth]);
+
+  // A just-finished month that was never captured at its end (so the rebuild
+  // above owns it, and it follows today's pipeline) is recovered from the
+  // first nightly backup made after it closed: see utils/quotedBackfill. The
+  // entry it writes is a month-end capture, which takes the month off the
+  // rebuild for good. A value typed through "Edit values" is never touched.
+  useEffect(() => {
+    const wanted = recentFinishedMonthKeys().filter(key => !backfillTried.has(key) && rebuildOwnsMonth(quotedTable[key] || null, key));
+    if (wanted.length === 0) return;
+    wanted.forEach(key => backfillTried.add(key));
+    // Not cancelled when the table changes under it (the rebuild above
+    // writes often): each month is only asked about once a session.
+    (async () => {
+      try {
+        const listResp = await apiFetch('/api/backups-list');
+        if (!listResp.ok) return;
+        const { files } = await listResp.json();
+        const patch = {};
+        for (const key of wanted) {
+          const file = backupForMonthEnd(files, key);
+          if (!file) continue;
+          const r = await apiFetch(`/api/backup-fetch?name=${encodeURIComponent(file.name)}&part=quotedFigures`);
+          if (!r.ok) continue;
+          const entry = backfilledMonth((await r.json())?.value, file);
+          if (entry) patch[key] = entry;
+        }
+        if (Object.keys(patch).length === 0) return;
+        // Onto the table as it is now, not as it was when this started, and
+        // only where the month is still the rebuild's to replace.
+        const latest = loadQuotedProjections();
+        const next = { ...latest };
+        let changed = false;
+        for (const [key, entry] of Object.entries(patch)) {
+          if (!rebuildOwnsMonth(latest[key] || null, key)) continue;
+          // BFO Pipe Total already recorded for the month stands when the
+          // backup held no BFO Activity paste to total.
+          next[key] = entry.bfoPipe == null && latest[key]?.bfoPipe != null ? { ...entry, bfoPipe: latest[key].bfoPipe } : entry;
+          changed = true;
+        }
+        if (changed) updateQuotedTable(next);
+      } catch { /* offline or no backups: the month stays as the rebuild has it */ }
+    })();
+  }, [quotedTable]);
 
   // Close Rate — stacked bar of In Progress / Sold / Not Sold per Open
   // Year (percentages summing to 100), plus two C/R lines.
