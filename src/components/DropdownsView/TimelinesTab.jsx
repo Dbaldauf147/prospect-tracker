@@ -29,7 +29,7 @@ import {
   getTimelineRange, resolveMonthWindow, describeMonthWindow, stagesOutsideWindow,
   timelineBaseMonth, placeStages, placementBaseMonth, parseDependsOn,
 } from '../../utils/timelineDates';
-import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng, downloadTimelinePdf } from '../../utils/timelineExport';
+import { openTimelineReport, downloadTimelineSvg, downloadTimelinePng, downloadTimelinePdf, downloadTimelinePptx } from '../../utils/timelineExport';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
 import {
   stageTableColumnsForMode, resolveStageTableColumns,
@@ -620,6 +620,17 @@ function TimelineVisual({ template, onChangeFormat, onChange }) {
   // calendar months, so there is nothing to choose then.
   const hasRange = !!getTimelineRange(template);
   const monthNames = hasRange || template.monthMode === 'calendar';
+  async function handlePptx() {
+    setBusy('pptx');
+    try {
+      await downloadTimelinePptx(template);
+    } catch (err) {
+      console.error('Timeline PowerPoint export failed', err);
+      window.alert('Could not build the PowerPoint: ' + (err?.message || 'unknown error'));
+    } finally {
+      setBusy('');
+    }
+  }
   async function handlePdf() {
     setBusy('pdf');
     try {
@@ -719,6 +730,16 @@ function TimelineVisual({ template, onChangeFormat, onChange }) {
         </button>
         <button type="button" className={styles.exportBtn} onClick={() => downloadTimelineSvg(template)} disabled={!svg}>
           SVG
+        </button>
+        <button
+          type="button"
+          className={styles.exportBtn}
+          data-timeline-pptx
+          onClick={handlePptx}
+          disabled={!svg || busy === 'pptx'}
+          title="Download as a one-slide PowerPoint in Schneider Electric format, ready to copy into a deck"
+        >
+          {busy === 'pptx' ? 'Building…' : 'PPT'}
         </button>
         <button
           type="button"
