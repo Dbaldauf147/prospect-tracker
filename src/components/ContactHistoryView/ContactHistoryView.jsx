@@ -97,7 +97,10 @@ export function ContactHistoryView({ prospects = [], cdmName = '', settings, upd
   };
 
   return (
-    <div style={{ padding: '0.25rem 0 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', maxWidth: 1200 }}>
+    <div style={{ padding: '0.25rem 0 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      {/* The chart keeps a readable width; the contacts table under it gets
+          the whole page. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxWidth: 1200 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 300px', maxWidth: 760 }}>
           How many contacts are on the Key, Client and DM at Tier 1-3 rosters each week. The counts are the ones the
@@ -191,6 +194,7 @@ export function ContactHistoryView({ prospects = [], cdmName = '', settings, upd
             </tbody>
           </table>
         )}
+      </div>
       </div>
 
       <ContactHistoryContacts
