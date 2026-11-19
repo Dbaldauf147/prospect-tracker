@@ -712,6 +712,42 @@
 .runStatusBtn:hover:not(:disabled) { background: #F1F5F9; }
 .runStatusBtn:disabled { opacity: 0.6; cursor: default; }
 
+/* The strip at the very top of the page: last refresh and time to the next. */
+.runClock {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid #E2E8F0;
+  border-radius: var(--radius-md);
+  background: #F8FAFC;
+  font-size: 0.9rem;
+  color: #0F172A;
+  flex-shrink: 0;
+}
+
+.runClockItem {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+
+.runClockLabel {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748B;
+}
+
+.runClockWhen {
+  font-size: 0.8rem;
+  color: #64748B;
+}
+
+.runClockOverdue { color: #B91C1C; }
+
 /* --- Agents page sub-tab nav (Automations / Prompt Library) --- */
 .subTabs {
   display: flex;
