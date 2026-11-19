@@ -1381,7 +1381,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     if (e) e.stopPropagation();
     const c = savedCampaigns[index];
     if (!c) return;
-    // An automatic pause (fully sent, every audience ticked or dated) has
+    // An automatic pause (every audience ticked or dated) has
     // no timer to clear, so the way out of it is marking the campaign
     // inactive.
     if (isCampaignAutoPaused(c)) {
@@ -1476,7 +1476,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     if (isCampaignAutoPaused(c)) {
       const until = campaignAutoPauseUntil(c);
       return until
-        ? `Paused automatically: 100% sent and every audience is ticked or dated. Resumes ${fmtDate(`${until}T00:00:00`)}`
+        ? `Paused automatically: every audience is ticked or has a date still to come. Resumes ${fmtDate(`${until}T00:00:00`)}`
         : 'Paused automatically: 100% sent and every audience is ticked';
     }
     return `Paused - resumes ${pauseLeftLabel(c.pausedUntil)} (${fmtDate(c.pausedUntil)})`;

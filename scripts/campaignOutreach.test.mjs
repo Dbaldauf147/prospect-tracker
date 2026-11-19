@@ -100,8 +100,8 @@ check('a manual Inactive beats it too',
   isCampaignActive({ refreshedAt: daysAgo(1), manualActive: false }, NOW), false);
 
 // --- automatic pause --------------------------------------------------
-// 100% sent, and every audience either ticked or planned for a later day:
-// nothing to do today, so the campaign pauses itself. Local noon, so the
+// Every audience either ticked or planned for a later day: nothing to do
+// today, so the campaign pauses itself (all ticked also needs 100% sent). Local noon, so the
 // local day is the same in any timezone the suite runs in.
 {
   const T = new Date(2026, 10, 18, 12).getTime();
@@ -114,8 +114,15 @@ check('a manual Inactive beats it too',
   const allTicked = { ...done, sentTo: { clients: true, keyContacts: true, prospects: true } };
   check('auto-pause: all three ticked', isCampaignAutoPaused(allTicked, T), true);
   check('auto-pause: all ticked has no date to wait for', campaignAutoPauseUntil(allTicked, T), '');
-  check('auto-pause: not while mail is still to go out',
-    campaignStatus({ ...mixed, uniqueRecipients: 10 }, T), 'active');
+  // A pending date is the plan for the next send, so the pause holds
+  // whatever has gone out so far.
+  check('auto-pause: a pending date pauses it with mail still to go out',
+    campaignStatus({ ...mixed, uniqueRecipients: 10 }, T), 'paused');
+  const unsent = { ...done, uniqueRecipients: 0, totalContacts: 19, sentTo: { clients: true, prospects: true }, scheduledFor: { keyContacts: '2026-12-02' } };
+  check('auto-pause: two ticked and one dated, nothing sent yet', campaignStatus(unsent, T), 'paused');
+  check('auto-pause: nothing sent yet, lifts on the date', campaignAutoPauseUntil(unsent, T), '2026-12-02');
+  check('auto-pause: all ticked with mail still to go out stays active',
+    campaignStatus({ ...allTicked, uniqueRecipients: 10 }, T), 'active');
   check('auto-pause: not with an audience neither ticked nor dated',
     campaignStatus({ ...done, sentTo: { clients: true }, scheduledFor: { keyContacts: '2026-11-25' } }, T), 'active');
   check('auto-pause: a date that has arrived makes it active again',
