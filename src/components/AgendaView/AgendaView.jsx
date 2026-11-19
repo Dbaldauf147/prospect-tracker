@@ -1472,6 +1472,16 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     return null;
   }, [prospectByCompanyKey, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc, GENERIC_COMPANY_TOKENS]);
 
+  // Email domains marked "Do not map" in the Apply suggestions popup: the
+  // matcher leaves rows on them alone (no match, no Suggested Company) and
+  // the popup stops counting them as unmapped. Saved in settings so the
+  // answer sticks for the next upload.
+  const doNotMapDomainList = settings?.bulkDoNotMapDomains;
+  const doNotMapDomains = useMemo(
+    () => new Set((Array.isArray(doNotMapDomainList) ? doNotMapDomainList : []).map(d => String(d || '').trim().toLowerCase()).filter(Boolean)),
+    [doNotMapDomainList],
+  );
+
   // Look up match details for a single row based on the current prospects snapshot.
   // Used both during initial enrichment AND at render time so the columns refresh
   // after the prospect's emailDomain is auto-patched. Optionally accepts the
@@ -1481,6 +1491,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   const lookupMatch = useCallback((email, row = null) => {
     const at = email.lastIndexOf('@');
     const domain = at >= 0 ? email.slice(at + 1).toLowerCase() : '';
+    if (domain && doNotMapDomains.has(domain)) {
+      return { domain, matched: null, wasExactMatch: false, suggestedCompany: '', companyDomains: [domain], suggestSource: '' };
+    }
     let matched = domain ? domainToProspect.get(domain) : null;
     const wasExactMatch = !!matched;
     let source = matched ? 'domain-exact' : '';
@@ -1536,7 +1549,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     const domainSet = matched ? prospectDomains.get(matched.company.toLowerCase()) : null;
     const companyDomains = domainSet ? Array.from(domainSet).sort() : (domain ? [domain] : []);
     return { domain, matched, wasExactMatch, suggestedCompany, companyDomains, suggestSource: source };
-  }, [domainToProspect, prospectDomains, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc, hubspotByEmail, matchProspectByCompanyName]);
+  }, [domainToProspect, prospectDomains, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc, hubspotByEmail, matchProspectByCompanyName, doNotMapDomains]);
 
   const enrichRow = useCallback((r) => {
     const { domain, matched, wasExactMatch } = lookupMatch(r.email, r);
@@ -2956,8 +2969,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       if (!byDomain.has(d)) byDomain.set(d, []);
       byDomain.get(d).push(r);
     }
-    const STATUS_ORDER = { unmapped: 0, guessed: 1, mapped: 2 };
+    const STATUS_ORDER = { unmapped: 0, guessed: 1, mapped: 2, ignored: 3 };
     return Array.from(byDomain, ([domain, domainRows]) => {
+      if (doNotMapDomains.has(domain)) {
+        return { domain, rows: domainRows, prospect: null, status: 'ignored', via: '' };
+      }
       const mapped = domainToProspect.get(domain) || null;
       let guess = null;
       if (!mapped) {
@@ -2975,7 +2991,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       };
     }).sort((a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
       || (b.rows.length - a.rows.length) || a.domain.localeCompare(b.domain));
-  }, [applyPreview, suggestionScopeRows, domainToProspect, domainSource, lookupMatch]);
+  }, [applyPreview, suggestionScopeRows, domainToProspect, domainSource, lookupMatch, doNotMapDomains]);
 
   // Per-domain edit state in the popup: { [domain]: { draft, busy, error } }.
   const [domainMapEdits, setDomainMapEdits] = useState({});
@@ -2992,7 +3008,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       setDomainMapEdit(line.domain, { error: `"${name}" is not a Table View company. Pick one from the list.` });
       return;
     }
-    if (!onUpdateProspect) return;
+    if (!onUpdateProspect) return false;
     const learned = estimateEmailDomainCandidates(line.rows).candidates.find(c => c.domain === line.domain);
     const writes = remapDomainWrites(prospects, line.domain, target, learned?.entry || '');
     setDomainMapEdit(line.domain, { busy: true, error: '' });
@@ -3000,18 +3016,45 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       for (const w of writes) await onUpdateProspect(w.prospect.id, { emailDomain: w.emailDomain });
     } catch {
       setDomainMapEdit(line.domain, { busy: false, error: 'Could not save to Table View. Try again.' });
-      return;
+      return false;
     }
     if (target) patchedPairsRef.current.add(`${target.id}|${line.domain}`);
+    rematchDomainRows(line.domain, target);
+    setDomainMapEdits(prev => { const n = { ...prev }; delete n[line.domain]; return n; });
+    return true;
+  }
+
+  // Point every grid row on `domain` at `target` (null clears the match).
+  function rematchDomainRows(domain, target) {
     setRows(prev => {
       const next = prev.map(r => {
-        if (!isRealEmail(r.email) || r.email.slice(r.email.lastIndexOf('@') + 1).toLowerCase() !== line.domain) return r;
-        return { ...r, _matchedProspectId: target ? target.id : null, _matchedDomain: line.domain, _domainAlreadyKnown: !!target };
+        if (!isRealEmail(r.email) || r.email.slice(r.email.lastIndexOf('@') + 1).toLowerCase() !== domain) return r;
+        return { ...r, _matchedProspectId: target ? target.id : null, _matchedDomain: domain, _domainAlreadyKnown: !!target };
       });
       saveCache(next);
       return next;
     });
-    setDomainMapEdits(prev => { const n = { ...prev }; delete n[line.domain]; return n; });
+  }
+
+  // "Do not map": this domain belongs to no Table View company and should
+  // stop being guessed at. A domain that is mapped today is unmapped first,
+  // so the saved Email Domain and the do-not-map list never disagree.
+  // Turning it off only lifts the block; the guess (if any) comes back as
+  // "Guessed, not saved" for the usual Save.
+  async function setDomainDoNotMap(line, on) {
+    if (!updateSettings) return;
+    const cur = (settingsRef.current?.bulkDoNotMapDomains || []).filter(d => d !== line.domain);
+    if (on) {
+      if (line.status === 'mapped') {
+        if (!(await saveDomainMapping(line, ''))) return;
+      } else {
+        rematchDomainRows(line.domain, null);
+        setDomainMapEdits(prev => { const n = { ...prev }; delete n[line.domain]; return n; });
+      }
+      cur.push(line.domain);
+      cur.sort();
+    }
+    updateSettings({ bulkDoNotMapDomains: cur });
   }
 
   const prospectWriteGroups = useMemo(() => {
@@ -4558,6 +4601,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 {domainMappingRows.length > 0 && (() => {
                   const unmapped = domainMappingRows.filter(l => l.status === 'unmapped').length;
                   const guessed = domainMappingRows.filter(l => l.status === 'guessed').length;
+                  const ignored = domainMappingRows.filter(l => l.status === 'ignored').length;
                   const VIA_LABELS = {
                     emailDomain: "company's Email Domain list",
                     website: "company's Website",
@@ -4567,10 +4611,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       <div style={sectionTitle}>
                         Email domain mapping ({domainMappingRows.length} domain{domainMappingRows.length === 1 ? '' : 's'}
                         {unmapped > 0 ? <span style={{ color: '#B91C1C' }}>, {unmapped} unmapped</span> : null}
-                        {guessed > 0 ? <span style={{ color: '#92400E' }}>, {guessed} guessed</span> : null})
+                        {guessed > 0 ? <span style={{ color: '#92400E' }}>, {guessed} guessed</span> : null}
+                        {ignored > 0 ? <span style={{ color: '#64748B' }}>, {ignored} do not map</span> : null})
                       </div>
                       <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.4rem' }}>
-                        Which Table View company each email domain belongs to. Saving a mapping writes it to the company's Email Domain in Table View (moving it off any other company) and re-matches the rows on that domain, so the suggestions below update.
+                        Which Table View company each email domain belongs to. Saving a mapping writes it to the company's Email Domain in Table View (moving it off any other company) and re-matches the rows on that domain, so the suggestions below update. Do not map leaves a domain out of company matching, now and on later uploads, until you undo it.
                       </div>
                       <datalist id="apply-preview-company-list">
                         {prospectCompanyOptions.map(name => <option key={name} value={name} />)}
@@ -4595,6 +4640,28 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                               ? draft.trim().toLowerCase() !== current.trim().toLowerCase()
                               : !!draft.trim();
                             const names = line.rows.map(r => rowName.get(r.email) || r.email);
+                            if (line.status === 'ignored') {
+                              return (
+                                <tr key={line.domain} style={{ color: '#64748B' }}>
+                                  <td style={{ ...td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.72rem', fontWeight: 600 }}>@{line.domain}</td>
+                                  <td style={td} title={names.join(', ')}>
+                                    {line.rows.length}: {names.slice(0, 2).join(', ')}{names.length > 2 ? `, +${names.length - 2} more` : ''}
+                                  </td>
+                                  <td style={td}>Do not map</td>
+                                  <td style={{ ...td, minWidth: 320 }}>
+                                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                                      <span style={{ flex: 1, fontStyle: 'italic' }}>Left out of company matching</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setDomainDoNotMap(line, false)}
+                                        title="Let this domain be matched to a company again"
+                                        style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#334155', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                                      >Undo</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
                             const statusCell = line.status === 'mapped'
                               ? <span style={{ color: '#166534' }}>Mapped ({VIA_LABELS[line.via] || 'Table View'})</span>
                               : line.status === 'guessed'
@@ -4626,6 +4693,15 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                                       title={line.status === 'mapped' && !draft.trim() ? 'Remove this domain from the company' : 'Save this mapping to Table View'}
                                       style={{ padding: '0.25rem 0.6rem', border: '1px solid #16A34A', borderRadius: 4, background: !dirty || edit.busy ? '#F1F5F9' : '#16A34A', color: !dirty || edit.busy ? '#94A3B8' : '#fff', borderColor: !dirty || edit.busy ? 'var(--color-border)' : '#16A34A', fontSize: '0.72rem', fontWeight: 700, cursor: !dirty || edit.busy ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
                                     >{edit.busy ? 'Saving...' : line.status === 'mapped' && !draft.trim() ? 'Unmap' : 'Save'}</button>
+                                    <button
+                                      type="button"
+                                      disabled={edit.busy}
+                                      onClick={() => setDomainDoNotMap(line, true)}
+                                      title={line.status === 'mapped'
+                                        ? `Remove this domain from ${current} and never match it to a company`
+                                        : 'Never match this domain to a company, on this upload or later ones'}
+                                      style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#334155', fontSize: '0.72rem', fontWeight: 700, cursor: edit.busy ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                                    >Do not map</button>
                                   </div>
                                   {edit.error && <div style={{ color: '#B91C1C', fontSize: '0.7rem', marginTop: '0.2rem' }}>{edit.error}</div>}
                                 </td>
