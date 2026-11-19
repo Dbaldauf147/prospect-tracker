@@ -36,7 +36,7 @@ import { lazyView } from '../../utils/lazyView';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { CompetitorConsultantForm, CompetitorConsultantsSection } from './CompetitorConsultants';
-import { saveConsultant, consultantFirms } from '../../utils/competitorConsultants';
+import { saveConsultant, consultantFirms, setContactCompetitor, contactIsCompetitor, normalizeConsultants } from '../../utils/competitorConsultants';
 import { ContractsTab } from './ContractsTab';
 import { TargetsTab } from './TargetsTab';
 import { useCompanyContracts } from '../../hooks/useCompanyContracts';
@@ -1234,7 +1234,7 @@ function findPortfolioProspect(row, byName, byId) {
 // can share the exact same auto-fill behavior as this modal.
 
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactJobDescriptions = {}, onSaveJobDescription, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, onAddContactEvent = null, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [], companyContactExclusions = null, onRestoreToCompany = null, onAddCompetitorConsultant = null, competitorFirmOptions = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactJobDescriptions = {}, onSaveJobDescription, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, onAddContactEvent = null, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [], companyContactExclusions = null, onRestoreToCompany = null, onAddCompetitorConsultant = null, competitorFirmOptions = [], isCompetitor = false, onMarkCompetitor = null }) {
   const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -2469,6 +2469,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [competitorMode, setCompetitorMode] = useState(false);
   const competitorModeRef = useRef(false);
   const chooseCompetitorMode = (on) => { competitorModeRef.current = on; setCompetitorMode(on); };
+  // An existing contact is MARKED instead (onMarkCompetitor): they stay in
+  // HubSpot and on the roster, badged, and are listed under the company's
+  // Competitor consultants. The tick is held here because the popup is
+  // memoised and would not see the company's list change under it.
+  const canMarkCompetitor = !!onMarkCompetitor && !!existingHsId && !isLocalOnlyId;
+  const [markedCompetitor, setMarkedCompetitor] = useState(!!isCompetitor);
   const canAutosave = !competitorMode && autosaveEnabled && dirty && emailLooksComplete && failedSigRef.current !== currentSig;
 
   function runSave(opts) {
@@ -2540,6 +2546,23 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     >
       <input type="checkbox" checked={competitorMode} onChange={e => chooseCompetitorMode(e.target.checked)} style={{ cursor: 'pointer' }} />
       <span style={{ fontSize: '0.82rem', fontWeight: 600, color: competitorMode ? '#C2410C' : '#374151' }}>Competitor consultant</span>
+    </label>
+  );
+  const competitorMark = canMarkCompetitor && (
+    <label
+      data-mark-competitor
+      title={markedCompetitor
+        ? 'Marked as a competitor consultant: listed under this company\u2019s Competitor consultants and badged on its contact list. Untick to undo. Their HubSpot record is not changed.'
+        : 'Tick if this person works for another firm (a rival consultancy, broker or advisor). They are listed under this company\u2019s Competitor consultants and badged on its contact list. Their HubSpot record is not changed.'}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.55rem', padding: '0.45rem 0.7rem', border: `1px solid ${markedCompetitor ? '#FDBA74' : '#E2E8F0'}`, borderRadius: '8px', background: markedCompetitor ? '#FFF7ED' : '#fff', cursor: 'pointer' }}
+    >
+      <input
+        type="checkbox"
+        checked={markedCompetitor}
+        onChange={e => { setMarkedCompetitor(e.target.checked); onMarkCompetitor({ ...contact, ...stateRef.current.f }, e.target.checked); }}
+        style={{ cursor: 'pointer' }}
+      />
+      <span style={{ fontSize: '0.82rem', fontWeight: 600, color: markedCompetitor ? '#C2410C' : '#374151' }}>Competitor consultant</span>
     </label>
   );
   if (competitorMode) {
@@ -2627,6 +2650,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         {(contact.id || contact.vid) && <RelationshipPanel contact={contact} />}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
           {competitorToggle}
+          {competitorMark}
           {/* Four answers rather than a tick: a checkbox recorded the same
               thing for somebody we have deliberately parked, somebody we
               have asked and are waiting on, and somebody nobody had
@@ -6174,6 +6198,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const competitorOptions = useMemo(() => harvestCompetitors(prospects), [prospects]);
   // Firms already named on any company's competitor consultants.
   const consultantFirmOptions = useMemo(() => consultantFirms(prospects), [prospects]);
+  // The contacts marked as competitor consultants here, for the roster's badge.
+  const competitorContactIds = useMemo(
+    () => new Set(normalizeConsultants(fields.competitorConsultants).map(c => c.contactId).filter(Boolean)),
+    [fields.competitorConsultants],
+  );
 
   // Asset Types vocabulary, managed on the Dropdowns tab (plus any value
   // already in use), so the pop-up offers exactly what Table View does.
@@ -15482,6 +15511,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 )}
                 <ContactsTable
                   contacts={directContacts}
+                  competitorContactIds={competitorContactIds}
                   ownerContacts={ownerContacts}
                   owners={contactOwners}
                   company={fields.company}
@@ -15874,6 +15904,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           // and can be holding an older copy of this function.
           onAddCompetitorConsultant={addingContact && !isNew ? (c) => setFields(prev => ({ ...prev, competitorConsultants: saveConsultant(prev.competitorConsultants, c) })) : null}
           competitorFirmOptions={consultantFirmOptions}
+          // An existing contact opened from this (saved) company can be
+          // marked a competitor here. Same note as above on stale copies.
+          isCompetitor={contactIsCompetitor(fields.competitorConsultants, editingContact.id || editingContact.vid)}
+          onMarkCompetitor={!addingContact && !isNew ? (c, on) => setFields(prev => ({
+            ...prev,
+            competitorConsultants: setContactCompetitor(prev.competitorConsultants, c, on, String(prev.emailDomain || '').split(/[\n;,\s]+/).map(d => d.slice(d.lastIndexOf('@') + 1)).filter(Boolean)),
+          })) : null}
           tagOptions={allTagOptions}
           contactNotes={settings.contactNotes || {}}
           onSaveNote={handleSaveContactNote}
