@@ -94,6 +94,7 @@ const smallButton = {
   padding: '0.25rem 0.6rem', fontSize: '0.76rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
   border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#334155',
 };
+const NEW_GROUP = '\u0000new';
 const TYPE_TAB_KEY = 'prospecting-targets:type-tab';
 const ALL_TAB = '\u0000all';
 // Each subtab keeps its own column layout (shown, order, widths, stars,
@@ -402,6 +403,29 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
         )}
         {canGroup && !searching && !picking && typeTabs.length > 1 && (
           <button type="button" data-group-types onClick={() => setPicking([])} title="Put several target types on one subtab" style={smallButton}>Group types</button>
+        )}
+        {canGroup && !searching && !picking && openTab && !openTab.group && (
+          // The open type's own way into a group: pick one of the saved
+          // groups, or start a new one with this type already ticked.
+          <select
+            data-add-to-group
+            value=""
+            aria-label={`Add ${openTab.label} to a group`}
+            title={`Put ${openTab.label} in one of your groups`}
+            onChange={e => {
+              const v = e.target.value;
+              if (v === NEW_GROUP) { setPicking([openTab.key]); setGroupName(''); return; }
+              const g = typeGroups.find(x => x.id === v);
+              if (!g) return;
+              saveGroups(saveTypeGroup(typeGroups, { name: g.name, keys: [typeGroupKey(g.id), openTab.key] }));
+              pickTab(typeGroupKey(g.id));
+            }}
+            style={{ ...smallButton, maxWidth: 320 }}
+          >
+            <option value="">Add {openTab.label} to group...</option>
+            {typeGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+            <option value={NEW_GROUP}>+ New group</option>
+          </select>
         )}
       </div>
       {picking && !searching && (
