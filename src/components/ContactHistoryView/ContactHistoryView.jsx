@@ -5,12 +5,15 @@
 // their counts (utils/contactCountHistory, written by
 // useContactCountRecorder) rather than anything it works out itself. The
 // counts are the All Contacts Totals pills' own numbers at the time.
+// Under the chart, the people on those rosters today with the date each was
+// added, for bulk edits (ContactHistoryContacts).
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   COUNTED_ROSTERS, countChanges, countHistoryRows, countHistorySnapshot, parseCountHistory, subscribeCountHistory,
 } from '../../utils/contactCountHistory';
 import { weekKeyAt } from '../../utils/weeklyReportTrends';
+import { ContactHistoryContacts } from './ContactHistoryContacts';
 
 const RANGES = [
   { weeks: 8, label: '8 weeks' },
@@ -75,7 +78,7 @@ function Stat({ rosterKey, latest, change }) {
   );
 }
 
-export function ContactHistoryView() {
+export function ContactHistoryView({ prospects = [], cdmName = '', settings, updateSettings, updateSettingsPath }) {
   const raw = useSyncExternalStore(subscribeCountHistory, countHistorySnapshot);
   const history = useMemo(() => parseCountHistory(raw), [raw]);
   // 8 weeks to start: the log only begins the week this tab shipped, so a
@@ -189,6 +192,14 @@ export function ContactHistoryView() {
           </table>
         )}
       </div>
+
+      <ContactHistoryContacts
+        prospects={prospects}
+        cdmName={cdmName}
+        settings={settings}
+        updateSettings={updateSettings}
+        updateSettingsPath={updateSettingsPath}
+      />
     </div>
   );
 }
