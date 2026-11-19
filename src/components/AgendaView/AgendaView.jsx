@@ -3064,26 +3064,31 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     });
   }
 
-  // A row on a Do-not-map domain with no company match takes the one its
-  // Company (typed, or HubSpot's) names. Marking a domain clears its rows'
-  // matches, since some came from the domain; this hands back the ones
-  // that never depended on it, and repairs rows cleared before that rule.
+  // A row's company match is stored on the row when it is imported, and
+  // CDM, Tier and the Table View columns all read that stored match. It
+  // goes stale: the company is merged into another (the stored id is then
+  // a card that no longer exists), or the match only becomes possible
+  // later (the Company is typed, the domain is mapped, the card is added).
+  // So a row whose stored match is missing takes whatever the matcher
+  // finds for it now. A stored match that still resolves is left alone.
+  // This is also what hands a Do-not-map row back its Company match after
+  // marking the domain cleared it.
   useEffect(() => {
-    if (doNotMapDomains.size === 0) return;
+    if (rows.length === 0 || prospects.length === 0) return;
+    const ids = new Set(prospects.map(p => p.id));
     const fixes = new Map();
     for (const r of rows) {
-      if (r._matchedProspectId || !isRealEmail(r.email)) continue;
-      if (!doNotMapDomains.has(r.email.slice(r.email.lastIndexOf('@') + 1).toLowerCase())) continue;
+      if (r._matchedProspectId && ids.has(r._matchedProspectId)) continue;
       const m = lookupMatch(r.email, r).matched;
-      if (m) fixes.set(r.email, m.id);
+      if (m && m.id !== r._matchedProspectId) fixes.set(r.email, m.id);
     }
     if (fixes.size === 0) return;
     setRows(prev => {
-      const next = prev.map(r => (fixes.has(r.email) && !r._matchedProspectId ? { ...r, _matchedProspectId: fixes.get(r.email) } : r));
+      const next = prev.map(r => (fixes.has(r.email) ? { ...r, _matchedProspectId: fixes.get(r.email) } : r));
       saveCache(next);
       return next;
     });
-  }, [rows, doNotMapDomains, lookupMatch]);
+  }, [rows, prospects, lookupMatch]);
 
   // "Do not map": this domain belongs to no Table View company and should
   // stop being guessed at. A domain that is mapped today is unmapped first,
