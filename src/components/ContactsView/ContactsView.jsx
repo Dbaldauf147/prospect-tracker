@@ -217,10 +217,10 @@ export function ContactsView({
       <div className={styles.content}>
         <Suspense fallback={<div className="loading">Loading view…</div>}>
         {subtab === 'hubspot' && (
-          <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+          <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} onSelectProspect={onSelectProspect} />
         )}
         {subtab === 'se' && (
-          <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} emailFilterMode="only-se" />
+          <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} onSelectProspect={onSelectProspect} emailFilterMode="only-se" />
         )}
         {subtab === 'bulk' && <BulkAddTabs view={bulkView} onChange={setBulkView} />}
         {subtab === 'bulk' && bulkView === 'zoomlog' && (

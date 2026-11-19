@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { createPortal } from 'react-dom';
@@ -15,6 +15,15 @@ import { createTagWriter } from '../../utils/tagWriteQueue';
 import { HubSpotMoveTab } from './HubSpotMoveTab';
 import styles from './HubSpotView.module.css';
 import { recipientMapSaver } from '../../utils/recipientMaps';
+import { useContactEditSettings } from '../../hooks/useContactEditSettings';
+import { companyPopupTarget } from '../../utils/companyLookup';
+
+// The full contact popup the rest of the app opens. Lazy, as on Bulk Add:
+// it lives in the company popup's module, which this page otherwise never
+// needs.
+const ContactEditModal = lazy(() =>
+  import('../ProspectModal/ProspectModal').then(m => ({ default: m.ContactEditModal })),
+);
 
 function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet, draft = '', onDraftChange }) {
   const [open, setOpen] = useState(false);
@@ -1314,7 +1323,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   );
 }
 
-export function HubSpotView({ prospects, settings, updateSettings, emailFilterMode = 'exclude-se' }) {
+export function HubSpotView({ prospects, settings, updateSettings, onSelectProspect, emailFilterMode = 'exclude-se' }) {
   const { user, isAdmin } = useAuth();
   const [data, setData] = useState(null);
   useEffect(() => {
@@ -1329,6 +1338,39 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   const [editContact, setEditContact] = useState(undefined); // undefined=closed, null=new, object=edit
   const [saving, setSaving] = useState(false);
   const [pushStatus, setPushStatus] = useState(null);
+  // Clicking a Name opens the full contact popup (the one Key Contacts,
+  // Draft Emails and the company popup open). The row's Edit button and
+  // "+ New Contact" keep this page's own short form.
+  const [detailContact, setDetailContact] = useState(null);
+  const contactEditSettings = useContactEditSettings({ settings, updateSettings });
+  const openCompanyFromContact = (name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setDetailContact(null);
+    onSelectProspect(target);
+  };
+  // The popup pushes to HubSpot and the shared cache itself; this only
+  // puts what it saved on the row behind it. Tag ticks and autosaves come
+  // through as silent, and must not close the popup.
+  const handleDetailSaved = (updated, opts) => {
+    if (updated?.id) {
+      const id = String(updated.id);
+      const replaced = opts?.replacedId ? String(opts.replacedId) : null;
+      setData(prev => {
+        if (!prev?.contacts) return prev;
+        let found = false;
+        const contacts = [];
+        for (const c of prev.contacts) {
+          const cid = String(c.id || c.vid || '');
+          if (cid === id) { found = true; contacts.push({ ...c, ...updated }); }
+          else if (replaced && cid === replaced) { if (!found) { found = true; contacts.push({ ...c, ...updated }); } }
+          else contacts.push(c);
+        }
+        return found ? { ...prev, contacts } : prev;
+      });
+    }
+    if (!opts?.silent) setDetailContact(null);
+  };
   const [massMode, setMassMode] = useState(false);
   const [selected, setSelected] = useState(new Set());
   // The rows DataTable is actually showing after its own internal
@@ -3228,7 +3270,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 return (
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); setEditContact(c); }}
+                    onClick={(e) => { e.stopPropagation(); setDetailContact(c); }}
                     title="Open contact details"
                     style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontWeight: 600, fontSize: 'var(--font-size-xs)', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: 2, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                   >{full}</button>
@@ -3422,6 +3464,20 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             updateSettings={updateSettings}
           />
         </>
+      )}
+
+      {detailContact && (
+        <Suspense fallback={null}>
+          <ContactEditModal
+            prospects={prospects}
+            contact={detailContact}
+            onSave={handleDetailSaved}
+            onClose={() => setDetailContact(null)}
+            onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
+            {...contactEditSettings}
+            allContacts={data?.contacts || []}
+          />
+        </Suspense>
       )}
 
       {editContact !== undefined && (
