@@ -581,10 +581,87 @@ export function soonestTargetPerCompany(targets) {
 // type); `companies` is how many companies have a target of that type.
 export const targetTypeKey = t => String(t?.type || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
-export function targetTypeTabs(targets) {
+// Type groups: the user's own bundles of target types ("SBTi near-term" +
+// "SBTi long-term" + "SBTi Net zero" as "SBTi"), saved in
+// settings.targetTypeGroups as [{ id, name, types: [folded type key] }].
+// A group takes its types' place in the subtab row as one subtab. Nothing
+// on the targets themselves changes. A type sits in one group at most (the
+// first that lists it), and a group left with no types is dropped.
+export const TYPE_GROUP_PREFIX = 'group:';
+export const typeGroupKey = id => `${TYPE_GROUP_PREFIX}${id}`;
+export const isTypeGroupKey = key => String(key ?? '').startsWith(TYPE_GROUP_PREFIX);
+
+export function normalizeTypeGroups(groups) {
+  const taken = new Set();
+  const out = [];
+  for (const g of Array.isArray(groups) ? groups : []) {
+    const id = String(g?.id || '').trim();
+    const name = String(g?.name || '').trim().replace(/\s+/g, ' ');
+    if (!id || !name || out.some(o => o.id === id)) continue;
+    const types = [];
+    for (const raw of Array.isArray(g.types) ? g.types : []) {
+      const k = targetTypeKey({ type: raw });
+      if (taken.has(k)) continue;
+      taken.add(k);
+      types.push(k);
+    }
+    if (types.length) out.push({ id, name, types });
+  }
+  return out;
+}
+
+// t => the key of the subtab a target sits on: its group's, or its type's.
+export function targetTabKeyFn(groups) {
+  const byType = new Map();
+  for (const g of normalizeTypeGroups(groups)) for (const k of g.types) byType.set(k, typeGroupKey(g.id));
+  return t => { const k = targetTypeKey(t); return byType.get(k) ?? k; };
+}
+
+// Put the picked subtabs together under `name`. `keys` are subtab keys:
+// type keys and/or group keys. A picked group is merged in whole, and the
+// first one picked keeps its id (so its column layout stays); picking one
+// group alone renames it. A type moves out of any group it was in. `newId`
+// names a brand new group.
+export function saveTypeGroup(groups, { name, keys, newId }) {
+  const list = normalizeTypeGroups(groups);
+  const clean = String(name || '').trim().replace(/\s+/g, ' ');
+  const picked = [...new Set(keys || [])];
+  if (!clean || !picked.length) return list;
+  const pickedGroups = picked.map(k => list.find(g => typeGroupKey(g.id) === k)).filter(Boolean);
+  const types = [];
+  for (const k of picked) {
+    const g = pickedGroups.find(x => typeGroupKey(x.id) === k);
+    for (const t of g ? g.types : [k]) if (!types.includes(t)) types.push(t);
+  }
+  const id = pickedGroups[0]?.id || String(newId || '');
+  if (!id) return list;
+  const merged = { id, name: clean, types };
+  const rest = list
+    .filter(g => !pickedGroups.includes(g))
+    .map(g => ({ ...g, types: g.types.filter(t => !types.includes(t)) }));
+  // Where the first picked group was, or at the end.
+  const at = pickedGroups.length ? list.indexOf(pickedGroups[0]) : list.length;
+  const before = list.slice(0, at).filter(g => !pickedGroups.includes(g)).length;
+  return normalizeTypeGroups([...rest.slice(0, before), merged, ...rest.slice(before)]);
+}
+
+// Take one type out of a group. A group of one is no group, so it goes too.
+export function removeTypeFromGroup(groups, id, typeKey) {
+  return normalizeTypeGroups(groups)
+    .map(g => (g.id === id ? { ...g, types: g.types.filter(t => t !== typeKey) } : g))
+    .filter(g => g.id !== id || g.types.length > 1);
+}
+
+export const removeTypeGroup = (groups, id) => normalizeTypeGroups(groups).filter(g => g.id !== id);
+
+// With `groups`, a group's types share one subtab: `key` is the group's key,
+// `label` its name, `group` its id and `types` its type keys.
+export function targetTypeTabs(targets, typeGroups) {
+  const saved = normalizeTypeGroups(typeGroups);
+  const tabKey = targetTabKeyFn(saved);
   const groups = new Map();
   for (const t of targets || []) {
-    const key = targetTypeKey(t);
+    const key = tabKey(t);
     let g = groups.get(key);
     if (!g) { g = { key, spellings: new Map(), companies: new Set(), targets: 0 }; groups.set(key, g); }
     const spelling = String(t?.type || '').trim().replace(/\s+/g, ' ');
@@ -594,11 +671,15 @@ export function targetTypeTabs(targets) {
   }
   const last = k => (k === '' ? 2 : k === NO_TARGET_TYPE.toLowerCase() ? 1 : 0);
   return [...groups.values()]
-    .map(g => ({
-      key: g.key,
-      label: g.key === '' ? 'No type' : [...g.spellings.entries()].sort((a, b) => b[1] - a[1])[0][0],
-      companies: g.companies.size,
-      targets: g.targets,
-    }))
+    .map(g => {
+      const group = saved.find(x => typeGroupKey(x.id) === g.key);
+      return {
+        key: g.key,
+        label: group ? group.name : g.key === '' ? 'No type' : [...g.spellings.entries()].sort((a, b) => b[1] - a[1])[0][0],
+        companies: g.companies.size,
+        targets: g.targets,
+        ...(group ? { group: group.id, types: group.types } : {}),
+      };
+    })
     .sort((a, b) => last(a.key) - last(b.key) || b.companies - a.companies || a.label.localeCompare(b.label));
 }
