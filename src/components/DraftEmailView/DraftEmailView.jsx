@@ -41,6 +41,7 @@ import { responseRateOf } from '../../utils/campaignContactHold';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
 import { companyGoesByGaps } from '../../utils/companyGoesByGaps';
+import { makeCompanyByEmailDomain } from '../../utils/companyByEmailDomain';
 import { recentCampaignWarnings, sentThisCampaign, RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
 import RecentCampaignNotice from './RecentCampaignNotice';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
@@ -1934,9 +1935,15 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
 
   // {companyGoesBy}: the Goes By on the company's card ("Brookfield" for
   // "Brookfield (Scion Group)"), falling back to the company name so the
-  // sentence it sits in never reads with a hole in it.
-  function companyGoesByFor(company) {
-    return lookupCompany(companyTypeIndex.goesBy, company) || company || '';
+  // sentence it sits in never reads with a hole in it. A recipient with no
+  // Company text at all goes by their email domain instead, the way the
+  // company card lists them: its Goes By, or failing that its name.
+  const companyByEmail = useMemo(() => makeCompanyByEmailDomain(prospects), [prospects]);
+  function companyGoesByFor(company, email) {
+    const named = lookupCompany(companyTypeIndex.goesBy, company) || company;
+    if (named) return named;
+    const card = companyByEmail(email);
+    return card ? (String(card.goesBy || '').trim() || String(card.company).trim()) : '';
   }
 
   // What personalizeForContact would substitute for `token` on this
@@ -1954,7 +1961,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       case '{email}':     return c.email || '';
       case '{company}':   return c.company || '';
       case '{companyType}': return companyTypeFor(c.company);
-      case '{companyGoesBy}': return companyGoesByFor(c.company);
+      case '{companyGoesBy}': return companyGoesByFor(c.company, c.email);
       case '{title}':     return c.title || '';
       case '{phone}':     return c.phone || '';
       case '{city}':      return c.city || '';
@@ -1965,7 +1972,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     // companyTypeFor / companyGoesByFor are redeclared each render but only read
     // companyTypeIndex, so that memo is the real dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings?.contactNicknames, settings?.customField, companyTypeIndex]);
+  }, [settings?.contactNicknames, settings?.customField, companyTypeIndex, companyByEmail]);
 
   function insertVariable(token) {
     if (lastFocused === 'subject') {
@@ -2450,7 +2457,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       .replace(/\{email\}/gi, c.email || '')
       .replace(/\{company\}/gi, c.company || '')
       .replace(/\{companyType\}/gi, companyTypeFor(c.company))
-      .replace(/\{companyGoesBy\}/gi, companyGoesByFor(c.company))
+      .replace(/\{companyGoesBy\}/gi, companyGoesByFor(c.company, c.email))
       .replace(/\{title\}/gi, c.title || '')
       .replace(/\{phone\}/gi, c.phone || '')
       .replace(/\{city\}/gi, c.city || '')
