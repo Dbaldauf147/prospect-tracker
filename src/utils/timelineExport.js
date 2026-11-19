@@ -10,7 +10,6 @@
 // HTML string, hand it to a new window, and let the browser print it.
 
 import { buildTimelineSvg, ownerColor } from './timelineGraphic';
-import { buildJpegPdf } from './jpegPdf.js';
 import { buildPicturePptx } from './pptxSlide.js';
 import { schneiderLogoSvg, SE_GREEN, SE_GREEN_DARK } from './schneiderLogo';
 
@@ -184,7 +183,8 @@ export function downloadTimelineSvg(template) {
 }
 
 // The timeline as a one-slide PowerPoint file: the same Schneider-formatted
-// graphic, drawn as a 16:9 deck page where the format allows, filling a
+// graphic, drawn as a 16:9 deck page where the format allows (see
+// buildPhasedSvg's `slide`), filling a
 // widescreen slide. It goes in as SVG with a PNG behind it (utils/pptxSlide),
 // so in PowerPoint it is sharp at any size and Convert to Shape makes every
 // bar and label editable; the slide can be copied straight into a deck.
@@ -220,46 +220,6 @@ export async function downloadTimelinePptx(template) {
     new Blob([pptx], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
     `${fileSlug(template)}.pptx`,
   );
-  return true;
-}
-
-// The timeline as a one-page PDF slide: the same Schneider-formatted graphic
-// every other export uses, drawn as a 16:9 deck page where the format allows
-// (see buildPhasedSvg's `slide`), on a page of exactly its shape so it fills
-// the slide edge to edge. The graphic goes in as a high-resolution JPEG
-// (utils/jpegPdf): sharp at full screen and on a print, with no PDF library.
-export async function downloadTimelinePdf(template) {
-  const svg = buildTimelineSvg(template, { branded: true, slide: true });
-  if (!svg) return false;
-  const match = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
-  const width = match ? Number(match[1]) : 1200;
-  const height = match ? Number(match[2]) : 675;
-  // About 4000px across: past what a projector or a letter-size print can show.
-  const scale = Math.max(2, Math.min(4, 4000 / width));
-  const img = await new Promise((resolve, reject) => {
-    const el = new Image();
-    el.onload = () => resolve(el);
-    el.onerror = () => reject(new Error('Could not load the timeline graphic'));
-    el.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  });
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(width * scale);
-  canvas.height = Math.round(height * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.95));
-  if (!blob) throw new Error('Could not rasterize the timeline');
-  const jpeg = new Uint8Array(await blob.arrayBuffer());
-  // A widescreen slide is 13.333in across (960pt); the height follows the graphic.
-  const pageW = 960;
-  const pdf = buildJpegPdf({
-    jpeg, imgW: canvas.width, imgH: canvas.height,
-    pageW, pageH: pageW * height / width,
-    title: String(template?.name || 'Timeline').trim() || 'Timeline',
-  });
-  triggerDownload(new Blob([pdf], { type: 'application/pdf' }), `${fileSlug(template)}.pdf`);
   return true;
 }
 
