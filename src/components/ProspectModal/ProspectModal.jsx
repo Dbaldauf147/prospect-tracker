@@ -35,7 +35,7 @@ import { createPortal } from 'react-dom';
 import { lazyView } from '../../utils/lazyView';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
-import { CompetitorConsultantForm, CompetitorConsultantsSection } from './CompetitorConsultants';
+import { CompetitorConsultantForm } from './CompetitorConsultants';
 import { saveConsultant, consultantFirms, setContactCompetitor, contactIsCompetitor, normalizeConsultants } from '../../utils/competitorConsultants';
 import { ContractsTab } from './ContractsTab';
 import { TargetsTab } from './TargetsTab';
@@ -15578,14 +15578,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 />
               )}
               </div>
-              <CompetitorConsultantsSection
-                company={fields.company}
-                consultants={fields.competitorConsultants}
-                onChange={(next) => set('competitorConsultants', next)}
-                firmOptions={consultantFirmOptions}
-                settings={settings}
-                updateSettings={updateSettings}
-              />
             </div>
           )}
 
