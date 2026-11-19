@@ -28,3 +28,33 @@ export function companyPopupTarget(prospects, name) {
   if (!company) return null;
   return findProspectByCompany(prospects, company) || { company };
 }
+
+// The prospect whose CDM a Bulk Add row shows: the one its Company NAMES,
+// not the one its email domain happened to match. A domain match can land
+// on the wrong account ("Quantum Energy Partners" matched to "Quantum
+// (Quantum Capital)"), and that account's CDM then reads as the owner of
+// a company it has nothing to do with.
+//
+//   1. the exact name (findProspectByCompany's rule);
+//   2. otherwise a close variant (companiesMatch, the fuzzy rule My
+//      Accounts uses: "Mutual of Omaha Insurance" finds "Mutual of
+//      Omaha"), preferring the domain-matched prospect when it is one of
+//      them, and only when the variant is unambiguous;
+//   3. a row with no Company falls back to the domain match.
+// A Company the tracker doesn't hold resolves to null: no CDM shown is
+// better than somebody else's.
+export function prospectForRowCompany(prospects, company, matched, { fuzzy } = {}) {
+  const name = String(company || '').trim();
+  if (!name) return matched || null;
+  const exact = findProspectByCompany(prospects, name);
+  if (exact) return exact;
+  if (!fuzzy) return null;
+  if (matched && fuzzy(name, matched.company)) return matched;
+  let hit = null;
+  for (const p of (prospects || [])) {
+    if (!p?.company || !fuzzy(name, p.company)) continue;
+    if (hit && hit.id !== p.id) return null;
+    hit = p;
+  }
+  return hit;
+}
