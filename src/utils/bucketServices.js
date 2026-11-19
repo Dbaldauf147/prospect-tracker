@@ -97,30 +97,60 @@ export function serviceBucketContext(settings) {
   };
 }
 
-export function companyClosedBuckets(record, ctx, buckets, { contacts = null, tagReview = null } = {}) {
+export function companyClosedBuckets(record, ctx, buckets, opts = {}) {
+  return new Set(companyClosedBucketReasons(record, ctx, buckets, opts).keys());
+}
+
+// What a closed category reads as in a table cell.
+export const CLOSED_NA = 'N/A';
+export const CLOSED_NOT_SOLD = 'Not Sold';
+export const CLOSED_MIXED = 'Not Sold / N/A';
+
+/**
+ * The closed categories at a company and why, Map(bucket key -> { label,
+ * why }). `label` is N/A when the category is marked N/A (by its heading or
+ * by a contact) or every service tagged to it is N/A, Not Sold when every
+ * one is Not Sold, and Not Sold / N/A for a mix. `why` is the sentence
+ * behind it, for a tooltip. companyClosedBuckets is this map's keys.
+ */
+export function companyClosedBucketReasons(record, ctx, buckets, { contacts = null, tagReview = null } = {}) {
+  const out = new Map();
   // A contact at the company with the category's tag marked N/A closes it
   // too (dmSteps contactNaByBucket); the caller passes the contacts it has.
-  const contactNa = contacts && tagReview ? contactNaByBucket(contacts, tagReview, buckets) : null;
-  if (!ctx) {
-    const out = new Set((buckets || []).filter(b => record?.dmSearchSteps?.[b.key]?.na).map(b => b.key));
-    if (contactNa) for (const k of contactNa.keys()) out.add(k);
-    return out;
+  const contactNa = contacts && tagReview ? contactNaByBucket(contacts, tagReview, buckets) : new Map();
+  let statusOf = null;
+  if (ctx) {
+    const svc = record?.servicesExplored || {};
+    const manual = (n) => { const v = String(svc[n] ?? '').trim(); return v && v !== '-' ? v : ''; };
+    const sold = ctx.names.filter(n => isSoldStatus(manual(n)));
+    const autoNa = sold.length
+      ? collectAutoNa(sold, ctx.overrides, { names: ctx.names, canonical: n => ctx.byLower.get(String(n || '').trim().toLowerCase()) || n })
+      : new Map();
+    statusOf = (n) => manual(n) || (autoNa.get(n) ? 'N/A' : '');
   }
-  const svc = record?.servicesExplored || {};
-  const manual = (n) => { const v = String(svc[n] ?? '').trim(); return v && v !== '-' ? v : ''; };
-  const sold = ctx.names.filter(n => isSoldStatus(manual(n)));
-  const autoNa = sold.length
-    ? collectAutoNa(sold, ctx.overrides, { names: ctx.names, canonical: n => ctx.byLower.get(String(n || '').trim().toLowerCase()) || n })
-    : new Map();
-  const statusOf = (n) => manual(n) || (autoNa.get(n) ? 'N/A' : '');
-  const closed = closedBucketKeys({ buckets, serviceNames: ctx.names, overrides: ctx.overrides, statusOf });
-  // A category marked N/A by hand on the company card's By Category heading
-  // (dmSearchSteps[bucket].na) is closed out too.
   for (const bucket of buckets || []) {
-    if (record?.dmSearchSteps?.[bucket.key]?.na) closed.add(bucket.key);
+    // A category marked N/A by hand on the company card's By Category
+    // heading (dmSearchSteps[bucket].na) comes first, then a contact's N/A,
+    // then the services: the order the popup's heading explains it in.
+    if (record?.dmSearchSteps?.[bucket.key]?.na) {
+      out.set(bucket.key, { label: CLOSED_NA, why: `${bucket.label} is marked N/A for this company.` });
+      continue;
+    }
+    const by = (contactNa.get(bucket.key) || []).map(x => x.name);
+    if (by.length) {
+      out.set(bucket.key, { label: CLOSED_NA, why: `${bucket.label} is marked N/A by ${by.join(', ')}.` });
+      continue;
+    }
+    if (!statusOf) continue;
+    const state = bucketServiceState({ bucket, serviceNames: ctx.names, overrides: ctx.overrides, statusOf });
+    if (!state.closed) continue;
+    const kinds = new Set(state.services.map(sv => serviceStatusBucket(sv.status)));
+    out.set(bucket.key, {
+      label: kinds.size > 1 ? CLOSED_MIXED : kinds.has('na') ? CLOSED_NA : CLOSED_NOT_SOLD,
+      why: `Every ${bucket.label} service is Not Sold or N/A here: ${state.services.map(sv => `${sv.name} (${sv.status})`).join(', ')}.`,
+    });
   }
-  if (contactNa) for (const k of contactNa.keys()) closed.add(k);
-  return closed;
+  return out;
 }
 
 /**

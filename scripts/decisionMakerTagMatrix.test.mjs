@@ -159,6 +159,13 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
   ];
   check('zoom export: no covered Decision Maker, Inside Sales / Qualifying / Client',
     zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'NoDms', 'OnlyMaybe', 'ClientGap', 'QualifyingGap', 'QualifyingNoDms', 'NoCount']);
+  // Closed out for the tag (services all Not Sold or N/A, or marked N/A):
+  // nobody to look for, so it is not a gap. Closed for another tag is.
+  check('zoom export: an account closed out for the tag is left out',
+    zoomExportRowsForTag([
+      { ...row('Closed', 'Client', [], []), closedByTag: { [k]: { label: 'N/A' } } },
+      { ...row('ClosedElsewhere', 'Client', [], []), closedByTag: { 'tag:other': { label: 'N/A' } } },
+    ], k).map(r => r.company), ['ClosedElsewhere']);
   // The status comes from a sheet: a trailing space or other casing is
   // still Client (Ettinger Engineering was dropped on an exact match).
   check('zoom export: status read ignoring spacing and case',
