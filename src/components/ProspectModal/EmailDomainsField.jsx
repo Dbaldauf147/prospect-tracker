@@ -19,6 +19,11 @@
 // contacts first (domainTierEntries). With nothing recorded that is the
 // estimate shown; with something recorded, "Tier by contacts" rebuilds the
 // field that way, keeping each domain's recorded format.
+//
+// A recorded format can be reworded or removed where it is listed: the
+// pencil on its chip, or Edit / Delete on its row in the picker. Both save
+// at once, like the chip's x always has. Edit on a picker row that is only
+// a suggestion rewords the pick, saved with the rest by Save.
 import { useState } from 'react';
 import { PopupListField } from './PopupListField';
 import { domainTierEntries } from '../../utils/emailDomainPattern';
@@ -35,6 +40,8 @@ export function EmailDomainsField({ value, onChange, options }) {
   // threw it away without a word. Now Enter, the Add button and leaving
   // the box all record it.
   const [draft, setDraft] = useState('');
+  // The format being reworded: { where: 'chip' | 'row', entry, text }.
+  const [editing, setEditing] = useState(null);
 
   const domains = (value || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
   const opts = options;
@@ -64,6 +71,50 @@ export function EmailDomainsField({ value, onChange, options }) {
     if (fresh.length) onChange([...domains, ...fresh].join('\n'));
     setDraft('');
   };
+  // `list` with `old` reworded to `next`, in place. If that makes it the
+  // same as another entry, the two become one.
+  const reword = (list, old, next) => {
+    const out = [];
+    for (const e of list) {
+      const v = lower(e) === lower(old) ? next : e;
+      if (!out.some(o => lower(o) === lower(v))) out.push(v);
+    }
+    return out;
+  };
+  const isEditing = (where, entry) => editing?.where === where && lower(editing.entry) === lower(entry);
+  const commitEdit = () => {
+    if (!editing) return;
+    const old = editing.entry;
+    const next = editing.text.replace(/\s+/g, '');
+    setEditing(null);
+    // Emptied or untouched: leave it as it was (Delete is the way to remove).
+    if (!next || next === old) return;
+    if (recorded.has(lower(old))) onChange(reword(domains, old, next).join('\n'));
+    setDomainPicks(prev => (prev.some(e => lower(e) === lower(old)) ? reword(prev, old, next) : reword([...prev, next], old, next)));
+  };
+  const deleteRecorded = (entry) => {
+    onChange(domains.filter(d => lower(d) !== lower(entry)).join('\n'));
+    setDomainPicks(prev => prev.filter(e => lower(e) !== lower(entry)));
+  };
+  const editInput = (label) => (
+    <input
+      type="text"
+      autoFocus
+      data-edit-format
+      data-own-escape
+      aria-label={label}
+      value={editing.text}
+      onChange={e => setEditing({ ...editing, text: e.target.value })}
+      onBlur={commitEdit}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+        // Cancels the edit only: PopupListField leaves Escape to this box.
+        else if (e.key === 'Escape') { e.stopPropagation(); setEditing(null); }
+      }}
+      style={{ flex: '1 1 220px', minWidth: 180, padding: '0.1rem 0.35rem', border: '1px solid #2563EB', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#1E40AF', outline: 'none', background: '#fff' }}
+    />
+  );
+  const rowBtn = { fontSize: '0.6rem', fontWeight: 600, fontFamily: 'inherit', padding: '0 6px', borderRadius: 4, border: '1px solid #CBD5E1', background: '#fff', color: '#475569', cursor: 'pointer' };
   const move = (list, i, by) => {
     const j = i + by;
     if (j < 0 || j >= list.length) return list;
@@ -98,6 +149,10 @@ export function EmailDomainsField({ value, onChange, options }) {
     ...domains
       .filter(d => !opts.candidates.some(o => lower(o.entry) === lower(d)))
       .map(d => ({ entry: d, suggested: false, onRecord: true, samples: [], votes: 0 })),
+    // A suggestion reworded in the picker: a pick that is neither.
+    ...(domainPickerOpen ? domainPicks : [])
+      .filter(e => !recorded.has(lower(e)) && !opts.candidates.some(o => lower(o.entry) === lower(e)))
+      .map(e => ({ entry: e, suggested: false, onRecord: false, samples: [], votes: 0 })),
   ];
   // Domains that taught nothing at all. Named rather than
   // dropped: "nothing offered for parentco.com" answers the
@@ -207,7 +262,7 @@ export function EmailDomainsField({ value, onChange, options }) {
             {domains.length > 1 && (
               <span style={{ ...tierBadge, color: '#2563EB' }}>{tier(i)}</span>
             )}
-            {d}
+            {isEditing('chip', d) ? editInput(`Edit ${d}`) : d}
             {multiDomain && countByDomain.has(domainOfEntry(d)) && (
               <span title={`${plural(countByDomain.get(domainOfEntry(d)), 'contact')} at ${domainOfEntry(d)}`} style={{ fontSize: '0.62rem', color: '#64748B' }}>({countByDomain.get(domainOfEntry(d))})</span>
             )}
@@ -217,8 +272,20 @@ export function EmailDomainsField({ value, onChange, options }) {
             {domains.length > 1 && i < domains.length - 1 && (
               <button type="button" title="Move down a tier" onClick={() => onChange(move(domains, i, 1).join('\n'))} style={{ ...arrowBtn, color: '#60A5FA' }}>&#9654;</button>
             )}
+            {!isEditing('chip', d) && (
+              <button
+                type="button"
+                data-edit-chip
+                title="Edit this format"
+                aria-label={`Edit ${d}`}
+                onClick={() => setEditing({ where: 'chip', entry: d, text: d })}
+                style={{ background: 'none', border: 'none', color: '#60A5FA', fontSize: '0.72rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+              >&#9998;</button>
+            )}
             <button
               type="button"
+              title="Delete this format"
+              aria-label={`Delete ${d}`}
               onClick={() => {
                 const next = domains.filter((_, j) => j !== i);
                 onChange(next.join('\n'));
@@ -355,7 +422,9 @@ export function EmailDomainsField({ value, onChange, options }) {
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#1E40AF', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflowWrap: 'anywhere' }}>{row.entry}</span>
+                    {isEditing('row', row.entry)
+                      ? editInput(`Edit ${row.entry}`)
+                      : <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#1E40AF', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflowWrap: 'anywhere' }}>{row.entry}</span>}
                     {picked && (
                       <span
                         title={isPrimary ? 'Used first when an address is guessed.' : 'Used when the tiers above it cannot build an address.'}
@@ -380,10 +449,32 @@ export function EmailDomainsField({ value, onChange, options }) {
                     {row.onRecord && (
                       <span style={{ fontSize: '0.58rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#F1F5F9', color: '#64748B' }}>ON RECORD</span>
                     )}
+                    {!isEditing('row', row.entry) && (
+                      <span style={{ display: 'inline-flex', gap: 2, marginLeft: 'auto' }}>
+                        <button
+                          type="button"
+                          data-edit-row
+                          title={row.onRecord ? 'Reword this format. Saved as soon as you press Enter or leave the box.' : 'Reword this format. It is ticked as you wrote it and saved with Save.'}
+                          onClick={() => setEditing({ where: 'row', entry: row.entry, text: row.entry })}
+                          style={rowBtn}
+                        >Edit</button>
+                        {row.onRecord && (
+                          <button
+                            type="button"
+                            data-delete-row
+                            title="Remove this format from the company now"
+                            onClick={() => deleteRecorded(row.entry)}
+                            style={{ ...rowBtn, borderColor: '#FCA5A5', color: '#B91C1C' }}
+                          >Delete</button>
+                        )}
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: '0.66rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
                     {row.suggested
                       ? `${row.votes} of the ${plural(row.domainCount, 'contact')} at ${row.domain} ${row.votes === 1 ? 'is' : 'are'} written this way.`
+                      : !row.onRecord
+                        ? 'Reworded here. Not on the company until you Save.'
                       : hasPattern
                         ? 'Added by hand. No contact here is written this way.'
                         : 'Added by hand, and no naming pattern, so no address is built from it. It still pulls contacts on this domain onto the card.'}

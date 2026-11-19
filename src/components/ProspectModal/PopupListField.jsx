@@ -11,6 +11,8 @@ export function PopupListField({ title, items = [], placeholder = 'None', badge 
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
+      // A box inside that uses Escape itself (cancel an inline edit) keeps it.
+      if (e.key === 'Escape' && e.target?.closest?.('[data-own-escape]')) return;
       if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
     };
     // Capture, so Escape closes this popup rather than the company card under it.
