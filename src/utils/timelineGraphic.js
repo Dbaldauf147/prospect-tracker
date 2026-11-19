@@ -691,7 +691,7 @@ function groupPhases(stages, phaseColors) {
   }));
 }
 
-// `slide: true` draws it as a 16:9 deck page (the PDF export): a chart with
+// `slide: true` draws it as a 16:9 deck page (the PowerPoint export): a chart with
 // few rows is wider than a slide, so the grid is carried on down, columns
 // and all, until the footer sits at the bottom of a 16:9 page. A chart
 // already taller than that is left at its own height.
