@@ -113,6 +113,9 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       if (isQualifyingCompany(p)) { qualifyingCount += 1; continue; }
       const row = { id: p.id, company: p.company || a.company || '', tier: a.tierLabel || a.myTier || a.tier || '', status: p.status || '', cdm: p.cdm || '', vertical: String(p.vertical || '').trim(), subVertical: String(p.subVertical || '').trim() };
       for (const f of COMPANY_DATA_FIELDS) row[f.key] = fieldValue(f, p[f.key]);
+      // "None in BFO" on the popup waives the BFO Company Name (fieldNotNeeded).
+      row.noBfo = !!p.noBfoCompanyName;
+      row.noBfoCompanyName = row.noBfo;
       row.zoomExcluded = isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId });
       const accountDms = dmLookup ? dmLookup.forAccount(p) : [];
       const steps = dmLookup ? allMissingStepsFor({

@@ -28,7 +28,7 @@ check('sites missing once', r.fields.numberOfSites, 1);
 check('0 is an answer', r.fields.numberOfAccounts, 1);
 check('blank text is missing', r.fields.zoomCompanyId, 2);
 check('total is the sum of the fields', r.total, Object.values(r.fields).reduce((a, b) => a + b, 0));
-check('total', r.total, 1 + 1 + 2 + 2 + 2 + 2 + 2 + 1);
+check('total', r.total, 1 + 1 + 2 + 2 + 2 + 2 + 2 + 2 + 1);
 check('companies', r.companies, 2);
 check('nothing to read', missingReading([]), null);
 

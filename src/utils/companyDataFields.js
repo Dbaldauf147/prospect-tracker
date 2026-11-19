@@ -1,5 +1,5 @@
 // The company data the My Accounts "Company Data" subtab tracks (the size
-// numbers plus the ZoomInfo id / name and the company's website):
+// numbers plus the ZoomInfo id / name, the BFO name and the company's website):
 // which accounts have them, an export of the ones that don't, and a paste
 // that writes the filled-in numbers back onto the company records.
 //
@@ -16,6 +16,7 @@ export const COMPANY_DATA_FIELDS = [
   { key: 'annualMwh', label: 'Electric MWh', aliases: ['electric mwh', 'mwh', 'annual mwh', 'electricity mwh', 'annualmwh'] },
   { key: 'zoomCompanyId', label: 'Zoom Company ID', type: 'text', aliases: ['zoom company id', 'zoom id', 'zoominfo company id', 'zoominfo id', 'zoomcompanyid'] },
   { key: 'zoomCompanyName', label: 'Zoom Company Name', type: 'text', aliases: ['zoom company name', 'zoom name', 'zoominfo company name', 'zoominfo name', 'zoomcompanyname'] },
+  { key: 'bfoCompanyName', label: 'BFO Company Name', type: 'text', aliases: ['bfo company name', 'bfo name', 'bfo account name', 'bfo account', 'bfocompanyname'] },
   { key: 'website', label: 'Company URL', type: 'text', aliases: ['company url', 'url', 'website', 'company website', 'web site', 'homepage'] },
 ];
 
@@ -51,8 +52,12 @@ export const ZOOM_FIELD_KEYS = new Set(['zoomCompanyId', 'zoomCompanyName']);
 // ladder (allDms) has nothing left to find in ZoomInfo, so it isn't owed a
 // Zoom Company ID either. Its Zoom name still counts.
 
+// A company ticked "None in BFO" on its popup (noBfoCompanyName) has no
+// account in BFO, so it isn't owed a BFO Company Name (`noBfo`).
+
 /** Whether a field isn't asked of this company at all (see ZOOM_FIELD_KEYS). */
-export function fieldNotNeeded(field, { zoomExcluded = false, allDms = false } = {}) {
+export function fieldNotNeeded(field, { zoomExcluded = false, allDms = false, noBfo = false } = {}) {
+  if (noBfo && field?.key === 'bfoCompanyName') return true;
   if (zoomExcluded && ZOOM_FIELD_KEYS.has(field?.key)) return true;
   return !!allDms && field?.key === 'zoomCompanyId';
 }
@@ -60,6 +65,7 @@ export function fieldNotNeeded(field, { zoomExcluded = false, allDms = false } =
 /** Why a field isn't needed, for the N/A cell's tooltip; '' when it is. */
 export function fieldNotNeededReason(field, opts = {}) {
   if (!fieldNotNeeded(field, opts)) return '';
+  if (field?.key === 'bfoCompanyName') return 'Not needed: the company is marked None in BFO';
   return opts.zoomExcluded && ZOOM_FIELD_KEYS.has(field?.key)
     ? 'Not needed: the company is excluded from ZoomInfo'
     : 'Not needed: the company has a decision maker for every tag';
@@ -67,7 +73,7 @@ export function fieldNotNeededReason(field, opts = {}) {
 
 /** Whether a field is blank on the record and the company is owed it. */
 export function fieldMissing(field, record, { zoomExcluded = false, allDms = false } = {}) {
-  return !fieldNotNeeded(field, { zoomExcluded, allDms }) && !fieldHasValue(field, record?.[field.key]);
+  return !fieldNotNeeded(field, { zoomExcluded, allDms, noBfo: !!record?.noBfoCompanyName }) && !fieldHasValue(field, record?.[field.key]);
 }
 
 export function missingFields(record, fields = COMPANY_DATA_FIELDS, { zoomExcluded = false, allDms = false } = {}) {
