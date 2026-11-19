@@ -8,7 +8,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { BULK_ADD_LEAD_SOURCE, LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
-import { cellMatches, BLANKS_FILTER, NON_BLANKS_FILTER } from '../../utils/columnFilter';
+import { pickFilterMatches, pickFilterIsActive, pickListOptions } from '../../utils/columnFilter';
+import { ColumnFilterCell } from '../common/DataTable';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet } from '../../utils/userLs';
 import { buildEmailFromPattern, estimateEmailDomain, estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
@@ -2622,7 +2623,56 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     return { prospect, has, missing, anyMissing };
   }, [prospects]);
 
-  const visibleRows = useMemo(() => {
+  // What a column's filter reads off a row: the text the cell shows.
+  const bulkFilterValue = useCallback((r, key) => {
+      switch (key) {
+        case 'email':            return r.email || '';
+        case 'status':           return ({ new: 'New', update: 'Update pending', hubspot: 'In HubSpot' })[rowBucket(r)];
+        case 'fullName':         return composeFullName(r);
+        case 'firstname':        return r.firstname || '';
+        case 'lastname':         return r.lastname || '';
+        case 'company':          return r.company || '';
+        case 'jobtitle':         return r.jobtitle || '';
+        case 'suggestedCompany': return lookupMatch(r.email, r).suggestedCompany || '';
+        case 'website':
+        case 'zoomCompanyId':
+        case 'zoomCompanyName':
+        case 'emailDomain':      return suggestionFor(r._matchedProspectId, key)?.value || '';
+        case 'dans_tags':        return r.dans_tags || '';
+        case 'leadSource':       return rowLeadSource(r);
+        case 'phone':            return r.phone || '';
+        case 'mobilePhone':      return r.mobilePhone || '';
+        case 'linkedinUrl':      return r.linkedinUrl || '';
+        case 'city':             return r.city || '';
+        case 'state':            return r.state || '';
+        case 'country':          return r.country || '';
+        case 'notes':            return r.notes || '';
+        case 'tier': {
+          const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
+          if (!p) return '';
+          const explicit = (p.tier || '').trim();
+          if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
+          if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
+          return '';
+        }
+        // What the cell prints: the CDM and the other reps, or nothing
+        // when the company match was dismissed.
+        case 'cdmReps': {
+          if (dismissedSuggestedCompanies.has(r.email)) return '';
+          const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
+          if (!p) return '';
+          const reps = (otherRepsByProspect.get(p.id) || []).map(x => x.rep);
+          return [String(p.cdm || '').trim(), ...reps].filter(Boolean).join(' ');
+        }
+        default:                 return '';
+      }
+  // rowBucket is a plain function of the state already listed here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lookupMatch, suggestionFor, rowLeadSource, prospects, cdmName, dismissedSuggestedCompanies, otherRepsByProspect, hubspotByEmail, results]);
+
+  // The rows the toolbar toggles leave, before any column filter: what
+  // the column filters narrow, and what their pick lists are built from.
+  const toggleFilteredRows = useMemo(() => {
     let out = rows;
     if (tvMissingOnly) {
       out = out.filter(r => {
@@ -2642,55 +2692,28 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       if (!columnFilters[field]) continue;
       out = out.filter(r => !!suggestionFor(r._matchedProspectId, field));
     }
-    // Per-column text filter — substring, case-insensitive, or (Blanks) /
-    // (Non-blanks) for the rows with nothing / anything in that column
-    // (see columnFilter.cellMatches).
-    const activeText = Object.entries(bulkColTextFilters).filter(([, v]) => v && v.trim());
+    return out;
+  }, [rows, tvMissingOnly, columnFilters, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies]);
+
+  // A column's pick list: its values on the rows every OTHER column's
+  // filter leaves on screen, with row counts. Only called while that
+  // column's list is open.
+  const bulkFilterOptions = (key) => {
+    const others = Object.entries(bulkColTextFilters).filter(([k, v]) => k !== key && pickFilterIsActive(v));
+    const pool = others.length
+      ? toggleFilteredRows.filter(r => others.every(([k, raw]) => pickFilterMatches(bulkFilterValue(r, k), raw)))
+      : toggleFilteredRows;
+    return pickListOptions(pool.map(r => bulkFilterValue(r, key)));
+  };
+
+  const visibleRows = useMemo(() => {
+    let out = toggleFilteredRows;
+    // Per-column filter: the values ticked in the column's list, or what
+    // is typed in its search box while nothing is ticked
+    // (columnFilter.pickFilterMatches).
+    const activeText = Object.entries(bulkColTextFilters).filter(([, v]) => pickFilterIsActive(v));
     if (activeText.length > 0) {
-      const valueFor = (r, key) => {
-        switch (key) {
-          case 'email':            return r.email || '';
-          case 'status':           return ({ new: 'new', update: 'update pending', hubspot: 'in hubspot ignored' })[rowBucket(r)];
-          case 'fullName':         return composeFullName(r);
-          case 'firstname':        return r.firstname || '';
-          case 'lastname':         return r.lastname || '';
-          case 'company':          return r.company || '';
-          case 'jobtitle':         return r.jobtitle || '';
-          case 'suggestedCompany': return lookupMatch(r.email, r).suggestedCompany || '';
-          case 'website':
-          case 'zoomCompanyId':
-          case 'zoomCompanyName':
-          case 'emailDomain':      return suggestionFor(r._matchedProspectId, key)?.value || '';
-          case 'dans_tags':        return r.dans_tags || '';
-          case 'leadSource':       return rowLeadSource(r);
-          case 'phone':            return r.phone || '';
-          case 'mobilePhone':      return r.mobilePhone || '';
-          case 'linkedinUrl':      return r.linkedinUrl || '';
-          case 'city':             return r.city || '';
-          case 'state':            return r.state || '';
-          case 'country':          return r.country || '';
-          case 'notes':            return r.notes || '';
-          case 'tier': {
-            const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
-            if (!p) return '';
-            const explicit = (p.tier || '').trim();
-            if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
-            if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
-            return '';
-          }
-          // What the cell prints: the CDM and the other reps, or nothing
-          // when the company match was dismissed.
-          case 'cdmReps': {
-            if (dismissedSuggestedCompanies.has(r.email)) return '';
-            const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
-            if (!p) return '';
-            const reps = (otherRepsByProspect.get(p.id) || []).map(x => x.rep);
-            return [String(p.cdm || '').trim(), ...reps].filter(Boolean).join(' ');
-          }
-          default:                 return '';
-        }
-      };
-      out = out.filter(r => activeText.every(([key, needle]) => cellMatches(valueFor(r, key), needle)));
+      out = out.filter(r => activeText.every(([key, raw]) => pickFilterMatches(bulkFilterValue(r, key), raw)));
     }
     if (sortKey) {
       const dir = sortDir === 'asc' ? 1 : -1;
@@ -2731,7 +2754,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       out = [...out].sort((a, b) => String(sortValue(a)).localeCompare(String(sortValue(b))) * dir);
     }
     return out;
-  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, results, prospects, bulkColTextFilters, rowLeadSource, otherRepsByProspect, cdmName]);
+  }, [toggleFilteredRows, bulkFilterValue, sortKey, sortDir, lookupMatch, suggestionFor, hubspotByEmail, results, prospects, bulkColTextFilters, rowLeadSource, cdmName]);
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
@@ -3867,28 +3890,16 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                   })}
                 </tr>
                 <tr>
-                  {effectiveBulkCols.map((c, ci) => {
+                  {effectiveBulkCols.map((c) => {
                     const isAction = c.key.startsWith('_');
                     return (
                       <th key={c.key} style={{ padding: '2px 4px', background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border-light)' }}>
-                        {/* What every filter box offers on focus: the two
-                            blank filters, so they don't have to be known
-                            to be used. One list, shared by every box. */}
-                        {ci === 0 && (
-                          <datalist id="bulk-col-filter-blanks">
-                            <option value={BLANKS_FILTER} />
-                            <option value={NON_BLANKS_FILTER} />
-                          </datalist>
-                        )}
                         {isAction ? null : (
-                          <input
-                            type="text"
-                            value={bulkColTextFilters[c.key] || ''}
-                            onChange={e => setBulkColTextFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
-                            placeholder="Filter..."
-                            list="bulk-col-filter-blanks"
-                            title={`Type to filter, or pick ${BLANKS_FILTER} / ${NON_BLANKS_FILTER} for the rows with nothing / anything in this column`}
-                            style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.68rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                          <ColumnFilterCell
+                            value={bulkColTextFilters[c.key]}
+                            onChange={v => setBulkColTextFilters(prev => ({ ...prev, [c.key]: v }))}
+                            options={() => bulkFilterOptions(c.key)}
+                            label={c.label}
                           />
                         )}
                       </th>
