@@ -459,7 +459,13 @@ function normalizeTemplate(tpl) {
     note: String(tpl?.note ?? ''),
     // 'numbers' keeps the axis relative to kickoff; 'calendar' pins month 1
     // to anchorMonth ('YYYY-MM') and marks the month we're currently in.
-    monthMode: tpl?.monthMode === 'calendar' ? 'calendar' : 'numbers',
+    // Calendar is the default. Numbers only holds when somebody chose it
+    // (monthModePicked): every timeline saved before the default changed
+    // carries a 'numbers' nobody picked, and those follow the new default.
+    monthMode: tpl?.monthMode === 'numbers' && tpl?.monthModePicked === true ? 'numbers' : 'calendar',
+    monthModePicked: tpl?.monthMode === 'numbers' && tpl?.monthModePicked === true,
+    // Blank on a calendar timeline means "the month we are in now", worked
+    // out when it is drawn (resolveMonthWindow), so it keeps starting today.
     anchorMonth: String(tpl?.anchorMonth ?? ''),
     // The overall window the timeline is drawn against, as ISO dates. Set
     // both and they replace anchorMonth / monthCount on every surface; left

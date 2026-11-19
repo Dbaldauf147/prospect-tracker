@@ -699,7 +699,7 @@ function TimelineVisual({ template, onChangeFormat, onChange }) {
               type="button"
               disabled={hasRange}
               className={!monthNames ? styles.formatBtnActive : styles.formatBtn}
-              onClick={() => onChange({ ...template, monthMode: 'numbers' })}
+              onClick={() => onChange({ ...template, monthMode: 'numbers', monthModePicked: true })}
               title="Head the months 1, 2, 3, counted from kickoff"
             >Month numbers</button>
             <button
@@ -1030,6 +1030,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove, on
               onChange({
                 ...template,
                 monthMode: mode,
+                monthModePicked: mode === 'numbers',
                 anchorMonth: mode === 'calendar' && !template.anchorMonth
                   ? currentMonthAnchor()
                   : template.anchorMonth,
@@ -1048,7 +1049,7 @@ function TimelineCard({ template, serviceOptions, filter, onChange, onRemove, on
               <span className={styles.timelineServicesLabel}>Month 1 =</span>
               <input
                 type="month"
-                value={template.anchorMonth || ''}
+                value={template.anchorMonth || currentMonthAnchor()}
                 onChange={(e) => onChange({ ...template, anchorMonth: e.target.value })}
                 title="Which real month is month 1"
                 className={styles.settingInput}

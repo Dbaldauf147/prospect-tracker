@@ -13,7 +13,8 @@
 // its step placement and passed it, the page had nothing to pass and got
 // twelve — so an eighteen-month plan drew eighteen columns while the page
 // warned that its last six months were outside the window.
-import { resolveMonthWindow, timelineMonthsNeeded } from '../src/utils/timelineDates.js';
+import { resolveMonthWindow, timelineMonthsNeeded, currentMonthAnchor } from '../src/utils/timelineDates.js';
+import { getTimelineTemplates } from '../src/utils/timelineTemplatesStore.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -74,6 +75,23 @@ check('the 36-column cap still holds',
   check('a range sets the months, whatever the steps need', w.monthCount, 6);
   check('and anchors the axis to real calendar months', [w.anchor, w.calendar, w.fromRange],
     ['2026-01', true, true]);
+}
+
+// Month names are the default, starting at the month we are in. A timeline
+// only keeps numbered months when somebody chose them (monthModePicked);
+// the 'numbers' every older timeline was saved with is the old default.
+{
+  const load = (tpl) => getTimelineTemplates({ timelineTemplates: [{ id: 't', ...byMonths([1, 2]), ...tpl }] })[0];
+  const fresh = load({});
+  check('a new timeline heads its months by name', fresh.monthMode, 'calendar');
+  check('and starts at the current month',
+    [resolveMonthWindow(fresh, null).anchor, resolveMonthWindow(fresh, null).calendar], [currentMonthAnchor(), true]);
+  check('numbers nobody picked follow the new default', load({ monthMode: 'numbers' }).monthMode, 'calendar');
+  const picked = load({ monthMode: 'numbers', monthModePicked: true });
+  check('numbers somebody picked stay numbers', picked.monthMode, 'numbers');
+  check('and a numbered timeline has no anchor', resolveMonthWindow(picked, null).anchor, '');
+  check('a picked month 1 is kept',
+    resolveMonthWindow(load({ monthMode: 'calendar', anchorMonth: '2027-03' }), null).anchor, '2027-03');
 }
 
 console.log(failures ? `${failures} failed.` : 'All passed.');
