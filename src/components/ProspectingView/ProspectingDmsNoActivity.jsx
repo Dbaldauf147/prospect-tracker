@@ -29,6 +29,7 @@ import { dealMid } from '../../utils/prospectingDeals.js';
 import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
 import { DM_TOPICS, matchesDmTopic } from '../../utils/procurementDmFilter';
 import { companyTargetCount } from '../../utils/companyTargets';
+import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 
 // The Tier cell: the card's tier, except a "Not on tier list, but Dan
 // target" company (or a blank-tier one ticked as a Dan target) reads
@@ -204,6 +205,16 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
     return () => { cancelled = true; };
   }, [dealAccounts, flagVersion, complianceFlagSource]);
   const deals = useBiggestDeals(dealAccounts, settings);
+  // Which accounts have a Master Analysis saved (useSavedAnalyses). The hook
+  // hands back a fresh Map every render, so it is pinned to what it holds:
+  // otherwise the rows rebuild every render and the table's report of the
+  // rows on screen (which sets state here) never settles.
+  const freshAnalyses = useSavedAnalyses(dealAccounts);
+  const analysesKey = dealAccounts.map((a) => {
+    const m = freshAnalyses.get(a.id);
+    return m ? `${a.id}:${m.savedAt || ''}:${m.fileName || ''}` : '';
+  }).join('|');
+  const savedAnalyses = useMemo(() => freshAnalyses, [analysesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [dmTopics, setDmTopicsState] = useState(readTopics);
   const toggleDmTopic = (key) => setDmTopicsState(cur => {
@@ -241,9 +252,10 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       frameworksDan: listFlagsByCompany.compliance?.get(companyKey(account?.company)) || null,
       status: accountStatusOf(account),
       targetCount: account ? companyTargetCount(account) : 0,
+      analysis: (account?.id && savedAnalyses.get(account.id)) || null,
       campaigns: campaignsByEmail.get(normEmail(contact.email)) || [],
     };
-  }), [windowEntries, dmTopics, topicMatches, accountOf, deals, campaignsByEmail, listFlagsByCompany]);
+  }), [windowEntries, dmTopics, topicMatches, accountOf, deals, campaignsByEmail, listFlagsByCompany, savedAnalyses]);
 
   // Bulk actions: tick rows (or the header box for every row on screen),
   // then Add to Campaign or Bulk Edit. Only rows still on screen count, so
@@ -378,6 +390,26 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       render: r => (r.targetCount
         ? <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(r.targetCount)}</span>
         : <span style={{ color: '#DC2626', fontWeight: 600 }}>No Target</span>),
+    },
+    {
+      // Whether the account has a Master Analysis saved against it (the
+      // workbook the Utility Lookup page saves), as on Prospecting > Prospects.
+      key: 'analysis', label: 'Master Analysis', defaultWidth: 140,
+      headerTitle: 'Whether a Master Analysis is saved against the account from the Utility Lookup page, and when. No Analysis when none is.',
+      getSortValue: r => (r.analysis ? (Date.parse(r.analysis.savedAt) || 1) : 0),
+      getFilterValue: r => (r.analysis ? `Yes ${formatAnalysisDate(r.analysis.savedAt)}`.trim() : 'No Analysis'),
+      exportValue: r => (r.analysis ? (formatAnalysisDate(r.analysis.savedAt) || 'Yes') : 'No Analysis'),
+      render: r => (r.analysis ? (
+        <span
+          title={[
+            `Master Analysis saved${r.analysis.savedAt ? ` ${new Date(r.analysis.savedAt).toLocaleString()}` : ''}.`,
+            r.analysis.fileName || '',
+          ].filter(Boolean).join('\n')}
+          style={{ fontWeight: 600, color: '#166534', whiteSpace: 'nowrap' }}
+        >✓ {formatAnalysisDate(r.analysis.savedAt)}</span>
+      ) : (
+        <span title="No Master Analysis saved against this account yet" style={{ color: '#DC2626', fontWeight: 600 }}>No Analysis</span>
+      )),
     },
     {
       key: 'vertical', label: 'Vertical', defaultWidth: 150,
