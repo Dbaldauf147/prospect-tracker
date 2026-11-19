@@ -16,7 +16,7 @@ import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { buildTimelineSvg, TIMELINE_FORMATS } from '../../utils/timelineGraphic';
 import { currentMonthAnchor, parseMonthAnchor, anchorPlus } from '../../utils/timelineDates';
 import { exportTimelineXlsx } from '../../utils/timelineXlsx';
-import { downloadTimelinePdf } from '../../utils/timelineExport';
+import { downloadTimelinePdf, downloadTimelinePptx } from '../../utils/timelineExport';
 import { loadHiddenServices, saveHiddenServices } from '../../utils/dealTimelineHiddenStore';
 import { describeServiceRef } from '../../utils/serviceStepDeps';
 
@@ -186,6 +186,19 @@ export function DealTimelineModal({
   // service with no prerequisites has its agreement at kickoff anyway.
   const pinned = plan.services.filter(s => s.pinnedAgreement && s.startMonth > 1);
 
+  async function handlePptx() {
+    setBusy(true);
+    setError('');
+    try {
+      await downloadTimelinePptx(template);
+    } catch (err) {
+      console.error('Deal timeline PowerPoint export failed', err);
+      setError(`Could not build the PowerPoint: ${err?.message || 'unknown error'}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handlePdf() {
     setBusy(true);
     setError('');
@@ -353,6 +366,13 @@ export function DealTimelineModal({
               title="Download this plan as a Schneider-formatted workbook"
               style={{ ...btnStyle, opacity: (busy || plan.services.length === 0) ? 0.55 : 1 }}
             >{busy ? 'Building…' : '⬇ Excel'}</button>
+            <button
+              type="button"
+              onClick={handlePptx}
+              disabled={busy || plan.services.length === 0}
+              title="Download this plan as a one-slide PowerPoint in Schneider Electric format"
+              style={{ ...btnStyle, opacity: (busy || plan.services.length === 0) ? 0.55 : 1 }}
+            >{busy ? 'Building…' : '⬇ PPT'}</button>
             <button
               type="button"
               onClick={handlePdf}

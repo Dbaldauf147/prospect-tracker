@@ -11,6 +11,7 @@
 
 import { buildTimelineSvg, ownerColor } from './timelineGraphic';
 import { buildJpegPdf } from './jpegPdf.js';
+import { buildPicturePptx } from './pptxSlide.js';
 import { schneiderLogoSvg, SE_GREEN, SE_GREEN_DARK } from './schneiderLogo';
 
 const SE_INK = '#0F172A';
@@ -179,6 +180,46 @@ export function downloadTimelineSvg(template) {
   const svg = buildTimelineSvg(template, { branded: true });
   if (!svg) return false;
   triggerDownload(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${fileSlug(template)}.svg`);
+  return true;
+}
+
+// The timeline as a one-slide PowerPoint file: the same Schneider-formatted
+// graphic, drawn as a 16:9 deck page where the format allows, filling a
+// widescreen slide. It goes in as SVG with a PNG behind it (utils/pptxSlide),
+// so in PowerPoint it is sharp at any size and Convert to Shape makes every
+// bar and label editable; the slide can be copied straight into a deck.
+export async function downloadTimelinePptx(template) {
+  const svg = buildTimelineSvg(template, { branded: true, slide: true });
+  if (!svg) return false;
+  const match = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
+  const width = match ? Number(match[1]) : 1200;
+  const height = match ? Number(match[2]) : 675;
+  const scale = Math.max(2, Math.min(3, 3200 / width));
+  const img = await new Promise((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error('Could not load the timeline graphic'));
+    el.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('Could not rasterize the timeline');
+  const { default: JSZip } = await import('jszip');
+  const pptx = await buildPicturePptx(JSZip, {
+    png: new Uint8Array(await blob.arrayBuffer()),
+    svg, imgW: width, imgH: height,
+    title: String(template?.name || 'Timeline').trim() || 'Timeline',
+  });
+  triggerDownload(
+    new Blob([pptx], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
+    `${fileSlug(template)}.pptx`,
+  );
   return true;
 }
 
