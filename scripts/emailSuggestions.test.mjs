@@ -25,7 +25,7 @@
 //   4. Saying "we know" when it means "usually". first.last@ is the
 //      commonest convention there is and that is still a guess; the basis
 //      has to come back different so the tooltip can say so.
-import { emailSuggestions } from '../src/utils/emailSuggestions.js';
+import { emailSuggestions, tieredEmailSuggestions } from '../src/utils/emailSuggestions.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -168,6 +168,29 @@ check('no name, no suggestions', emailSuggestions({ emailDomains: ['amh.com'] })
 check('no domain, no suggestions', run({ emailDomains: [] }).length, 0);
 check('and a domain that is not one is skipped', run({ emailDomains: ['amh'] }).length, 0);
 check('no arguments at all is still an empty list', emailSuggestions().length, 0);
+
+// ---- a bounced address: the other formats, by tier ------------------------
+{
+  const same = (label, got, want) => check(label, JSON.stringify(got), JSON.stringify(want));
+  const who = { firstname: 'Wendy', lastname: 'Smith' };
+  const tiers = ['firstinitiallastname@deloitte.com', 'firstname.lastname@deloitte.com', 'deloitte.co.uk', 'lastname@deloitte.com'];
+  const rows = tieredEmailSuggestions({ ...who, emailDomains: tiers, exclude: 'WSmith@deloitte.com' });
+  same('the bounced address is not offered again', rows.some(r => r.email === 'wsmith@deloitte.com'), false);
+  same('tiers keep their rank, even with the 1st one bounced',
+    rows.filter(r => r.tier).map(r => [r.tierLabel, r.email]),
+    [['2nd tier', 'wendy.smith@deloitte.com'], ['4th tier', 'smith@deloitte.com']]);
+  same('tiers come first, then the usual shapes with no tier',
+    [rows[0].tier, rows[1].tier, rows.slice(2).every(r => r.tier === null), rows.length > 2], [2, 4, true, true]);
+  same('usual shapes reach the bare domain too', rows.some(r => r.email === 'wendy.smith@deloitte.co.uk'), true);
+  same('no address twice', new Set(rows.map(r => r.email)).size, rows.length);
+  same('every row says why', rows.every(r => r.why), true);
+  same('nothing bounced out: 1st tier leads', tieredEmailSuggestions({ ...who, emailDomains: tiers })[0], {
+    email: 'wsmith@deloitte.com', tier: 1, tierLabel: '1st tier', pattern: 'firstinitiallastname',
+    why: '1st tier on this company\'s Email Domains: addresses at deloitte.com built as firstinitiallastname.',
+  });
+  same('no formats on record: nothing', tieredEmailSuggestions({ ...who, emailDomains: [] }), []);
+  same('no name: nothing', tieredEmailSuggestions({ emailDomains: tiers }), []);
+}
 
 console.log(`\n${failures ? `${failures} FAILED` : 'All passed'}`);
 process.exit(failures ? 1 : 0);

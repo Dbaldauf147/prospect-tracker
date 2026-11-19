@@ -99,7 +99,7 @@ import { BfoNamesField } from './BfoNamesField';
 import { PopupListField } from './PopupListField';
 import { ContactEventsField } from './ContactEventsField';
 import { bfoCompanyNamesOf, markedNoBfoName } from '../../utils/bfoCompanyNames';
-import { emailSuggestions } from '../../utils/emailSuggestions';
+import { emailSuggestions, tieredEmailSuggestions } from '../../utils/emailSuggestions';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import {
@@ -1338,6 +1338,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // changes. Read live, so a scan landing while the popup is open shows.
   const badEmailsStore = useBadEmails();
   const badEmail = badEmailInfo(badEmailsStore.map, f.email);
+  // Clicking the "Bad email" badge lists the other addresses to try, by the
+  // company's Email Domains tiers (utils/emailSuggestions).
+  const [badEmailOpen, setBadEmailOpen] = useState(false);
   // A contact named on an opp is connected whatever the tick says: the box
   // shows Yes, marked "from Opps", and can't be unticked here while the opp
   // names them (see utils/contactConnected.js).
@@ -2525,6 +2528,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return m;
   }, [prospects]);
   const companyStatus = statusByCompany.get(normalizeCompanyName(f.company)) || '';
+  // The company's Email Domains tiers, for the bounced-address suggestions.
+  // The company card passes its own; opened anywhere else, they are read
+  // off the Table View company the Company field names.
+  const suggestDomains = useMemo(() => {
+    if (emailDomains.length) return emailDomains;
+    const key = normalizeCompanyName(f.company);
+    const card = key ? (prospects || []).find(p => normalizeCompanyName(p?.company) === key && String(p?.emailDomain || '').trim()) : null;
+    return card ? String(card.emailDomain).split(/[\n;,]+/).map(d => d.trim()).filter(Boolean) : [];
+  }, [emailDomains, prospects, f.company]);
   // Whether the Company maps to a Table View company. An unmapped one keeps
   // the contact off the Client / Key / Key Prospect rosters and off the
   // company's own popup, so it gets a warning with the likeliest matches.
@@ -3095,11 +3107,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             <label style={labelStyle}>
               Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span>
               {badEmail && (
-                <span
+                <button
+                  type="button"
                   data-bad-email
-                  title={`${badEmailTitle(badEmail)}. From a bounce notice you forwarded.`}
-                  style={{ marginLeft: 6, padding: '0 6px', borderRadius: 999, background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#B91C1C', fontSize: '0.62rem', fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}
-                >Bad email: bounced</span>
+                  aria-expanded={badEmailOpen}
+                  onClick={() => setBadEmailOpen(o => !o)}
+                  title={`${badEmailTitle(badEmail)}. From a bounce notice you forwarded. Click for other addresses to try.`}
+                  style={{ marginLeft: 6, padding: '0 6px', borderRadius: 999, background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#B91C1C', fontSize: '0.62rem', fontWeight: 700, textTransform: 'none', letterSpacing: 0, cursor: 'pointer', fontFamily: 'inherit' }}
+                >Bad email: bounced {badEmailOpen ? '\u25B4' : '\u25BE'}</button>
               )}
               {badEmail && badEmailsStore.clear && (
                 <button
@@ -3119,6 +3134,56 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                 style={{ padding: '0.3rem 0.55rem', border: '1px solid #BFDBFE', borderRadius: 4, background: emailCopied ? '#DCFCE7' : '#EFF6FF', color: emailCopied ? '#166534' : '#1E40AF', fontSize: '0.68rem', fontWeight: 600, cursor: f.email ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
               >{emailCopied ? 'Copied!' : 'Copy'}</button>
             </div>
+            {/* The bounced address's alternatives, opened from its badge:
+                one per tier of the company's Email Domains that can build
+                an address for this name, in tier order, then the usual
+                shapes. Picking one puts it in the box, the same as typing
+                it, so it saves the way any edit to the address does. */}
+            {badEmail && badEmailOpen && (() => {
+              const rows = tieredEmailSuggestions({
+                firstname: f.firstname,
+                lastname: f.lastname,
+                emailDomains: suggestDomains,
+                contacts: companyContacts,
+                exclude: [f.email],
+              });
+              const companyName = String(f.company || '').trim();
+              return (
+                <div data-bad-email-suggestions style={{ marginTop: '0.3rem', padding: '0.4rem 0.5rem', border: '1px solid #FECACA', borderRadius: 6, background: '#FFF7F7' }}>
+                  <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#991B1B', marginBottom: rows.length ? '0.3rem' : 0 }}>
+                    {rows.length
+                      ? `Other addresses to try${companyName ? `, from ${companyName}\u2019s email formats` : ''}. Click one to use it.`
+                      : !suggestDomains.length
+                        ? `No email formats on record${companyName ? ` for ${companyName}` : ''}. Add them under Email Domains on the company card.`
+                        : 'Nothing else can be built from this name and the company\u2019s email formats.'}
+                  </div>
+                  {rows.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                      {rows.map(row => (
+                        <button
+                          key={row.email}
+                          type="button"
+                          onClick={() => { set('email', row.email); setBadEmailOpen(false); }}
+                          title={`${row.why} Click to use ${row.email}.`}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                            fontSize: '0.68rem', padding: '0.15rem 0.45rem', borderRadius: '999px',
+                            cursor: 'pointer', fontFamily: 'inherit',
+                            border: row.tier ? '1px solid #D97706' : '1px solid #BFDBFE',
+                            background: row.tier ? '#FFFBEB' : '#EFF6FF',
+                            color: row.tier ? '#92400E' : '#1E40AF',
+                            fontWeight: row.tier ? 700 : 400,
+                          }}
+                        >
+                          {row.tier && <span style={{ fontSize: '0.56rem', fontWeight: 800, letterSpacing: '0.03em', textTransform: 'uppercase' }}>{row.tierLabel}</span>}
+                          {row.email}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {/* Addresses to try, with the likeliest one starred. Four chips
                 in a row all read as equally likely, so picking one meant
                 guessing - and the app already knows better: the company's

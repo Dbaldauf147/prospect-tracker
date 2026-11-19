@@ -157,3 +157,55 @@ export function emailSuggestions({
     // the list does not reshuffle itself as a name is typed.
     .sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0));
 }
+
+const ordinal = (n) => {
+  const t = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return `${n}${t}`;
+};
+
+/**
+ * Other addresses to try for somebody whose address bounced, in the order
+ * the company's Email Domains field ranks its formats.
+ *
+ * The field is ordered and each entry is a tier: the 1st is the format an
+ * address is built in first, the 2nd the fallback, and so on. Each tier that
+ * can build an address for this name gives one, marked with its tier; after
+ * them come the usual shapes (emailSuggestions) the tiers did not produce,
+ * with no tier. The address that bounced (`exclude`, and anything else
+ * listed there) is left out, which is the point: these are the OTHER ones.
+ *
+ * @returns {Array<{email, tier: number|null, tierLabel: string, pattern: string, why: string}>}
+ */
+export function tieredEmailSuggestions({
+  firstname = '', lastname = '', emailDomains = [], contacts = [], exclude = [],
+} = {}) {
+  const skip = new Set((Array.isArray(exclude) ? exclude : [exclude]).map(e => String(e || '').toLowerCase().trim()).filter(Boolean));
+  const out = [];
+  const seen = new Set();
+  const add = (row) => {
+    const key = row.email.toLowerCase();
+    if (skip.has(key) || seen.has(key)) return;
+    seen.add(key);
+    out.push(row);
+  };
+  const entries = (emailDomains || []).map(e => String(e || '').replace(/^@/, '').trim()).filter(Boolean);
+  entries.forEach((entry, i) => {
+    const at = entry.lastIndexOf('@');
+    if (at <= 0) return; // a bare domain names no format to build from
+    const built = buildEmailFromPattern(entry, firstname, lastname);
+    if (!built) return;
+    const pattern = entry.slice(0, at).toLowerCase();
+    const domain = entry.slice(at + 1).toLowerCase();
+    add({
+      email: built, tier: i + 1, tierLabel: `${ordinal(i + 1)} tier`, pattern,
+      why: `${ordinal(i + 1)} tier on this company's Email Domains: addresses at ${domain} built as ${pattern}.`,
+    });
+  });
+  for (const row of emailSuggestions({ firstname, lastname, emailDomains: entries, contacts })) {
+    add({
+      email: row.email, tier: null, tierLabel: '', pattern: '',
+      why: row.basis === 'learned' ? row.why : 'A common format at this company’s domain. Not one of its recorded tiers.',
+    });
+  }
+  return out;
+}
