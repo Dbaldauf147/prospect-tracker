@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues, editSavedTarget, targetsOfCompaniesMatching, normalizeTypeGroups, targetTabKeyFn, saveTypeGroup, removeTypeFromGroup, removeTypeGroup } from '../src/utils/companyTargets.js';
+import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues, editSavedTarget, targetsOfCompaniesMatching, normalizeTypeGroups, targetTabKeyFn, saveTypeGroup, removeTypeFromGroup, removeTypeGroup, companyTargetCount } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -279,6 +279,15 @@ check('link: kept on the row, trimmed', normalizeTargets([{ id: 'a', sourceUrl: 
   check('search: every target of each matching company, hidden ones too', found('simon'), ['Simon Property Group/Net zero/2', 'Simon Property Group/SBTi near-term/2', 'Simon & Co/Carbon neutral/1']);
   check('search: every word must be in the name, in any order', found('group  SIMON'), ['Simon Property Group/Net zero/2', 'Simon Property Group/SBTi near-term/2']);
   check('search: nothing typed, nothing found', [found(''), found('   '), found('zzz')], [[], [], []]);
+}
+
+{
+  const n = climateTargets => companyTargetCount({ climateTargets });
+  check('count: a company with no targets has none', [companyTargetCount(null), companyTargetCount({}), n([])], [0, 0, 0]);
+  check('count: every target with something filled in', n([{ type: 'Net zero' }, { value: '50%' }, { scope1: true }]), 3);
+  check('count: hidden targets are left out', n([{ type: 'Net zero' }, { type: 'SBTi near-term', hidden: true }]), 1);
+  check('count: a No target set row is not a target', n([noTargetRow()]), 0);
+  check('count: an empty row is not a target', n([blankTarget(), { type: 'Net zero' }]), 1);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }

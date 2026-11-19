@@ -28,6 +28,7 @@ import { useBiggestDeals } from '../../hooks/useBiggestDeals';
 import { dealMid } from '../../utils/prospectingDeals.js';
 import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
 import { DM_TOPICS, matchesDmTopic } from '../../utils/procurementDmFilter';
+import { companyTargetCount } from '../../utils/companyTargets';
 
 // The Tier cell: the card's tier, except a "Not on tier list, but Dan
 // target" company (or a blank-tier one ticked as a Dan target) reads
@@ -239,6 +240,7 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
       frameworks: [...(listFlagsByCompany.get(companyKey(account?.company)) || [])],
       frameworksDan: listFlagsByCompany.compliance?.get(companyKey(account?.company)) || null,
       status: accountStatusOf(account),
+      targetCount: account ? companyTargetCount(account) : 0,
       campaigns: campaignsByEmail.get(normEmail(contact.email)) || [],
     };
   }), [windowEntries, dmTopics, topicMatches, accountOf, deals, campaignsByEmail, listFlagsByCompany]);
@@ -363,6 +365,19 @@ export function ProspectingDmsNoActivity({ prospects, settings, updateSettings, 
           {r.frameworks.map(label => <FrameworkFlagPill key={label} label={label} dan={!!r.frameworksDan?.has(label)} />)}
         </span>
       )),
+    },
+    {
+      // How many sustainability targets the account has saved on its
+      // pop-up's Targets tab (utils/companyTargets companyTargetCount).
+      key: 'targets', label: 'Targets', defaultWidth: 110,
+      headerTitle: 'How many sustainability targets the account has on its company pop-up\'s Targets tab, leaving out hidden ones. No Target when it has none.',
+      // No Target sorts as 0, so it sits below every count rather than last either way.
+      getSortValue: r => r.targetCount,
+      getFilterValue: r => (r.targetCount ? String(r.targetCount) : 'No Target'),
+      exportValue: r => r.targetCount || 'No Target',
+      render: r => (r.targetCount
+        ? <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(r.targetCount)}</span>
+        : <span style={{ color: '#DC2626', fontWeight: 600 }}>No Target</span>),
     },
     {
       key: 'vertical', label: 'Vertical', defaultWidth: 150,
