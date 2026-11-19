@@ -8,6 +8,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { BULK_ADD_LEAD_SOURCE, LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import { isOwnTarget, OWN_TARGET_TIER_LABEL } from '../../utils/tierSource';
 import { pickFilterMatches, pickFilterIsActive, pickListOptions } from '../../utils/columnFilter';
 import { ColumnFilterCell } from '../common/DataTable';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
@@ -408,6 +409,19 @@ function contactOutsideNorthAmerica(country) {
   if (!raw) return false;
   if (/^(us|ca|mx|pr)$/i.test(raw)) return false;
   return classifyHqCountry(raw) === OUTSIDE_NORTH_AMERICA;
+}
+
+// The Tier a matched company shows on this page: its own Tier 1 or Tier 2;
+// otherwise Strategic Target when the card's "Not on tier list, but Dan
+// target" box is ticked (whoever its CDM is); otherwise Tier 3 when it is
+// on this CDM's book, as My Accounts reads it. '' when it is none of those.
+function bulkTierOf(prospect, cdmName) {
+  if (!prospect) return '';
+  const explicit = String(prospect.tier || '').trim();
+  if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
+  if (isOwnTarget(prospect)) return OWN_TARGET_TIER_LABEL;
+  if (matchesCdm(prospect.cdm, cdmName)) return 'Tier 3';
+  return '';
 }
 
 // What the Bulk Add Contacts table's layout is called in settings.tablePrefs.
@@ -1126,12 +1140,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       const key = p ? `p:${p.id}` : `c:${name.toLowerCase()}`;
       let entry = byKey.get(key);
       if (!entry) {
-        let tier = '';
-        if (p) {
-          const explicit = (p.tier || '').trim();
-          if (explicit === 'Tier 1' || explicit === 'Tier 2') tier = explicit;
-          else if (matchesCdm(p.cdm, cdmName)) tier = 'Tier 3';
-        }
+        const tier = bulkTierOf(p, cdmName);
         entry = {
           key, name, prospect: p, tier,
           status: String(p?.status || '').trim(),
@@ -1406,7 +1415,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         });
       }
       if (p.website) {
-        const d = p.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase();
+        // "www.acme.com" is how most cards hold it, with no scheme in front.
+        const d = p.website.trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/.*$/, '').toLowerCase();
         recordDomain(p, d, 'website');
       }
       // Tokens from company name — 3+ chars, lowercased, deduped. Skip generic suffixes.
@@ -2035,12 +2045,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           : live.suggestedCompany;
       }
 
-      let tier = '';
-      if (!dismissed && prospect) {
-        const explicit = (prospect.tier || '').trim();
-        if (explicit === 'Tier 1' || explicit === 'Tier 2') tier = explicit;
-        else if (matchesCdm(prospect.cdm, cdmName)) tier = 'Tier 3';
-      }
+      const tier = dismissed ? '' : bulkTierOf(prospect, cdmName);
 
       // CDM / Other Reps: the account the Company names, dismissed or not,
       // as the cell shows them.
@@ -2672,11 +2677,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         case 'notes':            return r.notes || '';
         case 'tier': {
           const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
-          if (!p) return '';
-          const explicit = (p.tier || '').trim();
-          if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
-          if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
-          return '';
+          return bulkTierOf(p, cdmName);
         }
         // What the cell prints: the CDM and the other reps. Shown even
         // when the company suggestion was dismissed - who owns the account
@@ -2765,11 +2766,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           case 'notes':            return r.notes || '';
           case 'tier': {
             const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
-            if (!p) return '';
-            const explicit = (p.tier || '').trim();
-            if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
-            if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
-            return '';
+            return bulkTierOf(p, cdmName);
           }
           default:                 return '';
         }
@@ -2825,6 +2822,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // the emails the user just dropped, so we push it to the matched
   // prospect without waiting for a click. Deduped per session via a
   // ref so we never re-fire the same (prospect, value) pair.
+  //
+  // Only when the company is confirmed for that domain: some row on it
+  // has, as its Company, this card's exact name. A row merely guessed onto
+  // a card (a word in its domain) used to write its domain onto that card
+  // unasked, and from then on every address there matched the wrong
+  // company "exactly". Unconfirmed, it stays a pill with a tick.
   const autoAppliedEmailDomainsRef = useRef(new Set());
   useEffect(() => {
     if (!onUpdateProspect) return;
@@ -2833,10 +2836,16 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       if (!cell || !cell.sugg || cell.dismissed) continue;
       const dedupeKey = `${prospect.id}::${cell.sugg.value}`;
       if (autoAppliedEmailDomainsRef.current.has(dedupeKey)) continue;
+      const suggDomain = '@' + String(cell.sugg.value).slice(String(cell.sugg.value).lastIndexOf('@') + 1).toLowerCase();
+      const cardName = String(prospect.company || '').trim().toLowerCase();
+      const confirmed = !!cardName && rows.some(r => r._matchedProspectId === prospect.id
+        && String(r.email || '').toLowerCase().endsWith(suggDomain)
+        && String(r.company || '').trim().toLowerCase() === cardName);
+      if (!confirmed) continue;
       autoAppliedEmailDomainsRef.current.add(dedupeKey);
       applySingleSuggestion(prospect, 'emailDomain', cell.sugg.value);
     }
-  }, [prospectSuggestionRows, applySingleSuggestion, onUpdateProspect]);
+  }, [prospectSuggestionRows, applySingleSuggestion, onUpdateProspect, rows]);
 
   async function applyProspectBackfill() {
     if (!onUpdateProspect || prospectBackfillUpdates.length === 0) return;
@@ -3088,15 +3097,36 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // a card that no longer exists), or the match only becomes possible
   // later (the Company is typed, the domain is mapped, the card is added).
   // So a row whose stored match is missing takes whatever the matcher
-  // finds for it now. A stored match that still resolves is left alone.
+  // finds for it now.
+  //
+  // A stored match that still resolves is kept unless something exact now
+  // says otherwise. The row's Company being, letter for letter, a card's
+  // name comes first: that cell is what goes to HubSpot, and it is a
+  // deliberate answer where a domain on a card may have been learned from
+  // a wrong guess (Equity Lifestyle Properties rows were showing another
+  // company's CDM and website that way). Failing that, the email domain
+  // being saved on a different card. A fuzzy live match never replaces a
+  // stored one.
   // This is also what hands a Do-not-map row back its Company match after
   // marking the domain cleared it.
   useEffect(() => {
     if (rows.length === 0 || prospects.length === 0) return;
     const ids = new Set(prospects.map(p => p.id));
+    const nameById = new Map(prospects.map(p => [p.id, String(p.company || '').trim().toLowerCase()]));
     const fixes = new Map();
     for (const r of rows) {
-      if (r._matchedProspectId && ids.has(r._matchedProspectId)) continue;
+      if (r._matchedProspectId && ids.has(r._matchedProspectId)) {
+        const typed = String(r.company || '').trim().toLowerCase();
+        // Two cards can share a name; one of them already stored is fine.
+        if (typed && nameById.get(r._matchedProspectId) === typed) continue;
+        let exact = (typed && prospectByCompanyKey.get(typed)) || null;
+        if (!exact) {
+          const live = lookupMatch(r.email, r);
+          if (live.wasExactMatch) exact = live.matched;
+        }
+        if (exact && exact.id !== r._matchedProspectId) fixes.set(r.email, exact.id);
+        continue;
+      }
       const m = lookupMatch(r.email, r).matched;
       if (m && m.id !== r._matchedProspectId) fixes.set(r.email, m.id);
     }
@@ -3106,7 +3136,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       saveCache(next);
       return next;
     });
-  }, [rows, prospects, lookupMatch]);
+  }, [rows, prospects, lookupMatch, prospectByCompanyKey]);
 
   // "Do not map": this domain belongs to no Table View company and should
   // stop being guessed at. A domain that is mapped today is unmapped first,
@@ -4394,22 +4424,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                         // alongside the dismissed pill.
                         if (dismissedSuggestedCompanies.has(r.email)) return <span className={styles.metaText}>-</span>;
                         if (!prospect) return <span className={styles.metaText}>-</span>;
-                        const explicit = (prospect.tier || '').trim();
-                        let t;
-                        if (explicit === 'Tier 1' || explicit === 'Tier 2') {
-                          t = explicit;
-                        } else if (matchesCdm(prospect.cdm, cdmName)) {
-                          // Prospect is in My Accounts (matching CDM) but
-                          // has no explicit Tier 1/2 marker — default
-                          // to Tier 3 the same way MyAccountsView does.
-                          t = 'Tier 3';
-                        } else {
-                          return <span className={styles.metaText}>-</span>;
-                        }
+                        const t = bulkTierOf(prospect, cdmName);
+                        if (!t) return <span className={styles.metaText}>-</span>;
                         const colors = t === 'Tier 1' ? { bg: '#DBEAFE', color: '#1E40AF' }
                           : t === 'Tier 2' ? { bg: '#FEF3C7', color: '#92400E' }
+                          : t === OWN_TARGET_TIER_LABEL ? { bg: '#EDE9FE', color: '#6D28D9' }
                           : { bg: '#F3F4F6', color: '#6B7280' };
-                        return <span style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, background: colors.bg, color: colors.color }}>{t}</span>;
+                        return <span title={t === OWN_TARGET_TIER_LABEL ? 'Not on the tier list, but ticked as your target on the company card' : undefined} style={{ whiteSpace: 'nowrap', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, background: colors.bg, color: colors.color }}>{t}</span>;
                       })()}</td>
                     ),
                     cdmReps: () => (
