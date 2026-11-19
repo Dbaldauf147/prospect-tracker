@@ -24,7 +24,7 @@
 import { RENEWAL_WARNING_DAYS } from './renewalWindow.js';
 
 // The tabs a step can send the user to, labelled as the sidebar labels
-// them. Doubles as the picker's options and as the lookup that names the
+// them (PE Portfolio is a My Accounts subtab, under its subtab's name). Doubles as the picker's options and as the lookup that names the
 // action button, so re-pointing a step can't leave a stale label behind.
 export const STEP_VIEW_OPTIONS = [
   { view: 'accounts', label: 'My Accounts' },

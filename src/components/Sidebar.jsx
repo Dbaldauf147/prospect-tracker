@@ -302,7 +302,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
 
       <nav className={styles.nav}>
         <button
-          className={(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory') ? styles.navItemActive : styles.navItem}
+          className={(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' || view === 'pe') ? styles.navItemActive : styles.navItem}
           onClick={() => setView('accounts')}
         >
           <span className={styles.navIcon}>&#9733;</span>
@@ -434,13 +434,6 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
               aria-label="Agent prompts are due to be run"
             >!</span>
           )}
-        </button>
-        <button
-          className={view === 'pe' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('pe')}
-        >
-          <span className={styles.navIcon}>&#127970;</span>
-          PE Portfolio
         </button>
         <button
           className={view === 'contacts' ? styles.navItemActive : styles.navItem}
