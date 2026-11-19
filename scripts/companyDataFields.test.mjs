@@ -13,7 +13,7 @@ function eq(actual, expected, name) {
 // --- what counts as missing ------------------------------------------------
 eq([hasValue(0), hasValue('12'), hasValue(null), hasValue(''), hasValue(undefined), hasValue('abc')], [true, true, false, false, false, false],
   '0 is a value, blank / null / junk are not');
-eq(missingFields({ numberOfSites: 10, numberOfAccounts: null, numberOfMeters: 0, zoomCompanyId: '123', website: '  ' }), ['numberOfAccounts', 'equipmentCount', 'annualMwh', 'zoomCompanyName', 'website'],
+eq(missingFields({ numberOfSites: 10, numberOfAccounts: null, numberOfMeters: 0, zoomCompanyId: '123', website: '  ' }), ['numberOfAccounts', 'equipmentCount', 'annualMwh', 'zoomCompanyName', 'bfoCompanyName', 'website'],
   'missing fields, in field order; a blank text field is missing');
 {
   const idField = COMPANY_DATA_FIELDS.find(f => f.key === 'zoomCompanyId');
@@ -89,7 +89,9 @@ eq(planCompanyDataPaste('ID\tSites\nc3\t9', records).updates.map(u => [u.id, u.p
 }
 
 {
-  const rec = { numberOfSites: 3, numberOfAccounts: 4, numberOfMeters: 5, equipmentCount: 6, annualMwh: 7, website: 'x.com' };
+  const rec = { numberOfSites: 3, numberOfAccounts: 4, numberOfMeters: 5, equipmentCount: 6, annualMwh: 7, website: 'x.com', bfoCompanyName: 'X Inc' };
+  eq(missingFields({ ...rec, bfoCompanyName: ' ' }, COMPANY_DATA_FIELDS, { zoomExcluded: true }), ['bfoCompanyName'], 'a blank BFO Company Name is missing');
+  eq(missingFields({ ...rec, bfoCompanyName: '', noBfoCompanyName: true }, COMPANY_DATA_FIELDS, { zoomExcluded: true }), [], 'not when the company is marked None in BFO');
   eq(missingFields(rec), ['zoomCompanyId', 'zoomCompanyName'], 'blank Zoom fields are missing by default');
   eq(missingFields(rec, COMPANY_DATA_FIELDS, { zoomExcluded: true }), [], 'not when the company is excluded from ZoomInfo');
   eq(missingFields({ ...rec, website: '' }, COMPANY_DATA_FIELDS, { zoomExcluded: true }), ['website'], 'other fields still count when excluded');
