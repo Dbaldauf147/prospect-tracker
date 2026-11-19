@@ -4,6 +4,7 @@
 // and research-portfolio.js.
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') {
@@ -93,7 +94,7 @@ ${context ? `Additional context (recipient/account info):\n${context}\n\n` : ''}
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return res.status(resp.status).json({ error: `Claude API error: ${errText}` });
+      return res.status(resp.status).json({ error: claudeErrorMessage(resp.status, errText) });
     }
 
     const data = await resp.json();

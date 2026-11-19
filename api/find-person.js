@@ -5,6 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { buildRequest, readAnswer } from './_lib/findPerson.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 // Web search can pause a long turn; it is resumed by sending the partial
 // turn back. A few rounds is plenty for one person.
@@ -50,7 +51,7 @@ async function handler(req, res, auth) {
       return res.status(429).json({ error: 'Claude is rate-limited right now - try again in a minute.' });
     }
     if (err instanceof Anthropic.APIError) {
-      return res.status(502).json({ error: `Claude API error ${err.status ?? ''}: ${err.message}`.trim() });
+      return res.status(502).json({ error: claudeErrorMessage(err.status, err.message) });
     }
     throw err;
   }

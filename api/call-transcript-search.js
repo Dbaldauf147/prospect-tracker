@@ -7,6 +7,7 @@
 // mean this route needing OneDrive credentials.
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 // Speaker-labelled turns are what make timestamps possible, so they're
 // preferred over the flat transcript. A long call can run to thousands
@@ -116,7 +117,7 @@ async function handler(req, res, auth) {
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return res.status(resp.status).json({ error: `Claude API error: ${errText}` });
+      return res.status(resp.status).json({ error: claudeErrorMessage(resp.status, errText) });
     }
 
     const data = await resp.json();

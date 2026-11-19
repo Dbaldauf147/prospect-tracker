@@ -2,6 +2,7 @@
 // Returns a structured array of { companyName, sector, hqCity, hqCountry, energyGwh, siteCount, pcDescription, acquisitionYear }.
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
+import { claudeErrorMessage } from './_lib/claudeError.js';
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') {
@@ -63,7 +64,7 @@ Return up to 100 companies. If unsure about a field, use your best estimate. Do 
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return res.status(resp.status).json({ error: `Claude API error: ${errText}` });
+      return res.status(resp.status).json({ error: claudeErrorMessage(resp.status, errText) });
     }
 
     const data = await resp.json();
