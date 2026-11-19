@@ -9,9 +9,11 @@
 // instructions and knowledge into the app (settings.claudeSlidesProject)
 // and they travel with each request as the system prompt. Claude then
 // builds the deck with Anthropic's pptx skill in a code-execution
-// container, with the timeline graphic uploaded into that container.
+// container: the timeline drawn as native, editable shapes, matching a
+// reference slide from that project (timelineSlideReference.js), from the
+// placement the app's own chart uses (src/utils/claudeSlidesBrief.js).
 
-import { toFile } from '@anthropic-ai/sdk';
+import { TIMELINE_SLIDE_REFERENCE_PNG } from './timelineSlideReference.js';
 
 export const MODEL = 'claude-opus-5-5';
 
@@ -21,8 +23,6 @@ export const MAX_INSTRUCTIONS_CHARS = 20000;
 export const MAX_KNOWLEDGE_CHARS = 60000;
 export const MAX_BRIEF_CHARS = 20000;
 export const MAX_REQUEST_CHARS = 4000;
-// The timeline picture, base64. Vercel caps a request body at 4.5 MB.
-export const MAX_PNG_BASE64_CHARS = 3_500_000;
 
 // How many times a paused server-side turn (pause_turn) is resumed before
 // giving up. Each resume is another round of the container's tool loop.
@@ -45,6 +45,22 @@ export function cleanProject(p) {
   };
 }
 
+// How the timeline slide is laid out, read off the reference slide. The
+// project's own instructions come first in the prompt and win where they
+// say something different.
+export const TIMELINE_SLIDE_SPEC = `Timeline slide layout (match the attached reference slide):
+- 16:9 widescreen, white background, Arial throughout. Build every element as native, editable PowerPoint shapes and text boxes (python-pptx): no screenshots or pictures of the chart.
+- Top left: the title in bold dark green #00552E, about 36 pt. Under it a subtitle in grey #626469, about 16 pt, "Stages and timeline, <first month year> to <last month year>" unless the brief gives a subtitle.
+- Top right, level with the title: the legend, three entries each a filled circle and grey text: "<client> workstream" in navy #275B7F, "SE workstream" in green #3DCD58, "Both workstreams" in dark green #00552E. Leave "Both" out when no step uses it.
+- A full-width dark green #00552E header band with white bold text: "Stage" over the left label column (about 28% of the width), then one heading per month column. The first month and each January carry the year ("Nov 2026", "Jan 2027"), the others the month alone.
+- One row per step, rows alternating a very light grey #F3F6F4 fill and white, with thin light grey #D5DAD7 vertical grid lines at month boundaries. Rows share the height between the header and the footer.
+- In the label column: a numbered circle filled with the step's workstream colour (white number, dark text on the light green), then the step name in grey #626469, about 14 pt, wrapping to two lines if needed.
+- The bar: a rounded rectangle spanning exactly its month columns, filled with the workstream colour, with the bar label in bold at its left end (white on navy and dark green, dark green #00552E on light green). A milestone is a diamond in its month instead of a bar.
+- Today: a solid orange #FFB04C vertical line through the rows at the position the brief gives, with an orange rounded pill under the chart reading "Today, <Mon> <day>" in bold dark text.
+- Contract signature: a dashed dark green #00552E vertical line at the start of its column, with a dark green pill under the chart, white bold text, using the brief's label.
+- Bottom right, italic grey: "Numbers correspond to the process steps on the next slide." Bottom left footer, small grey: "Property of Schneider Electric  |  Page <n>".
+- After the timeline slide, a "process steps" slide in the same style listing each numbered step with its name, workstream, timing and detail, so the numbers on the timeline point to it.`;
+
 /** The system prompt: the project's own instructions and knowledge first. */
 export function buildSystemPrompt(project) {
   const parts = [
@@ -56,10 +72,12 @@ export function buildSystemPrompt(project) {
   if (project.knowledge) {
     parts.push(`<project_knowledge>\n${project.knowledge}\n</project_knowledge>`);
   }
+  parts.push(TIMELINE_SLIDE_SPEC);
   parts.push([
     'Your job in this conversation is to produce one PowerPoint (.pptx) file using the pptx skill.',
     '- Save the finished deck to $OUTPUT_DIR (or /mnt/user-data/outputs if that is unset) so it is returned as a file. Produce exactly one .pptx file.',
-    '- The timeline graphic is attached as timeline.png. Use it on the timeline slide, kept at its own aspect ratio and not cropped or stretched.',
+    '- Place every bar, marker and label from the brief\'s column numbers; they are exactly what the app\'s own chart draws.',
+    '- Before saving, render the slides to images and compare them with the reference: fix overlapping or clipped text, bars off their columns, or labels that do not fit their bar.',
     '- Use only the facts in the brief. Do not invent dates, owners, amounts or stages.',
     '- Do not use em dashes in any slide text; use a hyphen, a comma or two sentences.',
     '- When the file is saved, reply with one short line saying what the deck contains.',
@@ -72,7 +90,7 @@ export function buildUserText({ brief, request }) {
   const b = clip(brief, MAX_BRIEF_CHARS);
   const r = clip(request, MAX_REQUEST_CHARS);
   return [
-    'Build a PowerPoint for this project timeline, following the project instructions.',
+    'The image above is the reference timeline slide from this project: match its layout, colours and type. Build a PowerPoint for this project timeline, following the project instructions.',
     `<timeline_brief>\n${b}\n</timeline_brief>`,
     r ? `<extra_request>\n${r}\n</extra_request>` : '',
   ].filter(Boolean).join('\n\n');
@@ -80,15 +98,12 @@ export function buildUserText({ brief, request }) {
 
 /**
  * The Messages API request. The pptx skill runs in a code-execution
- * container (beta), with timeline.png uploaded into it. Medium effort: a
- * deck is real work, but it has to finish inside the function's 300 s.
- * Server-side fallback is on so a classifier decline is retried rather
- * than handed back as a refusal.
+ * container (beta); the reference slide rides as an image Claude can see.
+ * Medium effort: a deck is real work, but it has to finish inside the
+ * function's 300 s. Server-side fallback is on so a classifier decline is
+ * retried rather than handed back as a refusal.
  */
-export function buildRequest({ project, brief, request, pngFileId }) {
-  const content = [];
-  if (pngFileId) content.push({ type: 'container_upload', file_id: pngFileId });
-  content.push({ type: 'text', text: buildUserText({ brief, request }) });
+export function buildRequest({ project, brief, request }) {
   return {
     model: MODEL,
     max_tokens: 32000,
@@ -98,7 +113,13 @@ export function buildRequest({ project, brief, request, pngFileId }) {
     output_config: { effort: 'medium' },
     container: { skills: [{ type: 'anthropic', skill_id: 'pptx', version: 'latest' }] },
     tools: [{ type: 'code_execution_20260521', name: 'code_execution' }],
-    messages: [{ role: 'user', content }],
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: TIMELINE_SLIDE_REFERENCE_PNG } },
+        { type: 'text', text: buildUserText({ brief, request }) },
+      ],
+    }],
   };
 }
 
@@ -130,26 +151,16 @@ export function deckFileName(title) {
 }
 
 /**
- * Run the whole build against an Anthropic client: upload the picture,
- * ask Claude (resuming paused turns), find the .pptx it saved, download
- * it, and clean up the Files API either way. Resolves to
- * { filename, pptx (base64), note } or { status, error }. API errors
- * throw, for the handler to word.
+ * Run the whole build against an Anthropic client: ask Claude (resuming
+ * paused turns), find the .pptx the container saved, download it, and
+ * delete it from the Files API. Resolves to { filename, pptx (base64),
+ * note } or { status, error }. API errors throw, for the handler to word.
  */
-export async function buildDeck(client, { project, brief, png, request, title }, { budgetMs = BUDGET_MS } = {}) {
+export async function buildDeck(client, { project, brief, request, title }, { budgetMs = BUDGET_MS } = {}) {
   const started = Date.now();
   const uploaded = [];
   try {
-    let pngFileId = '';
-    if (png) {
-      const meta = await client.files.upload({
-        file: await toFile(Buffer.from(png, 'base64'), 'timeline.png', { type: 'image/png' }),
-      });
-      pngFileId = meta.id;
-      uploaded.push(meta.id);
-    }
-
-    const params = buildRequest({ project, brief, request, pngFileId });
+    const params = buildRequest({ project, brief, request });
     let response = await client.beta.messages.stream(params).finalMessage();
     const allContent = [...response.content];
     // A long tool loop pauses; send the turn back as it stands and the

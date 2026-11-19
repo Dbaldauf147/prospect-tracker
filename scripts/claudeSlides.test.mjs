@@ -35,13 +35,15 @@ check('system prompt carries the knowledge', sys.includes('<project_knowledge>\n
 check('project text comes before the task rules', sys.indexOf('Use 3 bullets max.') < sys.indexOf('pptx skill'), true);
 check('no knowledge block when there is none', buildSystemPrompt(cleanProject({ instructions: 'a' })).includes('project_knowledge'), false);
 
-const req = buildRequest({ project, brief: 'Title: X', request: 'One slide', pngFileId: 'file_png' });
+const req = buildRequest({ project, brief: 'Title: X', request: 'One slide' });
 check('runs the pptx skill', req.container.skills, [{ type: 'anthropic', skill_id: 'pptx', version: 'latest' }]);
 check('with code execution', req.tools, [{ type: 'code_execution_20260521', name: 'code_execution' }]);
 check('code execution beta is on', req.betas.includes('code-execution-2025-08-25'), true);
-check('the picture is uploaded to the container first', req.messages[0].content[0], { type: 'container_upload', file_id: 'file_png' });
+check('the reference slide leads the turn as an image', [req.messages[0].content[0].type, req.messages[0].content[0].source.media_type], ['image', 'image/png']);
+check('the reference image is a real PNG', Buffer.from(req.messages[0].content[0].source.data, 'base64').subarray(1, 4).toString(), 'PNG');
+check('the slide spec is in the system prompt', sys.includes('Timeline slide layout') && sys.includes('#00552E') && sys.includes('native, editable'), true);
+check('project instructions come before the slide spec', sys.indexOf('Use 3 bullets max.') < sys.indexOf('Timeline slide layout'), true);
 check('the brief and extra request ride in the text', /Title: X[\s\S]*One slide/.test(req.messages[0].content[1].text), true);
-check('no upload block without a picture', buildRequest({ project, brief: 'b' }).messages[0].content.length, 1);
 
 const content = [
   { type: 'text', text: 'ok' },
@@ -66,9 +68,25 @@ const brief = buildTimelineBrief({
 });
 check('brief has the title', brief.startsWith('Title: Utility bill audit'), true);
 check('brief lists services', brief.includes('Services: Bill audit'), true);
-check('a one-day stage reads as a date', brief.includes('1. Kickoff | owner: Schneider Electric | date: 2026-01-05'), true);
-check('descriptions are one line', brief.includes('   Call with client'), true);
-check('second stage keeps owner', brief.includes('2. Data pull | owner: Client'), true);
+check('descriptions are one line', brief.includes('   Detail: Call with client'), true);
+check('workstreams name SE and Client', [brief.includes('1. Kickoff | workstream: SE'), brief.includes('2. Data pull | workstream: Client')], [true, true]);
+
+// The reference slide's own plan: the legal review run-up pushes the rest
+// past contract signature, exactly as the app's chart places it.
+const sourcing = buildTimelineBrief({
+  name: 'Strategic Sourcing Implementation', positionMode: 'months', monthMode: 'calendar', anchorMonth: '2026-11', monthCount: 5,
+  stages: [
+    { id: 'a', name: 'Contract legal review', owner: 'Both', startMonth: 1, months: 2, preKickoff: true },
+    { id: 'b', name: 'Review current supply agreements', owner: 'Schneider Electric', startMonth: 1, months: 1 },
+    { id: 'c', name: 'Prioritize 1st wave', owner: 'Both', startMonth: 1, months: 2 },
+    { id: 'd', name: 'Align stakeholders', owner: 'Client', startMonth: 2, months: 1 },
+  ],
+}, { now: new Date(2026, 10, 19) });
+check('month columns carry the year on the first month and January', sourcing.includes('Month columns (5, left to right): Nov 2026 | Dec | Jan 2027 | Feb | Mar'), true);
+check('contract signature after the run-up', sourcing.includes('Marker "Contract signature": a dashed vertical line at the start of column 3 (Jan 2027).'), true);
+check('run-up step spans its columns', sourcing.includes('1. Contract legal review | workstream: Both | bar: columns 1 to 2 | bar label: "Nov to Dec" | before contract signature'), true);
+check('post-signature steps shift right', sourcing.includes('3. Prioritize 1st wave | workstream: Both | bar: columns 3 to 4 | bar label: "Jan to Feb"'), true);
+check('client step', sourcing.includes('4. Align stakeholders | workstream: Client | bar: column 4 | bar label: "Feb"'), true);
 check('empty timeline says so', buildTimelineBrief({ name: 'x', stages: [] }).includes('(no stages yet)'), true);
 
 // The whole build against a fake Anthropic API, through the real SDK: the
@@ -118,9 +136,9 @@ const server = http.createServer((req, res) => {
 });
 await new Promise(r => server.listen(0, r));
 const fake = new Anthropic({ apiKey: 'test', baseURL: `http://127.0.0.1:${server.address().port}`, maxRetries: 0 });
-const out = await buildDeck(fake, { project, brief: 'Title: X', png: Buffer.from('png').toString('base64'), request: '', title: 'My plan' });
+const out = await buildDeck(fake, { project, brief: 'Title: X', request: '', title: 'My plan' });
 server.close();
-check('picture uploaded once', seen.uploads, 1);
+check('nothing uploaded', seen.uploads, 0);
 check('paused turn resumed', seen.messages.length, 2);
 check('resume reuses the container', seen.messages[1].container?.id, 'cont_1');
 check('resume sends the paused turn back', seen.messages[1].messages.map(m => m.role), ['user', 'assistant']);
@@ -129,7 +147,7 @@ check('deck downloaded', seen.downloads, ['file_deck']);
 check('deck returned as base64', Buffer.from(out.pptx || '', 'base64').toString(), 'PKdeck');
 check('deck filename', out.filename, 'My-plan-Claude.pptx');
 check('note has no em dash', out.note, 'Three slides - cover, timeline, owners.');
-check('upload and deck both deleted', [...seen.deleted].sort(), ['file_deck', 'file_png']);
+check('deck deleted from Files once fetched', seen.deleted, ['file_deck']);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

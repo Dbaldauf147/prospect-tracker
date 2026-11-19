@@ -81,7 +81,7 @@ export function ClaudeSlidesDialog({ template, project, onSaveProject, onClose }
           <div className={styles.detailTitleWrap}>
             <h3 className={styles.detailTitle}>PowerPoint with Claude: {template?.name || 'Timeline'}</h3>
             <div style={hint}>
-              Claude builds the deck from this timeline, following your Claude Project.
+              Claude builds this timeline as editable slides in your reference layout (title, legend, month bars, Today and contract signature markers), then a process-steps slide, following your Claude Project.
             </div>
           </div>
           <button type="button" className={styles.detailClose} onClick={onClose} disabled={busy} aria-label="Close">×</button>

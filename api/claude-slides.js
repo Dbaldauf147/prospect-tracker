@@ -1,14 +1,14 @@
 // Build a timeline PowerPoint with Claude, steered by the instructions and
 // knowledge of Dan's "Slides and One Pagers" Claude Project (pasted into the
 // app, since the API can't reach a claude.ai Project). The client sends the
-// project text, a plain-text brief of the timeline and its graphic as a
-// PNG; Claude builds the deck with the pptx skill and the finished file is
-// returned as base64 for the browser to download.
+// project text and a plain-text brief of the timeline; Claude builds the
+// deck as native shapes with the pptx skill, matching the reference slide,
+// and the finished file is returned as base64 for the browser to download.
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { claudeErrorMessage } from './_lib/claudeError.js';
-import { MAX_PNG_BASE64_CHARS, buildDeck, cleanProject } from './_lib/claudeSlides.js';
+import { buildDeck, cleanProject } from './_lib/claudeSlides.js';
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') {
@@ -25,15 +25,11 @@ async function handler(req, res, auth) {
   }
   const brief = String(req.body?.brief || '').trim();
   if (!brief) return res.status(400).json({ error: 'The timeline has nothing to put on a slide yet.' });
-  const png = String(req.body?.png || '');
-  if (png.length > MAX_PNG_BASE64_CHARS) {
-    return res.status(413).json({ error: 'The timeline graphic is too large to send.' });
-  }
 
   const client = new Anthropic();
   try {
     const out = await buildDeck(client, {
-      project, brief, png, request: req.body?.request, title: req.body?.title,
+      project, brief, request: req.body?.request, title: req.body?.title,
     });
     if (out.error) return res.status(out.status).json({ error: out.error });
     return res.status(200).json(out);

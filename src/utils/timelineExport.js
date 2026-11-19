@@ -235,23 +235,18 @@ export async function downloadTimelinePptx(template) {
 
 // The timeline as a deck Claude builds, steered by the user's "Slides and
 // One Pagers" Claude Project (its instructions and knowledge, pasted into
-// settings.claudeSlidesProject). Sends the brief and the slide graphic to
-// /api/claude-slides and downloads the .pptx that comes back. Resolves to
+// settings.claudeSlidesProject). Claude draws the timeline as native slide
+// shapes from the brief (the chart's own placement), so no picture is sent.
+// Posts to /api/claude-slides and downloads the .pptx that comes back. Resolves to
 // Claude's one-line note on what it built.
 export async function downloadTimelinePptxWithClaude(template, project, { request = '' } = {}) {
-  const pic = await slidePng(template);
-  if (!pic) return null;
-  let bin = '';
-  for (let i = 0; i < pic.png.length; i += 0x8000) {
-    bin += String.fromCharCode.apply(null, pic.png.subarray(i, i + 0x8000));
-  }
+  if (!template?.stages?.length) return null;
   const r = await apiFetch('/api/claude-slides', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title: String(template?.name || 'Timeline').trim() || 'Timeline',
       brief: buildTimelineBrief(template),
-      png: btoa(bin),
       project,
       request,
     }),
