@@ -1474,9 +1474,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   }, [prospectByCompanyKey, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc, GENERIC_COMPANY_TOKENS]);
 
   // Email domains marked "Do not map" in the Apply suggestions popup: the
-  // matcher leaves rows on them alone (no match, no Suggested Company) and
-  // the popup stops counting them as unmapped. Saved in settings so the
-  // answer sticks for the next upload.
+  // domain itself is never used to pick a company, is never written to a
+  // company's Email Domain, and the popup stops counting it as unmapped.
+  // A row on one still matches by its Company (typed, or HubSpot's), so a
+  // contact at Nuveen with an @ibm.net address keeps Nuveen's CDM and Tier.
+  // Saved in settings so the answer sticks for the next upload.
   const doNotMapDomainList = settings?.bulkDoNotMapDomains;
   const doNotMapDomains = useMemo(
     () => new Set((Array.isArray(doNotMapDomainList) ? doNotMapDomainList : []).map(d => String(d || '').trim().toLowerCase()).filter(Boolean)),
@@ -1492,10 +1494,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   const lookupMatch = useCallback((email, row = null) => {
     const at = email.lastIndexOf('@');
     const domain = at >= 0 ? email.slice(at + 1).toLowerCase() : '';
-    if (domain && doNotMapDomains.has(domain)) {
-      return { domain, matched: null, wasExactMatch: false, suggestedCompany: '', companyDomains: [domain], suggestSource: '' };
-    }
-    let matched = domain ? domainToProspect.get(domain) : null;
+    const domainBlocked = !!domain && doNotMapDomains.has(domain);
+    let matched = domain && !domainBlocked ? domainToProspect.get(domain) : null;
     const wasExactMatch = !!matched;
     let source = matched ? 'domain-exact' : '';
     // Layer 2: non-email signals. The HubSpot contact record is
@@ -1518,7 +1518,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       }
     }
     // Layer 3: domain brand-token / compact-prefix fuzz (legacy path).
-    if (!matched && domain) {
+    if (!matched && domain && !domainBlocked) {
       const token = extractBrandToken(domain);
       if (token && token.length >= 3) {
         const hit = tokenToProspect.get(token);
@@ -1610,6 +1610,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     for (const r of enrichedRows) {
       if (!r._matchedProspectId || !r._matchedDomain) continue;
       if (r._domainAlreadyKnown) continue; // already in emailDomain/website — nothing to do
+      if (doNotMapDomains.has(r._matchedDomain)) continue; // matched by Company, not by this domain
       const p = prospects.find(pp => pp.id === r._matchedProspectId);
       if (!p) continue;
       const existing = prospectDomains.get((p.company || '').toLowerCase()) || new Set();
@@ -1625,7 +1626,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       const nextEntries = [...currentEntries, ...Array.from(domainsToAdd)];
       onUpdateProspect(prospect.id, { emailDomain: nextEntries.join('\n') });
     }
-  }, [onUpdateProspect, prospects, prospectDomains]);
+  }, [onUpdateProspect, prospects, prospectDomains, doNotMapDomains]);
 
   const mergeNewRows = useCallback((parsed) => {
     if (parsed.length === 0) return;
@@ -2472,6 +2473,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     for (const r of rows) {
       if (!r._matchedProspectId) continue;
       if (!byProspect.has(r._matchedProspectId)) byProspect.set(r._matchedProspectId, []);
+      // A Do-not-map address says nothing about the company's own domain.
+      const at = String(r.email || '').lastIndexOf('@');
+      if (at >= 0 && doNotMapDomains.has(r.email.slice(at + 1).toLowerCase())) continue;
       byProspect.get(r._matchedProspectId).push(r);
     }
     const out = new Map();
@@ -2487,7 +2491,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       });
     }
     return out;
-  }, [rows]);
+  }, [rows, doNotMapDomains]);
 
   // Resolve a suggestion for (prospectId, fieldKey). Upload values (from
   // an .xlsx drop) win over inferred ones. Fields with a single slot
@@ -3059,6 +3063,27 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       return next;
     });
   }
+
+  // A row on a Do-not-map domain with no company match takes the one its
+  // Company (typed, or HubSpot's) names. Marking a domain clears its rows'
+  // matches, since some came from the domain; this hands back the ones
+  // that never depended on it, and repairs rows cleared before that rule.
+  useEffect(() => {
+    if (doNotMapDomains.size === 0) return;
+    const fixes = new Map();
+    for (const r of rows) {
+      if (r._matchedProspectId || !isRealEmail(r.email)) continue;
+      if (!doNotMapDomains.has(r.email.slice(r.email.lastIndexOf('@') + 1).toLowerCase())) continue;
+      const m = lookupMatch(r.email, r).matched;
+      if (m) fixes.set(r.email, m.id);
+    }
+    if (fixes.size === 0) return;
+    setRows(prev => {
+      const next = prev.map(r => (fixes.has(r.email) && !r._matchedProspectId ? { ...r, _matchedProspectId: fixes.get(r.email) } : r));
+      saveCache(next);
+      return next;
+    });
+  }, [rows, doNotMapDomains, lookupMatch]);
 
   // "Do not map": this domain belongs to no Table View company and should
   // stop being guessed at. A domain that is mapped today is unmapped first,
@@ -4626,7 +4651,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                         {ignored > 0 ? <span style={{ color: '#64748B' }}>, {ignored} do not map</span> : null})
                       </div>
                       <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.4rem' }}>
-                        Which Table View company each email domain belongs to. Saving a mapping writes it to the company's Email Domain in Table View (moving it off any other company) and re-matches the rows on that domain, so the suggestions below update. Do not map leaves a domain out of company matching, now and on later uploads, until you undo it.
+                        Which Table View company each email domain belongs to. Saving a mapping writes it to the company's Email Domain in Table View (moving it off any other company) and re-matches the rows on that domain, so the suggestions below update. Do not map stops a domain from picking a company or being saved to one, now and on later uploads, until you undo it. Its rows still match by their Company.
                       </div>
                       <datalist id="apply-preview-company-list">
                         {prospectCompanyOptions.map(name => <option key={name} value={name} />)}
@@ -4661,7 +4686,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                                   <td style={td}>Do not map</td>
                                   <td style={{ ...td, minWidth: 320 }}>
                                     <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                                      <span style={{ flex: 1, fontStyle: 'italic' }}>Left out of company matching</span>
+                                      <span style={{ flex: 1, fontStyle: 'italic' }}>Domain not used for matching</span>
                                       <button
                                         type="button"
                                         onClick={() => setDomainDoNotMap(line, false)}
@@ -4709,8 +4734,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                                       disabled={edit.busy}
                                       onClick={() => setDomainDoNotMap(line, true)}
                                       title={line.status === 'mapped'
-                                        ? `Remove this domain from ${current} and never match it to a company`
-                                        : 'Never match this domain to a company, on this upload or later ones'}
+                                        ? `Remove this domain from ${current} and never use it to pick a company`
+                                        : 'Never use this domain to pick a company, on this upload or later ones'}
                                       style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#334155', fontSize: '0.72rem', fontWeight: 700, cursor: edit.busy ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
                                     >Do not map</button>
                                   </div>
