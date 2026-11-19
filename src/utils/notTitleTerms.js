@@ -55,3 +55,28 @@ export function matchedNotTerm(title, terms) {
   }
   return '';
 }
+
+// Where the terms sit in a job title, as [start, end) ranges in order, with
+// overlapping or touching hits merged ("Executive Assistant" and
+// "Assistant" are one stretch). Every occurrence of every term, so the
+// cell can mark all of what makes the row a match.
+export function notTermRanges(title, terms) {
+  const text = String(title || '');
+  const lower = text.toLowerCase();
+  const hits = [];
+  for (const term of terms) {
+    const needle = term.toLowerCase();
+    if (!needle) continue;
+    for (let i = lower.indexOf(needle); i !== -1; i = lower.indexOf(needle, i + 1)) {
+      hits.push([i, i + needle.length]);
+    }
+  }
+  hits.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const out = [];
+  for (const [start, end] of hits) {
+    const last = out[out.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else out.push([start, end]);
+  }
+  return out;
+}

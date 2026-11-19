@@ -21,6 +21,7 @@ import {
 } from '../../utils/bulkSuggestionActions';
 import { ColumnToggle } from '../common/ColumnToggle';
 import { NotTitlesFilter } from './NotTitlesFilter';
+import { NotTitleInput } from './NotTitleInput';
 import { notTitleSources, activeNotTerms, matchedNotTerm } from '../../utils/notTitleTerms';
 import { orderColumns, mergeColumnOrder } from '../../utils/tableColumnPrefs';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
@@ -4338,7 +4339,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
                     ),
                     jobtitle: () => (
-                      <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
+                      <td><NotTitleInput className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} terms={notTerms} /></td>
                     ),
                     company: () => (
                       <td>
