@@ -13,7 +13,7 @@
 //     on other contacts, while writing this one.
 import {
   withCompanyOverride, companyOverrideUpdate, contactLocalFieldsUpdate, companyOverridesUpdate,
-  companyOverridesByIdUpdate, withCompanyPins,
+  companyOverridesByIdUpdate, withCompanyPins, companyWithPin,
 } from '../src/utils/contactCompanyOverride.js';
 
 let passed = 0, failed = 0;
@@ -148,6 +148,16 @@ eq(contactLocalFieldsUpdate('', () => {})({}), null, 'no contact id, no write');
   eq(contacts[0].company, '', 'the cached contacts are not mutated');
   eq(withCompanyPins(contacts, {}), contacts, 'no pins hands back the same list');
   eq(withCompanyPins(null, { 1: {} }), null, 'nothing loaded stays nothing');
+}
+
+{
+  const lf = { 7: { _companyOverride: 'Mutual of Omaha Insurance' }, 8: { _companyOverride: '  ' } };
+  eq(companyWithPin({ id: '7', company: 'Mutual of Omaha' }, lf), 'Mutual of Omaha Insurance', 'the popup opens on the pinned name, not the synced one');
+  eq(companyWithPin({ vid: 7, company: 'Mutual of Omaha' }, lf), 'Mutual of Omaha Insurance', 'a vid finds the pin too');
+  eq(companyWithPin({ id: '8', company: 'Acme' }, lf), 'Acme', 'a blank pin falls back to the synced name');
+  eq(companyWithPin({ id: '9', company: 'Acme' }, lf), 'Acme', 'no pin: the synced name');
+  eq(companyWithPin({ company: 'Acme' }, null), 'Acme', 'no pins loaded: the synced name');
+  eq(companyWithPin({}, lf), '', 'a new contact starts blank');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

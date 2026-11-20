@@ -3743,6 +3743,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
           contactOldCompany={settings?.contactOldCompany || {}}
           onSaveOldCompany={(cid, v) => saveSettingsMap('contactOldCompany', cid, v)}
           onSaveCompanyOverride={saveCompanyOverride}
+          contactLocalFields={settings?.contactLocalFields || null}
           contactNicknames={settings?.contactNicknames || {}}
           onSaveNickname={(cid, v) => saveSettingsMap('contactNicknames', cid, v)}
           contactTeamNames={settings?.contactTeamNames || {}}

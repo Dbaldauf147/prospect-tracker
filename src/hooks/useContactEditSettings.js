@@ -54,6 +54,9 @@ export function useContactEditSettings({ settings, updateSettings }) {
       onSaveCompanyOverride: (contactId, value) => {
         updateSettings?.(companyOverrideUpdate(contactId, value));
       },
+      // ...and the pins themselves, so the popup opens on the pinned name
+      // even when the page hands it the raw synced contact.
+      contactLocalFields: settings?.contactLocalFields || null,
       contactNicknames: settings?.contactNicknames || {},
       onSaveNickname: (cid, v) => saveMap('contactNicknames', cid, v),
       contactTeamNames: settings?.contactTeamNames || {},
