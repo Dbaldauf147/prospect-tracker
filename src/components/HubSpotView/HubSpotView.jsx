@@ -1,14 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { tableViewNameKeys, isTableViewName, hubspotCompanyNameOf } from '../../utils/contactCompanyNames';
 import { apiFetch } from '../../utils/apiFetch';
-import { companyOverrideUpdate, companyOverridesByIdUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
+import { companyOverridesUpdate, companyOverridesByIdUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { COUNTRIES, US_STATES } from '../../data/enums';
 import { getHubspotCache, setHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
-import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
 import { summarizeTagAudit, tagAuditCsv } from '../../utils/tagHistoryAudit';
 import { useTagAuditQueue, clearQueuedAuditContacts } from '../../utils/tagAuditQueue';
 import { mergeTagEdit } from '../../utils/contactTagReview';
@@ -1496,8 +1495,15 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
       // Split into HubSpot props and local-only props
       const hubspotProps = {};
       const localProps = {};
+      // `company` on this page is the Prospect Tracker Company Name. It
+      // is kept as the contact's local pin and never sent to HubSpot, so
+      // HubSpot's own company for the contact (and the Company record the
+      // others there share) is left alone. undefined = no change, null =
+      // clear the pin (back to HubSpot's name), string = set it.
+      let companyOverrideSetTo = undefined;
       for (const [k, v] of Object.entries(properties)) {
-        if (LOCAL_ONLY_PROPS.has(k)) localProps[k] = v;
+        if (k === 'company') companyOverrideSetTo = String(v || '').trim() || null;
+        else if (LOCAL_ONLY_PROPS.has(k)) localProps[k] = v;
         else hubspotProps[k] = v;
       }
       // Filter out invalid tag values — but only if we have the valid options loaded
@@ -1507,7 +1513,6 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
         hubspotProps.dans_tags = tags.filter(t => knownLower.has(t.toLowerCase())).join(';');
       }
       // Only call HubSpot API if there are real HubSpot properties to update
-      let companyOverrideSetTo = undefined; // undefined = no change · null = clear · string = set
       if (Object.keys(hubspotProps).length > 0) {
         const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
@@ -1516,45 +1521,9 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
         });
         const json = await res.json();
         if (json.error) throw new Error(json.error);
-        // When the user changed the `company` field, the API renames the
-        // Company record the contact is linked to so the new name lands in
-        // HubSpot (and cascades to every contact at that company). If that
-        // push fails, fall back to a local Prospect Tracker override so the
-        // typed value sticks regardless. On success, clear any prior
-        // override that's no longer needed since HubSpot now holds the name.
-        const ca = json.companyAssignment;
-        if (typeof hubspotProps.company === 'string') {
-          // Always pin the typed value as a local override so it survives a
-          // refresh regardless of HubSpot sync/association timing. The API
-          // also renamed the linked Company record, so on success this pin
-          // matches what HubSpot will sync back; on failure it's the only
-          // thing keeping the value visible. (Empty string → clear instead.)
-          companyOverrideSetTo = hubspotProps.company || null;
-          if (ca && ca.ok === false) {
-            const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
-            setPushStatus({
-              type: 'success',
-              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't ${what}${hubspotFailureDetail(ca)} Prospect Tracker will keep your value through future syncs.`,
-            });
-          } else if (ca && ca.ok === true) {
-            if (ca.mode === 'renamed') {
-              setPushStatus({
-                type: 'success',
-                message: `Renamed the HubSpot Company "${ca.oldName || '-'}" → "${hubspotProps.company}". This updates it for every contact linked to that company.`,
-              });
-            } else if (ca.nameDiffers && ca.matchedName) {
-              // Fallback (contact had no linked company): HubSpot linked it
-              // to an existing record whose name differs from what was typed.
-              setPushStatus({
-                type: 'success',
-                message: `Saved "${hubspotProps.company}". This contact had no linked company, so HubSpot linked it to an existing Company record named "${ca.matchedName}".`,
-              });
-            }
-          }
-        }
       }
-      // Save local-only fields to Firestore settings, plus any
-      // companyOverride decision the API outcome above triggered.
+      // Save local-only fields to Firestore settings, plus the
+      // Prospect Tracker Company Name pin.
       // Built from the settings at save time (see contactLocalFieldsUpdate):
       // this runs after the HubSpot round-trip, by which time the map this
       // render saw can be missing pins saved since.
@@ -1582,7 +1551,8 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
         nextSnapshot = {
           ...prev,
           contacts: prev.contacts.map(c =>
-            c.id === contactId ? { ...c, ...properties } : c
+            // Not `company`: the cached row keeps HubSpot's own.
+            c.id === contactId ? { ...c, ...properties, company: c.company } : c
           ),
         };
         return nextSnapshot;
@@ -1599,50 +1569,6 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
     // closure alone never fixed, because the closure is still captured
     // before the HubSpot round-trip it waits on.
   }, [user, dansTagOptions, updateSettings]);
-
-  // Re-fire the Company-association reassignment for one contact without
-  // changing the text. Useful when the original inline edit's reassign
-  // step failed silently — a follow-up click here drives the API
-  // through findCompanyByName + setContactPrimaryCompany again.
-  const [reassigningId, setReassigningId] = useState(null);
-  const handleReassignCompany = useCallback(async (contactId, companyName) => {
-    const name = (companyName || '').trim();
-    if (!name) {
-      setPushStatus({ type: 'error', message: 'No company name to reassign: set a company first.' });
-      return;
-    }
-    setReassigningId(contactId);
-    try {
-      const res = await apiFetch('/api/hubspot?action=update-contact', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId, properties: { company: name } }),
-      });
-      const json = await res.json();
-      if (json.error) throw new Error(json.error);
-      const ca = json.companyAssignment;
-      if (ca && ca.ok === false) {
-        // Reassign failed even on retry — fall back to a local override
-        // so the user's value sticks regardless. Same shape we use from
-        // the inline-edit path so a manual click here never leaves the
-        // user with a hard error.
-        updateSettings(companyOverrideUpdate(contactId, name));
-        setPushStatus({
-          type: 'success',
-          message: `Saved "${name}" locally. HubSpot reassign still failed${hubspotFailureDetail(ca)} Prospect Tracker will keep your value through future syncs.`,
-        });
-      } else {
-        // Reassign worked — clear any prior local override.
-        updateSettings(companyOverrideUpdate(contactId, null));
-        const created = ca?.created ? ' · created new Company record' : '';
-        setPushStatus({ type: 'success', message: `Reassigned "${name}" on this contact${created}` });
-      }
-    } catch (err) {
-      console.error('Reassign company failed:', err);
-      setPushStatus({ type: 'error', message: `Reassign failed: ${err.message}` });
-    }
-    setReassigningId(null);
-  }, [updateSettings]);
 
   const handleDeleteContact = useCallback(async (contactId, name) => {
     if (!confirm(`Delete "${name}" from HubSpot? This cannot be undone.`)) return;
@@ -2211,7 +2137,6 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
         c = { ...c, ...localFields };
         if (typeof localFields._companyOverride === 'string' && localFields._companyOverride) {
           c.company = localFields._companyOverride;
-          c._companyIsPinned = true;
         }
         // Every contact carries its company twice, and the two are kept
         // apart (utils/contactCompanyNames). The HubSpot name is what
@@ -2325,7 +2250,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
   }, [contacts, prospects, emailFilterMode, domainToCompany, tierByCompany, prospectKeyToCanonical, prospectTokenPrefixMap, prospectTokenPrefixKeysDesc, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
 
   // Dynamic filter options for HubSpot columns
-  const HUBSPOT_FILTER_SKIP = new Set(['id', 'ptCompanyUnmatched', '_companyIsPinned', '_select', '_delete', '_deleteRow', '_edit', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
+  const HUBSPOT_FILTER_SKIP = new Set(['id', 'ptCompanyUnmatched', '_select', '_delete', '_deleteRow', '_edit', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
   const HUBSPOT_FILTER_LABELS = { company: 'Company', tier: 'Tier', jobtitle: 'Title', city: 'City', state: 'State', country: 'Country', firstname: 'First Name', lastname: 'Last Name', email: 'Email', phone: 'Phone', sequenceStatus: 'Sequence', dans_tags: "Dan's Tags", dan_s_tags: "Dan's Tags" };
   const hsFilterOptions = useMemo(() => {
     const opts = {};
@@ -2478,6 +2403,15 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
     if (selected.size === 0 || !massValue.trim()) return;
     setMassProcessing(true);
     setPushStatus(null);
+    // Company here is the Prospect Tracker Company Name: pinned on every
+    // selected contact in one settings write, with nothing sent to HubSpot.
+    if (massField === 'company') {
+      updateSettings(companyOverridesUpdate([...selected], massValue.trim()));
+      setPushStatus({ type: 'success', message: `Set the Prospect Tracker Company Name on ${selected.size} contacts. ${PT_ONLY_NOTE}` });
+      setMassProcessing(false);
+      setMassValue('');
+      return;
+    }
     let updated = 0, errors = 0;
     for (const id of selected) {
       try {
@@ -3125,7 +3059,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
             <div className={styles.massToolbar}>
               <span className={styles.massSelectedCount}>{selected.size} selected</span>
               <select className={styles.massFieldSelect} value={massField} onChange={e => setMassField(e.target.value)}>
-                <option value="company">Company</option>
+                <option value="company">Prospect Tracker Company Name</option>
                 <option value="jobtitle">Job Title</option>
                 <option value="phone">Phone</option>
                 <option value="firstname">First Name</option>
@@ -3278,26 +3212,6 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
                       >NOT IN TV</span>
                     )}
                   </div>
-                  {!c._companyIsPinned && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); handleReassignCompany(c.id, c.company); }}
-                    disabled={!c.company || reassigningId === c.id}
-                    title={c.company
-                      ? `Re-fire the HubSpot primary-Company association for "${c.company}". Use this if a recent edit's text saved on HubSpot but the next sync reverts the company. If the reassign still fails, Prospect Tracker will keep your value as a local override.`
-                      : 'Set a company name first'}
-                    style={{
-                      flexShrink: 0, width: 22, height: 22, padding: 0,
-                      border: '1px solid var(--color-border)', borderRadius: 4,
-                      background: reassigningId === c.id ? '#FEF3C7' : '#fff',
-                      color: c.company ? '#475569' : '#CBD5E1',
-                      cursor: c.company && reassigningId !== c.id ? 'pointer' : 'not-allowed',
-                      fontSize: '0.85rem', lineHeight: 1, fontFamily: 'inherit',
-                    }}
-                  >
-                    {reassigningId === c.id ? '⋯' : '↻'}
-                  </button>
-                  )}
                 </div>
               ) },
               { key: 'tier', label: 'Tier', defaultWidth: 140, render: (c) => {
