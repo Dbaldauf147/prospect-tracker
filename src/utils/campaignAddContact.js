@@ -83,3 +83,35 @@ export function addContactsToCampaign(campaign, contacts) {
   }
   return { campaign: current, added, already, skipped };
 }
+
+/**
+ * The reverse of addContactToCampaign: take one contact (by email) off a
+ * saved campaign from the contact popup. Same tombstone the campaign page's
+ * own remove button writes (removedEmails), so the next refresh doesn't
+ * adopt them back from the subject search.
+ *
+ * A row of their own goes. A grouped send ("a@x.com; b@y.com") keeps its
+ * other recipients: only this address comes out of it, because the refresh
+ * drops any row that still carries a tombstoned address and the others
+ * didn't ask to leave.
+ *
+ * status: 'removed' | 'not-on' | 'no-email'.
+ */
+export function removeContactFromCampaign(campaign, email) {
+  const key = normEmail(email);
+  if (!key) return { status: 'no-email', campaign };
+  if (!campaignHasContact(campaign, key)) return { status: 'not-on', campaign };
+  const contacts = [];
+  for (const row of (campaign?.contacts || [])) {
+    const parts = String(row?.email || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
+    if (!parts.some(p => normEmail(p) === key)) { contacts.push(row); continue; }
+    const rest = parts.filter(p => normEmail(p) !== key);
+    if (rest.length === 0) continue;
+    contacts.push({ ...row, email: rest.join('; '), recipientCount: Math.max(1, Number(row?.recipientCount || parts.length) - 1) });
+  }
+  const removedEmails = Array.from(new Set([...(campaign?.removedEmails || []), key]));
+  return {
+    status: 'removed',
+    campaign: { ...campaign, contacts, removedEmails, ...deriveCounts(contacts) },
+  };
+}

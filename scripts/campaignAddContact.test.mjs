@@ -1,6 +1,6 @@
 // Assertion tests for adding one contact to a saved campaign from the
 // contact popup. Run: node scripts/campaignAddContact.test.mjs
-import { addContactToCampaign, addContactsToCampaign, campaignHasContact } from '../src/utils/campaignAddContact.js';
+import { addContactToCampaign, addContactsToCampaign, campaignHasContact, removeContactFromCampaign } from '../src/utils/campaignAddContact.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -55,6 +55,26 @@ check('bulk skipped', many.skipped.map(c => c.name), ['No Email', 'Dan']);
 check('bulk roster and counts', [many.campaign.contacts.length, many.campaign.totalContacts], [4, 4]);
 check('bulk input untouched', camp.contacts.length, 2);
 check('bulk nothing to add keeps the campaign', addContactsToCampaign(camp, [{ email: 'ann@x.com' }]).campaign, camp);
+
+// Taking one contact off from the contact popup.
+{
+  const r1 = removeContactFromCampaign(camp, 'ANN@x.com');
+  check('remove: status', r1.status, 'removed');
+  check('remove: own row gone', r1.campaign.contacts.map(c => c.email), ['bob@x.com; cat@x.com']);
+  check('remove: tombstoned', r1.campaign.removedEmails, ['Dee@x.com', 'eve@x.com', 'ann@x.com']);
+  check('remove: counts', [r1.campaign.totalContacts, r1.campaign.sent, r1.campaign.replies], [1, 1, 0]);
+  check('remove: input untouched', camp.contacts.length, 2);
+  const r2 = removeContactFromCampaign(camp, 'cat@x.com');
+  check('remove from group: others kept', r2.campaign.contacts[1].email, 'bob@x.com');
+  check('remove from group: activity kept', r2.campaign.contacts[1].sentDate, '2026-09-02');
+  check('remove from group: count', r2.campaign.contacts[1].recipientCount, 1);
+  check('remove from group: still has others', campaignHasContact(r2.campaign, 'bob@x.com'), true);
+  check('remove from group: gone', campaignHasContact(r2.campaign, 'cat@x.com'), false);
+  check('remove: not on', removeContactFromCampaign(camp, 'zed@x.com').status, 'not-on');
+  check('remove: no email', removeContactFromCampaign(camp, '').status, 'no-email');
+  const back = addContactToCampaign(r1.campaign, { email: 'ann@x.com' });
+  check('re-add after remove un-tombstones', back.campaign.removedEmails.includes('ann@x.com'), false);
+}
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
