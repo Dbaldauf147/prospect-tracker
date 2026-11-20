@@ -12,8 +12,8 @@
 //     send (contact.bounced / bounceDate).
 // A row can carry both; the forwarded notice's reason and date lead, since
 // that is the one with the server's own words in it.
-import { normEmail } from './badEmails';
-import { primarySubject } from './campaignSubjects';
+import { normEmail } from './badEmails.js';
+import { primarySubject } from './campaignSubjects.js';
 
 export const FAILED_SOURCE = { NOTICE: 'Forwarded notice', CAMPAIGN: 'Campaign match', BOTH: 'Notice + campaign' };
 export const FAILED_STATE = { BAD: 'Bad email', FIXED: 'Marked fixed' };

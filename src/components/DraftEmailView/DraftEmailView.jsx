@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { sortCoverageRows, nextCoverageSort } from '../../utils/coverageSort';
+import { failedEmailMap, failedEmailTitle } from '../../utils/failedEmailLookup';
 import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { CONTACT_FIELD_COLUMNS, contactFieldColumn, cleanFieldColumnKeys } from '../../utils/contactFieldColumns';
 import { contactConnectedUpdate } from '../../utils/contactConnected';
@@ -656,7 +657,7 @@ function AddFieldColumn({ fieldKeys, onChangeFieldKeys }) {
   );
 }
 
-function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFor = null, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null, sentDateOf = null, onOpenContact = null }) {
+function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFor = null, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null, sentDateOf = null, failedOf = null, onOpenContact = null }) {
   // Click a header to sort the rows by it: A to Z, then Z to A, then back
   // to the order the recipients were added in. It only re-orders this
   // table, not the To line or the order the emails go out in.
@@ -742,7 +743,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
     <>
       {titleRow(`Variable Coverage (${contacts.length})`)}
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
-        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / DM at Tier 1-3), and each column after it is a variable used in the draft. Click a column heading to sort by it. <strong>Reached Out</strong> marks who this email has already gone to, and the Show buttons hide either group. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
+        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / DM at Tier 1-3), and each column after it is a variable used in the draft. Click a column heading to sort by it. <strong>Reached Out</strong> marks who this email has already gone to, and the Show buttons hide either group. Red <strong>Failed</strong> means an email to that address did not arrive. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
       </p>
       {sentDateOf && (
         <div data-reach-filter style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '0 0 0.5rem 0' }}>
@@ -847,7 +848,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
             )}
             {rows.map(c => (
               <tr key={c.id || c.email}>
-                <td style={{ ...cellStyle, fontWeight: 600, color: '#1E293B' }} title={`${c.name || ''}${c.email ? ` · ${c.email}` : ''}${c.company ? ` · ${c.company}` : ''}`}>
+                <td style={{ ...cellStyle, fontWeight: 600, color: '#1E293B', ...(failedOf && failedOf(c) ? { background: '#FEF2F2', boxShadow: 'inset 3px 0 0 #DC2626' } : null) }} title={`${c.name || ''}${c.email ? ` · ${c.email}` : ''}${c.company ? ` · ${c.company}` : ''}`}>
                   {onOpenContact ? (
                     // Opens the same contact popup as the names on the To line.
                     <button
@@ -860,6 +861,16 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
                 </td>
                 {sentDateOf && (() => {
                   const d = sentOf(c);
+                  const failed = failedOf ? failedOf(c) : null;
+                  if (failed) {
+                    return (
+                      <td style={{ ...cellStyle, background: '#FEF2F2' }} title={failedEmailTitle(failed)}>
+                        <span data-failed-email style={{ display: 'inline-flex', alignItems: 'center', padding: '0 6px', borderRadius: 999, background: '#DC2626', color: '#fff', fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
+                          ✕ Failed
+                        </span>
+                      </td>
+                    );
+                  }
                   if (!d) return <td style={cellStyle} title="This email has not gone to this recipient yet"><span style={{ color: '#94A3B8' }}>Not yet</span></td>;
                   const label = Number.isNaN(Date.parse(d)) ? '' : new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                   return (
@@ -2286,6 +2297,10 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // Recipients this draft's own campaign (same subject) has already emailed:
   // their To pills turn green with the send date.
   const sentHere = useMemo(() => sentThisCampaign(allCampaigns, subject), [allCampaigns, subject]);
+  // Addresses an email has failed to reach (a bounce on any campaign, or a
+  // forwarded failure notice not yet marked fixed): red on the To line and
+  // on Variable Coverage, whatever this draft's own send says.
+  const failedHere = useMemo(() => failedEmailMap(allCampaigns, settings?.badEmails), [allCampaigns, settings?.badEmails]);
   const [namingCampaign, setNamingCampaign] = useState(false);
   const [campaignName, setCampaignName] = useState('');
   const [savingCampaign, setSavingCampaign] = useState(false);
@@ -2900,6 +2915,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                 const sentLabel = sentDate && !Number.isNaN(Date.parse(sentDate))
                   ? new Date(sentDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
                   : '';
+                const failed = failedHere.get(String(c.email || '').trim().toLowerCase()) || null;
                 const hasExtras = toAlso.length > 0 || contactCc.length > 0;
                 const extraPill = {
                   display: 'inline-flex', alignItems: 'center', gap: 3,
@@ -2914,10 +2930,12 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                     className={styles.contactTag}
                     title={selfDup
                       ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)'
-                      : sentDate ? `Already sent this email${sentLabel ? ` on ${sentLabel}` : ''} (per the Email Campaigns tracker)` : undefined}
+                      : failed ? failedEmailTitle(failed)
+                        : sentDate ? `Already sent this email${sentLabel ? ` on ${sentLabel}` : ''} (per the Email Campaigns tracker)` : undefined}
                     style={{
                       ...(hasExtras ? { flexDirection: 'column', alignItems: 'flex-start', whiteSpace: 'normal', gap: '0.2rem' } : {}),
                       ...(sentDate ? { background: '#DCFCE7', borderColor: '#4ADE80', color: '#166534' } : {}),
+                      ...(failed ? { background: '#FEE2E2', borderColor: '#F87171', color: '#991B1B' } : {}),
                       ...(selfDup ? { background: '#FEE2E2', borderColor: '#FCA5A5', color: '#991B1B' } : {}),
                     }}
                   >
@@ -2929,8 +2947,13 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openContact(c); } }}
                         title={`Open ${c.name}`}
                         style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                      >{c.name}</span> <span className={styles.contactEmail} style={sentDate ? { color: '#15803D' } : undefined}>({c.email})</span>
-                      {sentDate && (
+                      >{c.name}</span> <span className={styles.contactEmail} style={failed ? { color: '#B91C1C', textDecoration: 'line-through' } : sentDate ? { color: '#15803D' } : undefined}>({c.email})</span>
+                      {failed && (
+                        <span data-failed-email style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 6px', borderRadius: 999, background: '#DC2626', color: '#fff', fontSize: '0.6rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
+                          ✕ Failed
+                        </span>
+                      )}
+                      {sentDate && !failed && (
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 6px', borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: '0.6rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
                           ✓ Sent{sentLabel ? ` ${sentLabel}` : ''}
                         </span>
@@ -3531,6 +3554,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               fieldCtx={coverageFieldCtx}
               onOpenContact={openContact}
               sentDateOf={c => sentHere.get(String(c.email || '').trim().toLowerCase()) || ''}
+              failedOf={c => failedHere.get(String(c.email || '').trim().toLowerCase()) || null}
             />
           </div>
 
