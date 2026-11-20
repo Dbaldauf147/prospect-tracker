@@ -13,6 +13,8 @@ import { useTagAuditQueue, clearQueuedAuditContacts } from '../../utils/tagAudit
 import { mergeTagEdit } from '../../utils/contactTagReview';
 import { createTagWriter } from '../../utils/tagWriteQueue';
 import { HubSpotMoveTab } from './HubSpotMoveTab';
+import { GuessedCompanyReviewModal } from './GuessedCompanyReviewModal';
+import { guessPairKey, ignoredGuessSet, isGuessIgnored, ignoreGuessesUpdate, unignoreGuessUpdate } from '../../utils/companyGuessIgnore';
 import styles from './HubSpotView.module.css';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
@@ -1415,6 +1417,15 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
     delete next[`${contactId}_${field}`];
     updateSettings({ dismissedGuesses: next });
   }
+  // A company guess is off the table for a contact when it was dismissed
+  // on that one row (the x in the column), or when its whole pairing was
+  // unticked in the Copy All review popup (see companyGuessIgnore.js).
+  const rawIgnoredGuesses = settings?.ignoredCompanyGuesses;
+  const ignoredGuesses = useMemo(() => ignoredGuessSet({ ignoredCompanyGuesses: rawIgnoredGuesses }), [rawIgnoredGuesses]);
+  function isCompanyGuessDismissed(c) {
+    return !!dismissedGuesses[`${c.id}_company`] || isGuessIgnored(ignoredGuesses, c);
+  }
+  const [showGuessReview, setShowGuessReview] = useState(false);
   // Whether the bulk "Copy All Guessed Companies" button should treat
   // a contact as actionable. Includes the empty-company fill case AND
   // the upgrade-existing case (a guess that differs from the typed
@@ -1423,7 +1434,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
   // still skipped.
   function hasActionableGuessedCompany(c) {
     if (!c.guessedCompany) return false;
-    if (dismissedGuesses[`${c.id}_company`]) return false;
+    if (isCompanyGuessDismissed(c)) return false;
     const existing = String(c.company || '').trim().toLowerCase();
     const guess = String(c.guessedCompany).trim().toLowerCase();
     if (!existing) return true;
@@ -2478,7 +2489,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
       c.guessedCompany &&
       c.guessedCompany.toLowerCase().trim() === target &&
       String(c.company || '').toLowerCase() !== target &&
-      !dismissedGuesses[`${c.id}_company`]
+      !isCompanyGuessDismissed(c)
     );
     // The clicked row always goes; its peers go with it unless the user
     // says no to the wider write.
@@ -2491,18 +2502,33 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
     logAction(user, 'bulk_apply_same_guess', { count: updated, guess });
   }
 
-  async function handleCopyAllGuessedCompanies() {
-    const toCopy = enrichedContacts.filter(hasActionableGuessedCompany);
-    if (toCopy.length === 0) return;
-    const fillCount = toCopy.filter(c => !c.company).length;
-    const overwriteCount = toCopy.length - fillCount;
-    const overwriteNote = overwriteCount > 0
-      ? ` (${fillCount} empty, ${overwriteCount} will OVERWRITE the current Prospect Tracker name)`
-      : '';
-    if (!confirm(`Set the Prospect Tracker Company Name to the guessed company on ${toCopy.length} contacts?${overwriteNote} HubSpot is not changed.`)) return;
-    const updated = applyGuessedCompanies(toCopy);
-    setPushStatus({ type: 'success', message: `Copied guessed company to ${updated} contacts. ${PT_ONLY_NOTE}` });
-    logAction(user, 'bulk_guess_companies', { count: updated });
+  // Copy All opens a review of every pending guess first (one row per
+  // pairing). What comes back is the contacts to map and the pairings to
+  // ignore from now on, saved together in one settings write.
+  function handleCopyAllGuessedCompanies() {
+    if (!enrichedContacts.some(hasActionableGuessedCompany)) return;
+    setShowGuessReview(true);
+  }
+  function handleGuessReviewConfirm({ toMap, ignoreKeys }) {
+    setShowGuessReview(false);
+    const pins = {};
+    for (const c of toMap) {
+      const guess = String(c.guessedCompany || '').trim();
+      if (c.id && guess) pins[c.id] = guess;
+    }
+    const updated = Object.keys(pins).length;
+    if (updated === 0 && ignoreKeys.length === 0) return;
+    const pinUpdate = companyOverridesByIdUpdate(pins);
+    const ignoreUpdate = ignoreGuessesUpdate(ignoreKeys);
+    updateSettings((s) => {
+      const patch = { ...(pinUpdate(s) || {}), ...(ignoreUpdate(s) || {}) };
+      return Object.keys(patch).length ? patch : null;
+    });
+    const parts = [];
+    if (updated > 0) parts.push(`Copied guessed company to ${updated} contact${updated === 1 ? '' : 's'}. ${PT_ONLY_NOTE}`);
+    if (ignoreKeys.length > 0) parts.push(`Ignored ${ignoreKeys.length} suggestion${ignoreKeys.length === 1 ? '' : 's'} permanently.`);
+    setPushStatus({ type: 'success', message: parts.join(' ') });
+    logAction(user, 'bulk_guess_companies', { count: updated, ignored: ignoreKeys.length });
   }
 
   async function handleCopyAllGuessedNames() {
@@ -3207,7 +3233,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
                     </div>
                     {c.ptCompanyUnmatched && (
                       <span
-                        title={`"${c.company}" is not a Table View company name.${c.guessedCompany && !dismissedGuesses[`${c.id}_company`] ? ` Suggested: "${c.guessedCompany}" (apply it from the Guessed Company column).` : ' Pick the Table View name for this company, or add the company to Table View.'}`}
+                        title={`"${c.company}" is not a Table View company name.${c.guessedCompany && !isCompanyGuessDismissed(c) ? ` Suggested: "${c.guessedCompany}" (apply it from the Guessed Company column).` : ' Pick the Table View name for this company, or add the company to Table View.'}`}
                         style={{ flexShrink: 0, padding: '0 5px', borderRadius: 999, background: '#FEF3C7', color: '#92400E', border: '1px solid #F59E0B', fontSize: '0.6rem', fontWeight: 700, lineHeight: '1.4', whiteSpace: 'nowrap' }}
                       >NOT IN TV</span>
                     )}
@@ -3221,13 +3247,20 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
                 return <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 600, background: style.bg, color: style.color }}>{c.tier}</span>;
               }},
               { key: 'guessedCompany', label: 'Guessed Company', defaultWidth: 220, render: (c) => {
-                if (dismissedGuesses[`${c.id}_company`]) {
+                if (isCompanyGuessDismissed(c)) {
+                  const pairIgnored = isGuessIgnored(ignoredGuesses, c);
                   return (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ color: '#94A3B8', fontStyle: 'italic', fontSize: '0.72rem' }}>dismissed</span>
+                      <span
+                        style={{ color: '#94A3B8', fontStyle: 'italic', fontSize: '0.72rem' }}
+                        title={pairIgnored ? `"${c.guessedCompany}" is ignored for every contact with this company or email domain. Undo brings it back for all of them.` : undefined}
+                      >{pairIgnored ? 'ignored' : 'dismissed'}</span>
                       <button
                         type="button"
-                        onClick={() => undismissGuess(c.id, 'company')}
+                        onClick={() => {
+                          if (dismissedGuesses[`${c.id}_company`]) undismissGuess(c.id, 'company');
+                          if (pairIgnored) updateSettings(unignoreGuessUpdate(guessPairKey(c)));
+                        }}
                         style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.65rem', padding: 0, fontFamily: 'inherit', textDecoration: 'underline' }}
                       >undo</button>
                     </span>
@@ -3420,6 +3453,16 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
           }}
           contactFamilies={contactFamilies}
           onSaveFamily={saveFamily}
+        />
+      )}
+
+      {showGuessReview && (
+        <GuessedCompanyReviewModal
+          contacts={enrichedContacts.filter(hasActionableGuessedCompany)}
+          onConfirm={handleGuessReviewConfirm}
+          onClose={() => setShowGuessReview(false)}
+          settings={settings}
+          updateSettings={updateSettings}
         />
       )}
 
