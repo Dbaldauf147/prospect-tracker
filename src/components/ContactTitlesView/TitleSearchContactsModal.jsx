@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
+import { BulkContactEditModal } from '../common/BulkContactEditModal';
+import { TAG_PRESET_FIELD } from '../../utils/bulkContactEdit';
 import { applyCompanyOverride } from '../../utils/contactRosters';
 import styles from './ContactTitlesView.module.css';
 
@@ -12,19 +14,35 @@ import styles from './ContactTitlesView.module.css';
 //
 // `result` is matchTitleSearch's output, worked out by the page so the
 // count on the button and the rows in here can't disagree.
+//
+// Edit Tags, Apply Tag Preset and Bulk Edit other fields work over the
+// ticked rows, or over every row on screen when none is ticked, the way
+// Prospecting's Tagged popup does (TagContactsPopup). They go through the
+// shared BulkContactEditModal, which writes HubSpot and the contacts cache;
+// the page re-reads that cache, so the rows here follow the edit.
 
 const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 const nameOf = (c) => [c?.firstname, c?.lastname].map(clean).filter(Boolean).join(' ') || clean(c?.email) || 'Unnamed contact';
+const barBtn = (primary, disabled) => ({
+  padding: '0.3rem 0.75rem', borderRadius: 4, fontSize: '0.74rem', fontWeight: 600, fontFamily: 'inherit',
+  cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1,
+  border: `1px solid ${primary ? '#2563EB' : '#4F46E5'}`, background: primary ? '#2563EB' : '#fff', color: primary ? '#fff' : '#4F46E5',
+});
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
-export function TitleSearchContactsModal({ entry, result, settings, updateSettings, onClose }) {
+export function TitleSearchContactsModal({ entry, result, settings, updateSettings, updateSettingsPath = null, onClose }) {
   const [showExcluded, setShowExcluded] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [filteredIds, setFilteredIds] = useState(null);
+  const [editField, setEditField] = useState(null);
+  const [flash, setFlash] = useState('');
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    // Esc closes this popup, but not from under the Bulk Edit one on top.
+    const onKey = (e) => { if (e.key === 'Escape' && !editField) onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, editField]);
 
   const localFields = settings?.contactLocalFields;
   const rows = useMemo(() => {
@@ -32,6 +50,10 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
       const c = applyCompanyOverride(m.contact, localFields);
       return {
         id: String(c?.id || c?.vid || c?.email || `${nameOf(c)}|${m.title}`),
+        // The synced record, for a bulk write. Only a contact HubSpot knows
+        // by id can be written to.
+        contact: m.contact,
+        editable: !!(m.contact && (m.contact.id || m.contact.vid)),
         status,
         name: nameOf(c),
         jobtitle: m.title,
@@ -50,7 +72,40 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     return list;
   }, [result, showExcluded, localFields]);
 
-  const columns = useMemo(() => [
+  const onFilteredRowsChange = useCallback((list) => setFilteredIds(list.map(r => r.id)), []);
+  // Only rows still on screen count, so a filter can't leave a hidden row
+  // in a bulk write.
+  const onScreen = useMemo(() => {
+    const ids = filteredIds ? new Set(filteredIds) : null;
+    return ids ? rows.filter(r => ids.has(r.id)) : rows;
+  }, [rows, filteredIds]);
+  const selectedRows = onScreen.filter(r => selected.has(r.id));
+  // Nothing ticked means everybody on screen.
+  const targetRows = selectedRows.length ? selectedRows : onScreen;
+  const targetContacts = targetRows.filter(r => r.editable).map(r => r.contact);
+  const allSelected = onScreen.length > 0 && selectedRows.length === onScreen.length;
+  const toggle = (id) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(onScreen.map(r => r.id)));
+  const selectCol = {
+    key: '__select__',
+    label: '',
+    defaultWidth: 36,
+    renderHeader: () => (
+      <input type="checkbox" aria-label="Select every row on screen" title="Select every row on screen"
+        checked={allSelected} onChange={toggleAll} onClick={e => e.stopPropagation()} style={{ cursor: 'pointer' }} />
+    ),
+    render: r => (
+      <input type="checkbox" aria-label={`Select ${r.name}`} checked={selected.has(r.id)}
+        onChange={() => toggle(r.id)} onClick={e => e.stopPropagation()} style={{ cursor: 'pointer' }} />
+    ),
+    exportValue: () => '',
+  };
+
+  const dataColumns = useMemo(() => [
     ...(showExcluded ? [{
       key: 'status', label: 'Status', defaultWidth: 130,
       render: (r) => (
@@ -68,6 +123,10 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     { key: 'phone', label: 'Phone', defaultWidth: 130 },
     { key: 'tags', label: "Dan's Tags", defaultWidth: 200 },
   ], [showExcluded]);
+  const columns = [selectCol, ...dataColumns];
+  const who = selectedRows.length ? `${selectedRows.length} selected` : `all ${onScreen.length} on screen`;
+  const notEditable = targetRows.length - targetContacts.length;
+  const cannot = targetContacts.length === 0;
 
   const title = clean(entry?.name) || 'Untitled search';
   const exportName = `${title} contacts`.replace(/[\\/:*?"<>|]+/g, ' ');
@@ -104,12 +163,27 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
           {result.includeCount === 0 ? (
             <div className={styles.empty}>This search has no title terms yet, so it pulls nobody. Add some in an Include group.</div>
           ) : (
+            <>
+            <div data-bulk-bar style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', margin: '0 0 8px 0', padding: '0.4rem 0.6rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, fontSize: '0.75rem', color: '#1E3A8A' }}>
+              <strong data-target-count>{selectedRows.length ? `${selectedRows.length} selected` : `Editing all ${onScreen.length.toLocaleString()} on screen`}</strong>
+              <span style={{ color: '#64748B' }}>Tick rows to edit just those, or leave them all unticked to edit everyone on screen.</span>
+              {notEditable > 0 && <span style={{ color: '#64748B' }}>({notEditable} without a HubSpot record will be skipped)</span>}
+              {flash && <span style={{ color: '#15803D', fontWeight: 600 }}>{flash}</span>}
+              <div style={{ flex: 1 }} />
+              <button type="button" disabled={cannot} onClick={() => setEditField('dans_tags')} style={barBtn(true, cannot)} title={`Mark Yes, No or Not sure for a tag, or add, remove or replace tags, on ${who}`}>Edit Tags ({targetContacts.length.toLocaleString()})</button>
+              <button type="button" disabled={cannot} onClick={() => setEditField(TAG_PRESET_FIELD)} style={barBtn(false, cannot)} title={`Apply a saved tag preset to ${who}`}>Apply Tag Preset</button>
+              <button type="button" disabled={cannot} onClick={() => setEditField('jobtitle')} style={barBtn(false, cannot)} title={`Bulk edit title, city, country or notes on ${who}`}>Bulk Edit other fields</button>
+              {selectedRows.length > 0 && (
+                <button type="button" onClick={() => setSelected(new Set())} style={{ ...barBtn(false, false), border: '1px solid transparent', background: 'transparent', color: '#475569' }}>Clear</button>
+              )}
+            </div>
             <div className={styles.modalTable}>
               <DataTable
                 tableId="contact-titles-search-contacts"
                 columns={columns}
                 rows={rows}
-                alwaysVisible={['name']}
+                alwaysVisible={['__select__', 'name']}
+                onFilteredRowsChange={onFilteredRowsChange}
                 defaultSort={{ key: 'name', direction: 'asc' }}
                 emptyMessage="No contacts in the app hold a title this search pulls"
                 exportFileName={exportName}
@@ -117,9 +191,23 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
                 updateSettings={updateSettings}
               />
             </div>
+            </>
           )}
         </div>
       </div>
+      {editField && (
+        <div onClick={e => e.stopPropagation()}>
+          <BulkContactEditModal
+            contacts={targetContacts}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+            initialField={editField}
+            onClose={() => setEditField(null)}
+            onDone={(msg) => { setEditField(null); setSelected(new Set()); setFlash(msg); window.setTimeout(() => setFlash(''), 6000); }}
+          />
+        </div>
+      )}
     </div>
   );
 }
