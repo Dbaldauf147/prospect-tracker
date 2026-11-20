@@ -18,6 +18,9 @@ import { guessPairKey, ignoredGuessSet, isGuessIgnored, ignoreGuessesUpdate, uni
 import styles from './HubSpotView.module.css';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
+import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
+import { campaignsByAddress } from '../../utils/contactCampaigns';
+import { normLookupEmail } from '../../utils/campaignContactLookup';
 import { companyPopupTarget } from '../../utils/companyLookup';
 
 // The full contact popup the rest of the app opens. Lazy, as on Bulk Add:
@@ -1345,6 +1348,11 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
   // "+ New Contact" keep this page's own short form.
   const [detailContact, setDetailContact] = useState(null);
   const contactEditSettings = useContactEditSettings({ settings, updateSettings });
+  // Email Campaign column: every saved campaign (Draft Emails > Email
+  // Campaigns) each contact's address is on, newest first.
+  const { campaigns: savedCampaigns } = useSavedCampaigns();
+  const campaignsByEmail = useMemo(() => campaignsByAddress(savedCampaigns), [savedCampaigns]);
+  const campaignsFor = useCallback((c) => campaignsByEmail.get(normLookupEmail(c?.email)) || null, [campaignsByEmail]);
   const openCompanyFromContact = (name) => {
     const target = companyPopupTarget(prospects, name);
     if (!target || !onSelectProspect) return;
@@ -3383,6 +3391,23 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
               { key: 'lastReply', label: 'Last Reply', defaultWidth: 120, render: (c) => <span className={styles.dateText}>{fmtDate(c.hs_sales_email_last_replied)}</span> },
               { key: 'lastOpen', label: 'Last Open', defaultWidth: 120, render: (c) => <span className={styles.dateText}>{fmtDate(c.hs_email_last_open_date)}</span> },
               { key: 'lastClick', label: 'Last Click', defaultWidth: 120, render: (c) => <span className={styles.dateText}>{fmtDate(c.hs_email_last_click_date)}</span> },
+              { key: 'emailCampaign', label: 'Email Campaign', defaultWidth: 200,
+                getFilterValue: (c) => campaignsFor(c)?.[0]?.name || '',
+                getSortValue: (c) => campaignsFor(c)?.[0]?.tsMs || null,
+                render: (c) => {
+                  const list = campaignsFor(c);
+                  if (!list) return '';
+                  const [latest, ...rest] = list;
+                  const line = (e) => `${e.name}${e.tsMs ? ` (${e.sent ? 'sent' : 'added'} ${fmtDate(new Date(e.tsMs).toISOString())})` : ''}${e.replied ? ', replied' : ''}`;
+                  const title = list.length > 1 ? `On ${list.length} campaigns:\n${list.map(line).join('\n')}` : line(latest);
+                  return (
+                    <span title={title} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{latest.name}</span>
+                      {rest.length > 0 && <span style={{ flexShrink: 0, padding: '0 5px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: 'var(--color-surface-alt, #F1F5F9)', color: 'var(--color-text-secondary)' }}>+{rest.length}</span>}
+                    </span>
+                  );
+                },
+              },
               { key: '_edit', label: '', defaultWidth: 36, render: (c) => <button onClick={(e) => { e.stopPropagation(); setEditContact(c); }} title="Edit contact" style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '1px 6px', fontSize: '0.7rem', cursor: 'pointer', color: 'var(--color-accent)' }}>Edit</button> },
             ]}
             rows={filteredContacts}
