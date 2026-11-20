@@ -7,6 +7,9 @@ import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { TAG_PRESET_FIELD } from '../../utils/bulkContactEdit';
 import { applyCompanyOverride } from '../../utils/contactRosters';
 import { companyPopupTarget } from '../../utils/companyLookup';
+import { myAccountsMembers, parseTargetAccounts } from '../../utils/myAccountsMembership';
+import { useOppsRecords } from '../../utils/rosterHooks';
+import { useAuth } from '../../contexts/AuthContext';
 import styles from './ContactTitlesView.module.css';
 
 // The full-page list behind a search's Contacts button on the Titles page:
@@ -45,7 +48,7 @@ const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
 
 const lower = (s) => clean(s).toLowerCase();
 
-export function TitleSearchContactsModal({ entry, result, settings, updateSettings, updateSettingsPath = null, prospects, allContacts, onSelectProspect, onClose }) {
+export function TitleSearchContactsModal({ entry, result, settings, updateSettings, updateSettingsPath = null, prospects, allContacts, onSelectProspect, cdmName, targetAccountsData, onClose }) {
   const [showExcluded, setShowExcluded] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [filteredIds, setFilteredIds] = useState(null);
@@ -77,6 +80,30 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     return map;
   }, [prospects]);
 
+  // Whether the contact's company is on My Accounts, by the page's own
+  // rule (utils/myAccountsMembership), so this column and that page can't
+  // disagree about who is on it. Keyed by the company's prospect id.
+  const { user } = useAuth() || {};
+  const oppsRecords = useOppsRecords(user?.uid);
+  const targetCdmColumn = settings?.targetCdmColumn;
+  const targetMap = settings?.targetMap;
+  const dismissedCompanies = settings?.dismissedCompanies;
+  const divisionsMap = settings?.divisionsMap;
+  const myAccountById = useMemo(() => {
+    const map = new Map();
+    const members = myAccountsMembers({
+      prospects: prospects || [],
+      cdmName,
+      targetMap: targetMap || {},
+      dismissedCompanies: dismissedCompanies || [],
+      divisionsMap: divisionsMap || {},
+      targetAccounts: parseTargetAccounts(targetAccountsData, cdmName, targetCdmColumn).accounts,
+      oppsRecords,
+    });
+    for (const m of members) if (m.prospect?.id != null) map.set(String(m.prospect.id), m);
+    return map;
+  }, [prospects, cdmName, targetMap, dismissedCompanies, divisionsMap, targetAccountsData, targetCdmColumn, oppsRecords]);
+
   const openCompanyFromContact = useCallback((name) => {
     const target = companyPopupTarget(prospects, name);
     if (!target || !onSelectProspect) return;
@@ -99,9 +126,16 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     const toRow = (m, status) => {
       const c = applyCompanyOverride(m.contact, localFields);
       const account = prospectByCompany.get(lower(c?.company));
+      const member = account ? myAccountById.get(String(account.id)) : null;
       return {
         vertical: clean(account?.vertical),
         subVertical: clean(account?.subVertical),
+        myAccount: member ? 'Yes' : 'No',
+        myAccountWhy: member
+          ? `${clean(account.company)} is on My Accounts (${[...new Set([member.tier, member.why].filter(Boolean))].join(', ')})`
+          : account
+            ? `${clean(account.company)} is in Table View but not on My Accounts`
+            : 'No company in Table View has this exact name',
         id: String(c?.id || c?.vid || c?.email || `${nameOf(c)}|${m.title}`),
         // The synced record, for a bulk write and for the contact popup a
         // name opens. Only a contact HubSpot knows by id can be bulk written.
@@ -125,7 +159,7 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     if (showExcluded) list.push(...result.excluded.map(m => toRow(m, 'Left out by Not')));
     list.push(...(result.hidden || []).map(m => toRow(m, 'Hidden')));
     return list;
-  }, [result, showExcluded, localFields, prospectByCompany]);
+  }, [result, showExcluded, localFields, prospectByCompany, myAccountById]);
 
   const onFilteredRowsChange = useCallback((list) => setFilteredIds(list.map(r => r.id)), []);
   // Only rows still on screen count, so a filter can't leave a hidden row
@@ -185,6 +219,13 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     { key: 'company', label: 'Company', defaultWidth: 200 },
     { key: 'vertical', label: 'Vertical', defaultWidth: 150 },
     { key: 'subVertical', label: 'Sub Vertical', defaultWidth: 160 },
+    {
+      key: 'myAccount', label: 'My Accounts', defaultWidth: 120,
+      headerTitle: 'Whether the contact\'s company is on the My Accounts page.',
+      render: (r) => (
+        <span className={r.myAccount === 'Yes' ? styles.statusIn : styles.statusMuted} title={r.myAccountWhy}>{r.myAccount}</span>
+      ),
+    },
     { key: 'hits', label: 'Matched Terms', defaultWidth: 180 },
     ...(showExcluded ? [{ key: 'notHits', label: 'Not Terms Hit', defaultWidth: 160 }] : []),
     { key: 'email', label: 'Email', defaultWidth: 220 },

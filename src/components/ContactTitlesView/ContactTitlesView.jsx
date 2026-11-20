@@ -54,7 +54,7 @@ const VIEWS = [
 ];
 const VIEW_KEY = 'contact-titles:view';
 
-export function ContactTitlesView({ settings, updateSettings, prospects, onSelectProspect }) {
+export function ContactTitlesView({ settings, updateSettings, prospects, onSelectProspect, cdmName, targetAccountsData }) {
   const [view, setView] = useState(() => {
     try {
       const saved = localStorage.getItem(VIEW_KEY);
@@ -80,12 +80,12 @@ export function ContactTitlesView({ settings, updateSettings, prospects, onSelec
       </div>
       {view === 'dms'
         ? <DecisionMakerTitles settings={settings} updateSettings={updateSettings} />
-        : <TitleSearches settings={settings} updateSettings={updateSettings} prospects={prospects} onSelectProspect={onSelectProspect} />}
+        : <TitleSearches settings={settings} updateSettings={updateSettings} prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} targetAccountsData={targetAccountsData} />}
     </div>
   );
 }
 
-function TitleSearches({ settings, updateSettings, prospects, onSelectProspect }) {
+function TitleSearches({ settings, updateSettings, prospects, onSelectProspect, cdmName, targetAccountsData }) {
   const [term, setTerm] = useState('');
   const [copied, setCopied] = useState('');
   const needle = term.trim().toLowerCase();
@@ -520,6 +520,8 @@ function TitleSearches({ settings, updateSettings, prospects, onSelectProspect }
           prospects={prospects}
           allContacts={contacts || []}
           onSelectProspect={onSelectProspect}
+          cdmName={cdmName}
+          targetAccountsData={targetAccountsData}
           onClose={() => setOpenKey(null)}
         />
       )}
