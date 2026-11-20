@@ -7,6 +7,8 @@ import {
 } from '../../data/contactTitleSearches';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { decisionMakerTitles } from '../../utils/decisionMakerTitles';
+import { matchTitleSearch } from '../../utils/titleSearchMatch';
+import { TitleSearchContactsModal } from './TitleSearchContactsModal';
 import styles from './ContactTitlesView.module.css';
 
 // The title searches behind each contact persona, on the page instead of in
@@ -113,6 +115,31 @@ function TitleSearches({ settings, updateSettings }) {
   const [draft, setDraft] = useState(null);
   const searches = draft ?? saved;
   const pageRef = useRef(null);
+
+  // The contacts each search pulls, for the Contacts button on every card
+  // and the full-page list it opens. Run over the saved searches rather
+  // than the draft, so the count doesn't re-run the whole roster on every
+  // keystroke of a term being typed; it catches up once the edit saves.
+  const [contacts, setContacts] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotCache()
+        .then(c => { if (!cancelled) setContacts(c?.contacts || []); })
+        .catch(() => { if (!cancelled) setContacts([]); });
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+  const matchesByKey = useMemo(() => {
+    const out = new Map();
+    if (!contacts) return out;
+    for (const entry of saved) out.set(entry.key, matchTitleSearch(contacts, entry, generalNot));
+    return out;
+  }, [contacts, saved, generalNot]);
+  const [openKey, setOpenKey] = useState(null);
+  const openEntry = openKey ? (saved.find(e => e.key === openKey) || null) : null;
 
   // Autosave, debounced. A settings write per keystroke would be a
   // Firestore round trip per letter of "Chief Sustainability Officer";
@@ -328,9 +355,22 @@ function TitleSearches({ settings, updateSettings }) {
                     value={entry.name}
                     placeholder="Persona name"
                     aria-label="Persona name"
+                    // As wide as the name needs, so a long one wraps the
+                    // count and Contacts button under it instead of being
+                    // cut off behind them.
+                    style={{ minWidth: `min(100%, ${Math.max(8, entry.name.length + 2)}ch)` }}
                     onChange={e => patchSearch(si, { name: e.target.value })}
                   />
                   <span className={styles.cardCount}>{termCount(entry)} terms</span>
+                  <button
+                    type="button"
+                    className={styles.contactsBtn}
+                    onClick={() => { flush(); setOpenKey(entry.key); }}
+                    disabled={!saved.some(e => e.key === entry.key)}
+                    title={`See every contact whose title this search pulls, minus its Not terms`}
+                  >{contacts == null
+                    ? 'Contacts'
+                    : `${(matchesByKey.get(entry.key)?.matched.length ?? 0).toLocaleString()} contacts`}</button>
                   <button
                     type="button"
                     className={styles.deleteBtn}
@@ -470,6 +510,16 @@ function TitleSearches({ settings, updateSettings }) {
       <button type="button" className={styles.addSearchBtn} onClick={addSearch}>
         + New search
       </button>
+
+      {openEntry && (
+        <TitleSearchContactsModal
+          entry={openEntry}
+          result={matchesByKey.get(openEntry.key) || matchTitleSearch(contacts || [], openEntry, generalNot)}
+          settings={settings}
+          updateSettings={updateSettings}
+          onClose={() => setOpenKey(null)}
+        />
+      )}
 
       <div className={styles.foot}>
         Terms are stored exactly as they are typed, typos included, because these are the strings
