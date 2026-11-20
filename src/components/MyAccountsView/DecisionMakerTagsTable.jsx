@@ -49,6 +49,9 @@ const tierRank = (tier) => {
   return tier ? TIERS.length + 1 : null;
 };
 
+// The fill of a tag cell that has at least one confirmed decision maker.
+const HAS_DM_CELL = { background: '#DCFCE7' };
+
 const nameOf = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
 const namesOf = (list) => (list || []).map(nameOf).join(', ');
 
@@ -239,7 +242,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
         key,
         label: tag,
         defaultWidth: 160,
-        headerTitle: `Decision makers also tagged ${tag}, then in amber the ones marked Not sure for it (shown, not counted in the percentages). N/A or Not Sold means ${tag} is closed out at the company, so there is nobody to look for`,
+        headerTitle: `Decision makers also tagged ${tag} (the cell turns green when there is one), then in amber the ones marked Not sure for it (shown, not counted in the percentages). N/A or Not Sold means ${tag} is closed out at the company, so there is nobody to look for`,
         renderHeader: label => (
           <div style={{ display: 'inline-block', verticalAlign: 'top' }}>
             <div>{label}</div>
@@ -250,6 +253,9 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
         exportValue: value,
         // Confirmed first; a maybe-only cell sorts just above an empty one.
         getSortValue: r => (r.byTag[key].length + maybes(r).length / 100) || null,
+        // Green once the account has a confirmed decision maker for the
+        // tag. A maybe-only cell stays plain: it isn't counted as mapped.
+        cellStyle: r => (r.byTag[key].length ? HAS_DM_CELL : undefined),
         render: r => {
           const list = r.byTag[key];
           const maybe = maybes(r);

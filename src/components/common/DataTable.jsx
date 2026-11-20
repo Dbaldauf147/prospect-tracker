@@ -407,7 +407,8 @@ function persistPrefs(tableId, settings, updateSettings, prefsUpdate) {
  *
  * Props:
  *   tableId      - unique string for persisting settings (e.g. 'main', 'accounts', 'hubspot')
- *   columns      - array of { key, label, defaultWidth, render(row) }
+ *   columns      - array of { key, label, defaultWidth, render(row) }; an
+ *                  optional cellStyle(row) returns a style for that cell
  *   rows         - array of data objects
  *   onSort       - (key) => void, optional
  *   sortConfig   - { key, direction }, optional
@@ -1521,20 +1522,26 @@ export function DataTable({
                           onClick={onRowClick ? () => onRowClick(row) : undefined}
                           style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...variableRowStyle, ...computedRowStyle }}
                         >
-                          {visibleColumns.map(col => (
+                          {visibleColumns.map(col => {
+                            // A column's own tint for this row's cell
+                            // (col.cellStyle), laid over the row style.
+                            const own = col.cellStyle ? col.cellStyle(row) : undefined;
+                            return (
                             <td
                               key={col.key}
                               className={col.sticky ? styles.stickyCol : undefined}
                               // Pass the row style straight through when the
-                              // column isn't pinned: this runs for every cell
-                              // of every rendered row, and merging into a
-                              // fresh object per cell is a cost the common
-                              // case shouldn't pay.
-                              style={col.sticky ? { ...computedRowStyle, ...stickyStyle(col) } : computedRowStyle}
+                              // column isn't pinned and has no tint of its
+                              // own: this runs for every cell of every
+                              // rendered row, and merging into a fresh object
+                              // per cell is a cost the common case shouldn't
+                              // pay.
+                              style={col.sticky ? { ...computedRowStyle, ...own, ...stickyStyle(col) } : own ? { ...computedRowStyle, ...own } : computedRowStyle}
                             >
                               {col.render ? col.render(row) : (row[col.key] ?? '-')}
                             </td>
-                          ))}
+                            );
+                          })}
                         </tr>
                       );
                       if (!expandable) return rowTr;
