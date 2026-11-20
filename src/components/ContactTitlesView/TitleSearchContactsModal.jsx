@@ -16,6 +16,10 @@ import styles from './ContactTitlesView.module.css';
 // Not term threw back, with the Not term that did it, so a Not list can
 // be checked as well as the include list.
 //
+// Contacts with the Hide tag that the search would otherwise pull are
+// listed too, greyed out and kept at the bottom whatever the sort. They are
+// not in the header count, and a bulk edit only reaches one that is ticked.
+//
 // `result` is matchTitleSearch's output, worked out by the page so the
 // count on the button and the rows in here can't disagree.
 //
@@ -32,6 +36,11 @@ const barBtn = (primary, disabled) => ({
   cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1,
   border: `1px solid ${primary ? '#2563EB' : '#4F46E5'}`, background: primary ? '#2563EB' : '#fff', color: primary ? '#fff' : '#4F46E5',
 });
+// A hidden contact's row: greyed, on a faint fill.
+const HIDDEN_ROW = { color: '#94A3B8', background: '#F8FAFC' };
+// Hidden rows sit below the rest whatever the sort.
+const hiddenLast = (r) => (r.hidden ? 1 : 0);
+const hiddenRowStyle = (r) => (r.hidden ? HIDDEN_ROW : undefined);
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
 const lower = (s) => clean(s).toLowerCase();
@@ -98,6 +107,7 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
         // name opens. Only a contact HubSpot knows by id can be bulk written.
         contact: m.contact,
         editable: !!(m.contact && (m.contact.id || m.contact.vid)),
+        hidden: status === 'Hidden',
         status,
         name: nameOf(c),
         jobtitle: m.title,
@@ -113,6 +123,7 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     };
     const list = result.matched.map(m => toRow(m, 'Included'));
     if (showExcluded) list.push(...result.excluded.map(m => toRow(m, 'Left out by Not')));
+    list.push(...(result.hidden || []).map(m => toRow(m, 'Hidden')));
     return list;
   }, [result, showExcluded, localFields, prospectByCompany]);
 
@@ -124,16 +135,18 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     return ids ? rows.filter(r => ids.has(r.id)) : rows;
   }, [rows, filteredIds]);
   const selectedRows = onScreen.filter(r => selected.has(r.id));
-  // Nothing ticked means everybody on screen.
-  const targetRows = selectedRows.length ? selectedRows : onScreen;
+  // Nothing ticked means everybody on screen, bar the hidden contacts: one
+  // of those is only edited when it is ticked on purpose.
+  const liveOnScreen = useMemo(() => onScreen.filter(r => !r.hidden), [onScreen]);
+  const targetRows = selectedRows.length ? selectedRows : liveOnScreen;
   const targetContacts = targetRows.filter(r => r.editable).map(r => r.contact);
-  const allSelected = onScreen.length > 0 && selectedRows.length === onScreen.length;
+  const allSelected = liveOnScreen.length > 0 && liveOnScreen.every(r => selected.has(r.id));
   const toggle = (id) => setSelected(prev => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
-  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(onScreen.map(r => r.id)));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(liveOnScreen.map(r => r.id)));
   const selectCol = {
     key: '__select__',
     label: '',
@@ -163,7 +176,8 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
           type="button"
           className={styles.contactLink}
           onClick={() => setEditingContact(r.contact)}
-          title={`Open ${r.name}`}
+          title={r.hidden ? `${r.name} is hidden (Hide tag). Click to open.` : `Open ${r.name}`}
+          style={r.hidden ? { color: 'inherit' } : undefined}
         >{r.name}</button>
       ),
     },
@@ -180,7 +194,8 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     { key: 'tags', label: "Dan's Tags", defaultWidth: 200 },
   ], [showExcluded]);
   const columns = [selectCol, ...dataColumns];
-  const who = selectedRows.length ? `${selectedRows.length} selected` : `all ${onScreen.length} on screen`;
+  const who = selectedRows.length ? `${selectedRows.length} selected` : `all ${liveOnScreen.length} on screen`;
+  const hiddenCount = (result.hidden || []).length;
   const notEditable = targetRows.length - targetContacts.length;
   const cannot = targetContacts.length === 0;
 
@@ -201,6 +216,7 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
           <span className={styles.modalCount}>
             {plural(result.matched.length, 'contact')}
             {result.excluded.length > 0 && `, ${result.excluded.length.toLocaleString()} more left out by the Not terms`}
+            {hiddenCount > 0 && `, ${hiddenCount.toLocaleString()} hidden shown greyed out at the bottom`}
           </span>
           <button type="button" className={styles.modalClose} onClick={onClose} aria-label="Close">&times;</button>
         </div>
@@ -209,7 +225,8 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
             Every contact whose job title has at least one of this search&apos;s {plural(result.includeCount, 'title term')} and
             none of its {plural(result.excludeCount, 'Not term')} (its own Not groups plus the Not list that applies to every
             search). A term matches as whole words in any case, plural included, so &quot;Intern&quot; does not catch
-            &quot;International&quot;. Hidden, Left and Schneider contacts are left out, the same as the other contact pages.
+            &quot;International&quot;. Left and Schneider contacts are left out, the same as the other contact pages. Contacts
+            with the Hide tag are listed greyed out at the bottom and are not counted.
             {entry?.scope ? ` The scope line ("${clean(entry.scope)}") is not applied: use the Country column to narrow it.` : ''}
             <label className={styles.modalToggle}>
               <input type="checkbox" checked={showExcluded} onChange={(e) => setShowExcluded(e.target.checked)} />
@@ -221,8 +238,8 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
           ) : (
             <>
             <div data-bulk-bar style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', margin: '0 0 8px 0', padding: '0.4rem 0.6rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, fontSize: '0.75rem', color: '#1E3A8A' }}>
-              <strong data-target-count>{selectedRows.length ? `${selectedRows.length} selected` : `Editing all ${onScreen.length.toLocaleString()} on screen`}</strong>
-              <span style={{ color: '#64748B' }}>Tick rows to edit just those, or leave them all unticked to edit everyone on screen.</span>
+              <strong data-target-count>{selectedRows.length ? `${selectedRows.length} selected` : `Editing all ${liveOnScreen.length.toLocaleString()} on screen`}</strong>
+              <span style={{ color: '#64748B' }}>Tick rows to edit just those, or leave them all unticked to edit everyone on screen{hiddenCount > 0 ? ' (hidden contacts only when ticked)' : ''}.</span>
               {notEditable > 0 && <span style={{ color: '#64748B' }}>({notEditable} without a HubSpot record will be skipped)</span>}
               {flash && <span style={{ color: '#15803D', fontWeight: 600 }}>{flash}</span>}
               <div style={{ flex: 1 }} />
@@ -240,6 +257,8 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
                 rows={rows}
                 alwaysVisible={['__select__', 'name']}
                 onFilteredRowsChange={onFilteredRowsChange}
+                rowGroup={hiddenLast}
+                rowStyle={hiddenRowStyle}
                 defaultSort={{ key: 'name', direction: 'asc' }}
                 emptyMessage="No contacts in the app hold a title this search pulls"
                 exportFileName={exportName}
