@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { sortCoverageRows, nextCoverageSort } from '../../utils/coverageSort';
 import { failedEmailMap, failedEmailTitle } from '../../utils/failedEmailLookup';
 import { contactMovedOffEmail } from '../../utils/badEmails';
+import { withReplacedFailedEmails } from '../../utils/replacedFailedRecipients';
 import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { CONTACT_FIELD_COLUMNS, contactFieldColumn, cleanFieldColumnKeys } from '../../utils/contactFieldColumns';
 import { contactConnectedUpdate } from '../../utils/contactConnected';
@@ -2309,6 +2310,15 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // forwarded failure notice not yet marked fixed): red on the To line and
   // on Variable Coverage, whatever this draft's own send says.
   const failedHere = useMemo(() => failedEmailMap(allCampaigns, settings?.badEmails), [allCampaigns, settings?.badEmails]);
+
+  // A failed recipient whose contact has since been given a new address
+  // moves onto it: the chip stops being red and the draft goes to the
+  // address that works (utils/replacedFailedRecipients).
+  const failedByContact = settings?.contactFailedEmails;
+  useEffect(() => {
+    if (failedHere.size === 0) return;
+    setSelectedContacts(prev => withReplacedFailedEmails(prev, allContacts, e => failedHere.has(e), failedByContact));
+  }, [allContacts, failedHere, failedByContact, selectedContacts]);
 
   // "Remove sent": drop the To recipients this email has already gone to (the
   // green "Sent" chips), so what is left is who still needs it. A failed send
