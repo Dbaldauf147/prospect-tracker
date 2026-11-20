@@ -19,6 +19,11 @@ import styles from './HubSpotView.module.css';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
+import { BulkContactEditModal } from '../common/BulkContactEditModal';
+import { TagPresetManager } from '../common/TagPresetManager';
+import { TAG_PRESET_FIELD } from '../../utils/bulkContactEdit';
+import { tagVocabulary } from '../../utils/contactTagReview';
+import { contactTagString } from '../../utils/contactEditProps';
 import { campaignsByAddress } from '../../utils/contactCampaigns';
 import { normLookupEmail } from '../../utils/campaignContactLookup';
 import { companyPopupTarget } from '../../utils/companyLookup';
@@ -2411,6 +2416,21 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
   // way. Falls back to filteredContacts before the first report.
   const selectableContacts = tableVisibleRows ?? filteredContacts;
 
+  // Bulk tag edits on the Mass Edit selection: the shared Bulk Edit popup
+  // opened on Tags (add / remove / mark Yes or No) or on a saved tag preset,
+  // and the preset manager to add, edit or delete those presets. The tag
+  // vocabulary is the standard list plus every tag any contact carries.
+  const [tagEditField, setTagEditField] = useState(null);
+  const [showTagPresets, setShowTagPresets] = useState(false);
+  const allTagOptions = useMemo(
+    () => tagVocabulary((data?.contacts || []).flatMap(c => contactTagString(c).split(';').map(t => t.trim()).filter(Boolean))),
+    [data?.contacts],
+  );
+  const selectedContactList = useMemo(
+    () => (data?.contacts || []).filter(c => selected.has(c.id)),
+    [data?.contacts, selected],
+  );
+
   function toggleSelect(id) {
     setSelected(prev => {
       const next = new Set(prev);
@@ -3085,6 +3105,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
                   : `Select All Filtered (${selectableContacts.length})`}
               </button>
             )}
+            <button className={styles.massEditBtn} onClick={() => setShowTagPresets(true)} title="Add, edit or delete the saved tag presets you can apply to selected contacts">Tag Presets</button>
             <button className={styles.newContactBtn} onClick={() => setEditContact(null)}>+ New Contact</button>
             <button className={styles.bulkUploadBtn} onClick={() => setShowBulkUpload(true)}>Bulk Upload</button>
             {enrichedContacts.some(hasActionableGuessedCompany) && (
@@ -3111,6 +3132,12 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
               <input className={styles.massValueInput} type="text" placeholder="New value..." value={massValue} onChange={e => setMassValue(e.target.value)} />
               <button className={styles.massApplyBtn} onClick={handleMassUpdate} disabled={massProcessing || !massValue.trim()}>
                 {massProcessing ? 'Updating...' : 'Apply to Selected'}
+              </button>
+              <button className={styles.massTagBtn} onClick={() => setTagEditField('dans_tags')} disabled={massProcessing} title="Add, remove, or mark Yes / No / Not sure on tags for every selected contact">
+                Edit Tags
+              </button>
+              <button className={styles.massTagBtn} onClick={() => setTagEditField(TAG_PRESET_FIELD)} disabled={massProcessing} title="Give every selected contact the answers from a saved tag preset">
+                Apply Tag Preset
               </button>
               <button className={styles.massCopyGuessBtn} onClick={handleCopyGuessedCompany} disabled={massProcessing}>
                 {massProcessing ? 'Copying...' : 'Copy Guessed Company'}
@@ -3419,6 +3446,33 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
             updateSettings={updateSettings}
           />
         </>
+      )}
+
+      {tagEditField && (
+        <BulkContactEditModal
+          contacts={selectedContactList}
+          settings={settings}
+          updateSettings={updateSettings}
+          initialField={tagEditField}
+          tagOptions={allTagOptions}
+          onClose={() => setTagEditField(null)}
+          onDone={(msg) => {
+            setTagEditField(null);
+            setSelected(new Set());
+            setPushStatus({ type: 'success', message: msg });
+            // The popup patched the shared contacts cache; show what it wrote.
+            getHubspotCache().then(c => { if (c) setData(c); }).catch(() => {});
+          }}
+        />
+      )}
+
+      {showTagPresets && (
+        <TagPresetManager
+          settings={settings}
+          updateSettings={updateSettings}
+          tags={allTagOptions}
+          onClose={() => setShowTagPresets(false)}
+        />
       )}
 
       {detailContact && (
