@@ -30,9 +30,10 @@ import { DraftHistoryView } from './DraftHistoryView';
 import { MarketUpdatesView } from './MarketUpdatesView';
 import { ClientCampaignsView } from './ClientCampaignsView';
 import { RecentSendsView } from './RecentSendsView';
+import { OutreachByServiceView } from './OutreachByServiceView';
 import { primarySubject } from '../../utils/campaignSubjects';
 
-const TABS = ['drafts', 'drafthistory', 'dansdrafts', 'marketupdates', 'campaigns', 'clientcampaigns', 'recentsends', 'sitelists'];
+const TABS = ['drafts', 'drafthistory', 'dansdrafts', 'marketupdates', 'campaigns', 'clientcampaigns', 'outreachbyservice', 'recentsends', 'sitelists'];
 
 export function DraftEmailsPage({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '', onSelectProspect, initialTab = 'drafts' }) {
   const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : 'drafts');
@@ -77,6 +78,7 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
         {tabBtn('marketupdates', 'Market Updates')}
         {tabBtn('campaigns', 'Email Campaigns')}
         {tabBtn('clientcampaigns', 'Client Campaigns')}
+        {tabBtn('outreachbyservice', 'Outreach by Service')}
         {tabBtn('recentsends', 'Recent Sends')}
         {tabBtn('sitelists', 'Site List Overview')}
       </div>
@@ -117,6 +119,9 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
           onSelectProspect={onSelectProspect}
           onOpenCampaign={openCampaign}
         />
+      )}
+      {tab === 'outreachbyservice' && (
+        <OutreachByServiceView settings={settings} updateSettings={updateSettings} />
       )}
       {tab === 'recentsends' && (
         <RecentSendsView
