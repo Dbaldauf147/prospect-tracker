@@ -1768,7 +1768,6 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   );
   // The Failed Emails sub-tab: every failed send across the saved campaigns.
   const failedRows = useMemo(() => failedCampaignEmailRows(savedCampaigns, badEmailMap), [savedCampaigns, badEmailMap]);
-  const failedBadge = useMemo(() => failedEmailCount(failedRows), [failedRows]);
   // Failed addresses whose HubSpot contact carries the "hide" tag. The
   // Failed Emails table greys these rows out and marks them Hidden, so the
   // ones Dan has already put aside stand apart from the ones still to fix.
@@ -1780,6 +1779,12 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     }
     return set;
   }, [failedRows, hubspotByEmail]);
+  // The tab's badge counts the bad addresses still to fix, so the hidden
+  // ones (already put aside) are left out of it.
+  const failedBadge = useMemo(
+    () => failedEmailCount(failedRows.filter(r => !hiddenFailedEmails.has(r.email))),
+    [failedRows, hiddenFailedEmails],
+  );
   // Rows whose address a forwarded bounce notice flagged (utils/badEmails).
   const badEmailCount = useMemo(
     () => (displayResults?.contacts || []).filter(c => String(c?.email || '').split(';').some(a => badEmailInfo(badEmailMap, a.trim()))).length,
@@ -2407,7 +2412,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
           >
             {label}
             {key === 'failed' && failedBadge > 0 && (
-              <span style={{ padding: '0 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C' }} title={`${failedBadge} address${failedBadge === 1 ? '' : 'es'} on your campaigns still flagged as a bad email`}>{failedBadge}</span>
+              <span style={{ padding: '0 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#FEE2E2', color: '#B91C1C' }} title={`${failedBadge} address${failedBadge === 1 ? '' : 'es'} on your campaigns still flagged as a bad email (contacts tagged hide not counted)`}>{failedBadge}</span>
             )}
           </button>
         ))}
