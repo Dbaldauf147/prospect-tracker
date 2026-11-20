@@ -2151,9 +2151,18 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       const isLocalOnly = typeof existingId === 'string' && existingId.startsWith('local-');
       let isNew = !existingId || isLocalOnly;
       let action = isNew ? 'create-contact' : 'update-contact';
+      // The Company field is the Prospect Tracker Company Name. For a
+      // contact HubSpot already has, it is saved as the local pin (below)
+      // and is NOT sent: HubSpot keeps its own company name for the
+      // contact, and the Company record the others there share is not
+      // renamed. A contact being created still takes it, since HubSpot has
+      // no company for them yet. A caller with nowhere to keep the pin
+      // falls back to writing HubSpot, or the edit would be lost.
+      const { company: _ptCompany, ...hsPropsNoCompany } = hsProps;
+      const updateProps = onSaveCompanyOverride ? hsPropsNoCompany : hsProps;
       let body = isNew
         ? { properties: hsProps }
-        : { contactId: contact.id || contact.vid, properties: hsProps };
+        : { contactId: contact.id || contact.vid, properties: updateProps };
       let res = await apiFetch(`/api/hubspot?action=${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2187,7 +2196,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         if (existingIdMatch) {
           const dupId = existingIdMatch[1];
           action = 'update-contact';
-          body = { contactId: dupId, properties: hsProps };
+          body = { contactId: dupId, properties: updateProps };
           res = await apiFetch(`/api/hubspot?action=${action}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2226,7 +2235,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       // Update HubSpot cache (exclude notes/oldEmails — those live in Firestore settings)
       try {
         await updateHubspotCache(draft => {
-          const cacheProps = { ...hsProps };
+          // What went to HubSpot, so the cached company stays HubSpot's own.
+          const cacheProps = { ...(isNew ? hsProps : updateProps) };
           // The old id (local-only, or gone from HubSpot) never comes back.
           if (replacedId) {
             draft.contacts = draft.contacts.filter(c => String(c.id || c.vid) !== String(replacedId));
@@ -2300,19 +2310,13 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         jobDescriptionSavedRef.current = jobDescriptionRef.current;
         onSaveJobDescription(savedCid, jobDescriptionRef.current);
       }
-      // Company edits behave the same here as on the HubSpot Contacts
-      // page: the API renames the Company record this contact is linked to,
-      // so the new name lands in HubSpot and cascades to every contact at
-      // that company. If the rename fails (or the contact had no company and
-      // HubSpot linked it to a differently-named record), keep the typed
-      // value as a local _companyOverride; otherwise clear any stale
-      // override now that HubSpot holds the name.
+      // The Company typed here is the Prospect Tracker Company Name: it is
+      // kept as the contact's local pin, which every page lays over the
+      // HubSpot-synced text. Only a create (or a re-create) sent it to
+      // HubSpot too, and the notes below are about that push.
       if (savedCid && onSaveCompanyOverride && typeof hsProps.company === 'string') {
         const ca = json.companyAssignment;
-        // Always pin the typed value locally so it survives a refresh
-        // regardless of HubSpot sync/association timing; the API also renamed
-        // the linked Company record, so the pin stays consistent with HubSpot.
-        // (Empty string → clear the override instead.)
+        // (Empty string → clear the pin, back to HubSpot's name.)
         onSaveCompanyOverride(savedCid, hsProps.company || null);
         if (ca && ca.ok === false) {
           const what = ca.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
@@ -3366,7 +3370,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <div style={{ gridColumn: 'span 2', position: 'relative' }} ref={companyBoxRef}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-                <label style={labelStyle}>Company</label>
+                <label
+                  style={labelStyle}
+                  title="The company name Prospect Tracker files this contact under. It should be a Table View company name. Changing it here does not change the contact's company in HubSpot."
+                >Prospect Tracker Company Name</label>
                 {companyStatus && (() => {
                   const color = STATUS_COLORS[companyStatus] || '#64748B';
                   return (
