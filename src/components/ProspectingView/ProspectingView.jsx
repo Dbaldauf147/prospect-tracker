@@ -63,6 +63,7 @@ import { ProspectingTiered } from './ProspectingTiered';
 import { ProspectingDmsNoActivityTabs } from './ProspectingDmsNoActivity';
 import { ProspectingLogic } from './ProspectingLogic';
 import { ProspectingNews } from './ProspectingNews';
+import { TagContactsPopup } from './TagContactsPopup';
 
 // The contact popup, loaded when one is actually opened. It lives in
 // ProspectModal, which is the largest module in the app — a static import
@@ -168,7 +169,7 @@ const TAG_LIST_LIMIT = 200;
 // The contacts behind one Tagged chip: who is on that roster, and how far
 // through the tag questions each of them is. Least-tagged first, so the
 // names the percentage is waiting on lead.
-function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAudit, yesOnly = false }) {
+function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAudit, onOpenAll = null, yesOnly = false }) {
   const people = Array.isArray(bucket?.people) ? bucket.people : [];
   const shown = people.slice(0, TAG_LIST_LIMIT);
   // The contacts this list is flagging — the ones still short of a full set
@@ -218,6 +219,21 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAu
               fontSize: '0.66rem', fontWeight: 700, fontFamily: 'inherit', color: '#B91C1C', cursor: 'pointer',
             }}
           >Audit tag history ({flagged.length})</button>
+        )}
+        {/* The whole roster in a popup: every contact, the tags each one
+            has, and bulk edit over them. The inline list stops at 200 and
+            shows no tags, so this is where the list gets worked. */}
+        {onOpenAll && people.length > 0 && (
+          <button
+            type="button"
+            data-open-all-tag-contacts
+            onClick={onOpenAll}
+            title={`Open all ${people.length} contact${people.length === 1 ? '' : 's'} in a popup, with the tags each one has, to bulk edit them.`}
+            style={{
+              padding: '1px 7px', background: '#2563EB', border: '1px solid #2563EB', borderRadius: 5,
+              fontSize: '0.66rem', fontWeight: 700, fontFamily: 'inherit', color: '#fff', cursor: 'pointer',
+            }}
+          >View tags and bulk edit ({people.length})</button>
         )}
         {onNavigate && (
           <button
@@ -301,7 +317,10 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAu
           padding: '4px 9px', borderTop: '1px solid #F1F5F9',
           fontSize: '0.66rem', color: '#94A3B8',
         }}>
-          Showing {shown.length} of {people.length} - open in Contacts for the rest.
+          Showing {shown.length} of {people.length}.{' '}
+          {onOpenAll
+            ? <button type="button" onClick={onOpenAll} style={{ padding: 0, border: 0, background: 'none', font: 'inherit', color: '#2563EB', textDecoration: 'underline', cursor: 'pointer' }}>See all of them with their tags</button>
+            : 'Open in Contacts for the rest.'}
         </div>
       )}
     </div>
@@ -461,6 +480,8 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
   // Which cell's contacts are listed underneath, if any: { roster, row }.
   // Local to the step: it's a look, not a setting.
   const [open, setOpen] = useState(null);
+  // The open roster in full, in a popup, to see its tags and bulk edit.
+  const [allOpen, setAllOpen] = useState(false);
   const rosters = useMemo(() => [
     { key: 'all', label: 'All', bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
     ...ROSTER_CATEGORIES,
@@ -624,6 +645,18 @@ function TagCoverageBar({ coverage: fullCoverage, onNavigate, missing = [], onOp
           onClose={() => setOpen(null)}
           onOpenContact={onOpenContact}
           onAudit={onAudit}
+          onOpenAll={settings && updateSettings ? () => setAllOpen(true) : null}
+        />
+      )}
+      {allOpen && openRow && openRoster && (
+        <TagContactsPopup
+          title={`${openRoster.label} - ${openRow.debt ? 'all tags' : openRow.total ? (tagFocus.length ? tagFocus.join(', ') : 'all tags') : openRow.tag}`}
+          people={openRow.cov[openRoster.key]?.people || []}
+          yesOnly={!openRow.debt}
+          settings={settings}
+          updateSettings={updateSettings}
+          onOpenContact={onOpenContact}
+          onClose={() => setAllOpen(false)}
         />
       )}
     </div>
