@@ -14,7 +14,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { primarySubject } from '../../utils/campaignSubjects';
-import { addContactToCampaign, addContactsToCampaign, campaignHasContact } from '../../utils/campaignAddContact';
+import { addContactToCampaign, addContactsToCampaign, campaignHasContact, removeContactFromCampaign } from '../../utils/campaignAddContact';
 import { campaignsByRecency, campaignPickerDetail } from '../../utils/campaignPicker';
 import { CampaignPicker } from '../common/CampaignPicker';
 
@@ -36,6 +36,8 @@ export function ContactCampaignAdd({ email, name, company }) {
   // Collapsed to the first couple of chips: a contact on a dozen campaigns
   // otherwise pushed the whole form down the popup.
   const [showAll, setShowAll] = useState(false);
+  // The campaign chip clicked open: its remove row shows under the control.
+  const [openKey, setOpenKey] = useState(null);
 
   const load = useCallback(async () => {
     if (!uid) { setCampaigns([]); return; }
@@ -104,6 +106,45 @@ export function ContactCampaignAdd({ email, name, company }) {
     }
   };
 
+  // Take this contact off a campaign they're on. Same fresh-read-then-write
+  // as the add, found again by subject in case the list moved.
+  const remove = async (target) => {
+    if (!target || !uid || !hasEmail) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      const ref = doc(db, 'emailCampaigns', uid);
+      const snap = await getDoc(ref);
+      const fresh = snap.exists() ? (snap.data().campaigns || []) : [];
+      const key = primarySubject(target.c).toLowerCase();
+      const idx = fresh.findIndex(c => primarySubject(c).toLowerCase() === key);
+      if (idx === -1) {
+        setNote({ ok: false, text: `"${target.label}" no longer exists.` });
+        setCampaigns(fresh);
+        setOpenKey(null);
+        return;
+      }
+      const { status, campaign } = removeContactFromCampaign(fresh[idx], trimmed);
+      if (status !== 'removed') {
+        setNote({ ok: true, text: `Not on "${target.label}" anymore.` });
+        setCampaigns(fresh);
+        setOpenKey(null);
+        return;
+      }
+      const next = fresh.map((c, i) => (i === idx ? campaign : c));
+      await setDoc(ref, { campaigns: next, updatedAt: new Date().toISOString() });
+      setCampaigns(next);
+      setOpenKey(null);
+      setNote({ ok: true, text: `Removed from "${target.label}".` });
+      try { window.dispatchEvent(new CustomEvent(EMAIL_CAMPAIGNS_UPDATED_EVENT)); } catch { /* no window */ }
+    } catch (err) {
+      setNote({ ok: false, text: `Couldn't remove from the campaign: ${err?.message || 'unknown error'}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const openEntry = onCampaigns.find(e => e.index === openKey) || null;
+
   const disabledWhy = !uid ? 'Sign in to use campaigns'
     : !hasEmail ? 'Add an email address to this contact first'
     : campaigns === null ? 'Loading campaigns'
@@ -117,11 +158,15 @@ export function ContactCampaignAdd({ email, name, company }) {
     >
       <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Email Campaign</span>
       {(showAll ? onCampaigns : onCampaigns.slice(0, CHIPS_SHOWN)).map(e => (
-        <span
+        <button
+          type="button"
           key={e.index}
-          title={`On the "${e.label}" campaign`}
-          style={{ fontSize: '0.7rem', fontWeight: 600, color: '#1D4ED8', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 999, padding: '1px 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-        >{e.label}</span>
+          data-campaign-chip
+          onClick={() => { setOpenKey(k => (k === e.index ? null : e.index)); setNote(null); }}
+          aria-expanded={openKey === e.index}
+          title={`On the "${e.label}" campaign. Click to remove them from it.`}
+          style={{ fontSize: '0.7rem', fontWeight: 600, color: '#1D4ED8', background: openKey === e.index ? '#DBEAFE' : '#EFF6FF', border: `1px solid ${openKey === e.index ? '#3B82F6' : '#BFDBFE'}`, borderRadius: 999, padding: '1px 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit' }}
+        >{e.label}</button>
       ))}
       {onCampaigns.length > CHIPS_SHOWN && (
         <button
@@ -150,7 +195,24 @@ export function ContactCampaignAdd({ email, name, company }) {
           padding: '0.22rem 0.6rem', borderRadius: '6px', border: 'none', fontFamily: 'inherit', fontSize: '0.74rem', fontWeight: 700,
           background: !pick || busy || disabledWhy ? '#CBD5E1' : '#2563EB', color: '#fff', cursor: !pick || busy || disabledWhy ? 'default' : 'pointer',
         }}
-      >{busy ? 'Adding...' : 'Add'}</button>
+      >{busy && !openEntry ? 'Adding...' : 'Add'}</button>
+      {openEntry && (
+        <div data-campaign-remove style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem', fontSize: '0.72rem', color: '#334155' }}>
+          <span>On <strong>{openEntry.label}</strong>.</span>
+          <button
+            type="button"
+            onClick={() => remove(openEntry)}
+            disabled={busy}
+            style={{ padding: '0.18rem 0.55rem', borderRadius: '6px', border: '1px solid #FCA5A5', background: busy ? '#F1F5F9' : '#FEF2F2', color: '#B91C1C', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, cursor: busy ? 'default' : 'pointer' }}
+          >{busy ? 'Removing...' : 'Remove from campaign'}</button>
+          <button
+            type="button"
+            onClick={() => setOpenKey(null)}
+            disabled={busy}
+            style={{ padding: '0.18rem 0.5rem', borderRadius: '6px', border: '1px solid transparent', background: 'transparent', color: '#475569', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
+          >Cancel</button>
+        </div>
+      )}
       {note && (
         <span role="status" style={{ flexBasis: '100%', fontSize: '0.68rem', color: note.ok ? '#166534' : '#B91C1C' }}>{note.text}</span>
       )}
