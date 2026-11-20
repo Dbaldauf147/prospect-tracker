@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { SCHEDULED_OPPS_SETTINGS_KEY } from '../utils/scheduledOpps';
 import { loadDealsList, DEALS_LIST_EVENT } from '../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../utils/dealClientMap';
 import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT, loadClientStatusMap, CLIENT_STATUS_EVENT } from '../utils/clientManagerStore';
@@ -141,14 +142,17 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   const ignoredSiteListWarnings = useMemo(() => (Array.isArray(ignoredSiteRaw) ? ignoredSiteRaw : []), [ignoredSiteRaw]);
   // Months whose commissions file was uploaded (Commissions > Monthly), for
   // the "Commission file not uploaded" row. `issuesNow` only changes when
-  // the calendar month rolls over with the app left open, which re-runs
-  // the check against the new "last month".
+  // the calendar day rolls over with the app left open, which re-runs the
+  // check against the new "last month", and brings in a scheduled opp the
+  // day it comes within a week.
   const commissionUploads = settings?.commissionMonthUploads || null;
+  // The Opps > Scheduled queue, for the "Scheduled opp coming up" row.
+  const scheduledOpps = settings?.[SCHEDULED_OPPS_SETTINGS_KEY] || null;
   const [issuesNow, setIssuesNow] = useState(() => new Date());
   useEffect(() => {
     function check() {
       const d = new Date();
-      setIssuesNow(prev => (prev.getFullYear() === d.getFullYear() && prev.getMonth() === d.getMonth() ? prev : d));
+      setIssuesNow(prev => (prev.toDateString() === d.toDateString() ? prev : d));
     }
     const t = setInterval(check, 60 * 60 * 1000);
     window.addEventListener('focus', check);
@@ -300,12 +304,12 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   const keyContactNoTargets = useMemo(() => JSON.parse(keyContactNoTargetsKey), [keyContactNoTargetsKey]);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, now: issuesNow });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, scheduledOpps, now: issuesNow });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, issuesNow]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, scheduledOpps, issuesNow]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map

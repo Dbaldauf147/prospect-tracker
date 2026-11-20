@@ -202,3 +202,60 @@ export function scheduledOppChipTitle(entry, item) {
   return `A new opp naming ${item} is scheduled${company ? ` for ${company}` : ''} on ${when}. `
     + 'Nothing exists on the Opps table until then - manage it from Scheduled Opps in the Opps toolbar.';
 }
+
+// ---- Issues tab: a scheduled opp about to happen ----
+// A week before a queued entry is due, it shows on the Issues tab, so the
+// opp does not land in the table (or a Not Sold opp come back) as a
+// surprise and there is time to move or cancel it under Opps > Scheduled.
+// The row stays until the entry fires or is cancelled, which covers one
+// already past due and waiting for the Opps page to be opened.
+//
+// The id carries the due date: snoozing the warning and then moving the
+// opp to another date brings a fresh warning for the new date.
+export const SCHEDULED_OPP_WARNING_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The Eastern calendar date of an instant, as a UTC-midnight ms, so two of
+// them subtract to a whole number of days.
+function easternDayMs(ms) {
+  const [m, d, y] = new Date(ms).toLocaleDateString('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).split('/').map(n => parseInt(n, 10));
+  return Date.UTC(y, m - 1, d);
+}
+
+export function upcomingScheduledOppIssues(entries, { now = new Date(), prospects = [] } = {}) {
+  const nowMs = now.getTime();
+  const rows = [];
+  for (const e of normalizeScheduledOpps(entries)) {
+    if (!scheduledOppPending(e)) continue;
+    const dueMs = scheduledOppDueMs(e);
+    if (dueMs == null) continue;
+    const days = Math.round((easternDayMs(dueMs) - easternDayMs(nowMs)) / DAY_MS);
+    if (days > SCHEDULED_OPP_WARNING_DAYS) continue;
+    const checkBack = isCheckBackEntry(e);
+    const company = e.company || '-';
+    const prospect = e.company ? prospects.find(p => companiesMatch(p.company, e.company)) : null;
+    const when = formatScheduledOppWhen(e);
+    const inDays = dueMs <= nowMs
+      ? 'It is due now and happens the next time the Opps page is open.'
+      : days <= 0 ? 'That is today.'
+        : days === 1 ? 'That is tomorrow.'
+          : `That is in ${days} days.`;
+    const what = checkBack
+      ? `The Not Sold opp for ${company} is scheduled to come back into the Call In on ${when}.`
+      : `A new opp for ${company}${e.scope ? ` (${e.scope})` : ''} is scheduled to be created on ${when}.`;
+    rows.push({
+      id: `scheduled-opp-upcoming:${e.id}:${e.dueDate}`,
+      source: 'Opps',
+      type: checkBack ? 'Scheduled check-back coming up' : 'Scheduled opp coming up',
+      company,
+      oppNumber: null,
+      prospectId: prospect?.id ?? null,
+      daysUntil: days,
+      expirationDate: null,
+      detail: `${what} ${inDays} To move or cancel it, go to Opps > Scheduled.`,
+    });
+  }
+  return rows.sort((a, b) => a.daysUntil - b.daysUntil);
+}
