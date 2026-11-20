@@ -1,6 +1,6 @@
 // Bad email addresses from bounce notices (utils/badEmails).
 // Run: node scripts/badEmails.test.mjs
-import { badEmailInfo, withBounces, badEmailsUpdate, clearBadEmailUpdate, badEmailTitle, contactFailedEmails, recordFailedEmailUpdate, removeFailedEmailUpdate, failedEmailChipTitle } from '../src/utils/badEmails.js';
+import { badEmailInfo, withBounces, badEmailsUpdate, clearBadEmailUpdate, badEmailTitle, contactFailedEmails, recordFailedEmailUpdate, removeFailedEmailUpdate, failedEmailChipTitle, contactMovedOffEmail } from '../src/utils/badEmails.js';
 
 let passed = 0, failed = 0;
 function ok(c, n) { if (c) { passed++; console.log(`PASS  ${n}`); } else { failed++; console.log(`FAIL  ${n}`); } }
@@ -33,6 +33,13 @@ ok(!('101' in removeFailedEmailUpdate('101', 'harveyw@nationwide.com')(f3).conta
 ok(removeFailedEmailUpdate('101', 'nobody@x.com')(f3) === null, 'removing one not there changes nothing');
 ok(recordFailedEmailUpdate('', 'a@b.com', info)({}) === null, 'no contact id, no save');
 ok(failedEmailChipTitle(contactFailedEmails(f1.contactFailedEmails, '101')[0]).startsWith('Bounced on '), 'chip tooltip');
+
+// Opening a contact by an address they have moved off.
+const people = [{ id: 55, email: 'x@y.com' }, { id: '101', email: 'harvey.w@nationwide.com' }];
+ok(contactMovedOffEmail('HarveyW@Nationwide.com', people, f1.contactFailedEmails)?.id === '101', 'a replaced failed address finds its contact');
+ok(contactMovedOffEmail('x@y.com', people, f1.contactFailedEmails) === null, 'an address nobody moved off finds nobody');
+ok(contactMovedOffEmail('harveyw@nationwide.com', [{ id: 55 }], f1.contactFailedEmails) === null, 'nor when the contact is not in the list');
+ok(contactMovedOffEmail('harveyw@nationwide.com', people) === null, 'nothing published, nobody found');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

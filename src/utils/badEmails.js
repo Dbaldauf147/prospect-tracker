@@ -107,6 +107,21 @@ export function removeFailedEmailUpdate(contactId, email) {
   };
 }
 
+/**
+ * The contact (from `contacts`) that moved off `email` after it failed, or
+ * null. A campaign row or a To chip keeps the address the email went to, so
+ * looking the contact up by it finds nobody once the address is replaced,
+ * and the popup used to open a blank record holding the bad address again.
+ * `map` defaults to the published settings.contactFailedEmails.
+ */
+export function contactMovedOffEmail(email, contacts, map = published.failedByContact) {
+  const key = normEmail(email);
+  if (!key || !map || typeof map !== 'object') return null;
+  const ids = new Set(Object.keys(map).filter(id => contactFailedEmails(map, id).some(x => normEmail(x.email) === key)));
+  if (!ids.size) return null;
+  return (contacts || []).find(c => ids.has(String(c?.id ?? c?.vid ?? ''))) || null;
+}
+
 /** The tooltip line for a failed address a contact has moved off. */
 export function failedEmailChipTitle(entry) {
   if (!entry) return '';

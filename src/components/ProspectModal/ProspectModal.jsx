@@ -3156,7 +3156,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               >{emailCopied ? 'Copied!' : 'Copy'}</button>
             </div>
             {failedEmails.length > 0 && (
-              <div data-failed-emails style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem', marginTop: '0.3rem' }}>
+              <div data-contact-failed-emails style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem', marginTop: '0.3rem' }}>
                 <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Failed emails</span>
                 {failedEmails.map(x => (
                   <span

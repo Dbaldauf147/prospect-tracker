@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { useBadEmails } from '../../hooks/useBadEmails';
 import { orderCampaignRoster } from '../../utils/campaignRosterOrder';
-import { badEmailInfo, badEmailTitle } from '../../utils/badEmails';
+import { badEmailInfo, badEmailTitle, contactMovedOffEmail } from '../../utils/badEmails';
 import { scanForBounces, bounceScanDue, CAMPAIGN_SCAN_EVERY_MS } from '../../utils/bounceScan';
 import { createPortal } from 'react-dom';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
@@ -1621,7 +1621,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   const openContactByEmail = (email, company) => {
     const e = normEmail(email);
     if (!e) return;
-    setEditingContact(hubspotByEmail.get(e) || { email: e, company: company || '' });
+    // A failed address that has since been replaced opens the contact who
+    // had it, showing the new address with this one under Failed emails.
+    setEditingContact(hubspotByEmail.get(e) || contactMovedOffEmail(e, hubspotContacts) || { email: e, company: company || '' });
   };
   const openCompanyFromContact = useCallback((name) => {
     const target = companyPopupTarget(prospects, name);

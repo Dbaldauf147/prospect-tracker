@@ -11,6 +11,7 @@
 // a panel above the table splits the clients by where each service stands
 // at them: Sold, In progress, Not sold, N/A, Not explored, read the way the
 // company popup reads it (manual status, then a matching opp, then auto N/A).
+import { contactMovedOffEmail } from '../../utils/badEmails';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
@@ -286,7 +287,8 @@ export function ClientCampaignsView({ prospects, cdmName = '', settings, updateS
   const openContact = (email, company) => {
     const e = String(email || '').trim().toLowerCase();
     if (!e) return;
-    setEditingContact(contactsByEmail.get(e) || { email: e, company: company || '' });
+    // A failed address since replaced opens the contact who had it.
+    setEditingContact(contactsByEmail.get(e) || contactMovedOffEmail(e, contacts) || { email: e, company: company || '' });
   };
   const openCompanyFromContact = useCallback((name) => {
     const target = companyPopupTarget(prospects, name);
