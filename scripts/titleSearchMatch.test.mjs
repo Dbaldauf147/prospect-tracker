@@ -41,6 +41,9 @@ const contacts = [
   { id: 8, jobtitle: '' },
   { id: 9, jobtitle: 'Head of Sustainability�and ESG' },
   { id: 10, jobtitle: 'Sustainability Manager - Europe' },
+  { id: 11, jobtitle: 'ESG Analyst', dans_tags: 'ESG;Hide' },
+  { id: 12, jobtitle: 'ESG Lead', dans_tags: 'Hide', email: 'y@se.com' },
+  { id: 13, jobtitle: 'Sustainability Lead', dans_tags: 'Hide;Left' },
 ];
 const r = matchTitleSearch(contacts, search, ['Europe', 'analyst']);
 check('matched ids', r.matched.map(m => m.contact.id), [1, 3, 9]);
@@ -48,6 +51,7 @@ check('hits listed', r.matched[2].hits, ['Sustainability', 'ESG']);
 check('title cleaned', r.matched[2].title, 'Head of Sustainability and ESG');
 check('excluded ids', r.excluded.map(m => m.contact.id), [2, 10]);
 check('not hits, own and general', [r.excluded[0].notHits, r.excluded[1].notHits], [['Analyst'], ['Europe']]);
+check('hidden: Hide-tagged contacts the search would pull, apart from matched', r.hidden.map(m => m.contact.id), [5]);
 check('term counts, general deduped', [r.includeCount, r.excludeCount], [3, 3]);
 check('no include terms: nobody', matchTitleSearch(contacts, { groups: [{ kind: 'exclude', terms: ['x'] }] }).matched.length, 0);
 check('no search', matchTitleSearch(contacts, null).matched.length, 0);

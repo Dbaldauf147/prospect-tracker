@@ -16,8 +16,11 @@
 //   - in: the title matches at least one include term (any include group).
 //   - out: the title matches any Not term, the search's own Not groups or
 //     the general Not list that rides along on every search.
-//   - Hidden, Left and Schneider contacts are never listed, the same
-//     exclusion every roster runs (isMappableContact).
+//   - Left and Schneider contacts are never listed, the same exclusion
+//     every roster runs (isMappableContact).
+//   - a contact with the Hide tag that the search would otherwise pull is
+//     handed back apart, in `hidden`, so the popup can list them greyed
+//     out at the bottom. They are not in `matched` and not in its count.
 //
 // Pure: contacts and a search in, rows out (scripts/titleSearchMatch.test.mjs).
 
@@ -64,29 +67,42 @@ export function searchTermSets(entry, generalNot = []) {
   return { include: compile(include), exclude: compile([...exclude, ...(generalNot || [])]) };
 }
 
+// The tag test isMappableContact runs, split so Hide can be told from Left.
+const tagText = (c) => String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '').toLowerCase();
+const hasHideTag = (c) => { const t = tagText(c); return t.includes('hide') && !t.includes('left'); };
+const withoutTags = (c) => ({ ...c, dans_tags: '', dan_s_tags: '', dans_tag: '' });
+
 const hitsOf = (title, set) => set.filter(t => t.re.test(title)).map(t => t.label);
 
 /**
  * Run one search over the contacts.
  *
- * Returns { matched, excluded, includeCount, excludeCount }: `matched` are
- * the contacts the search pulls, `excluded` the ones a title term caught
- * but a Not term threw back. Each row is { contact, title, hits, notHits }.
+ * Returns { matched, excluded, hidden, includeCount, excludeCount }:
+ * `matched` are the contacts the search pulls, `excluded` the ones a title
+ * term caught but a Not term threw back, `hidden` the ones it would pull
+ * but for their Hide tag. Each row is { contact, title, hits, notHits }.
  */
 export function matchTitleSearch(contacts, entry, generalNot = []) {
   const { include, exclude } = searchTermSets(entry, generalNot);
   const matched = [];
   const excluded = [];
+  const hidden = [];
   if (include.length) {
     for (const c of contacts || []) {
-      if (!isMappableContact(c)) continue;
+      const isHidden = hasHideTag(c);
+      // Off the list for a reason other than Hide (Left, Schneider).
+      if (!isMappableContact(isHidden ? withoutTags(c) : c)) continue;
       const title = clean(c?.jobtitle);
       if (!title) continue;
       const hits = hitsOf(title, include);
       if (!hits.length) continue;
       const notHits = hitsOf(title, exclude);
+      if (isHidden) {
+        if (!notHits.length) hidden.push({ contact: c, title, hits, notHits });
+        continue;
+      }
       (notHits.length ? excluded : matched).push({ contact: c, title, hits, notHits });
     }
   }
-  return { matched, excluded, includeCount: include.length, excludeCount: exclude.length };
+  return { matched, excluded, hidden, includeCount: include.length, excludeCount: exclude.length };
 }
