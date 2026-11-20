@@ -1012,3 +1012,14 @@
   cursor: pointer;
 }
 .contactLink:hover { text-decoration: underline; }
+
+/* "No" in the My Accounts column: a plain answer, not a warning. */
+.statusMuted {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: #F1F5F9;
+  color: #64748B;
+}
