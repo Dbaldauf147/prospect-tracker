@@ -2306,6 +2306,18 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // forwarded failure notice not yet marked fixed): red on the To line and
   // on Variable Coverage, whatever this draft's own send says.
   const failedHere = useMemo(() => failedEmailMap(allCampaigns, settings?.badEmails), [allCampaigns, settings?.badEmails]);
+
+  // "Remove sent": drop the To recipients this email has already gone to (the
+  // green "Sent" chips), so what is left is who still needs it. A failed send
+  // is NOT removed even though the tracker also has it as sent: the email
+  // never arrived, so that person still needs it (at a corrected address).
+  // The chip shows Failed rather than Sent for the same reason.
+  const emailKey = c => String(c.email || '').trim().toLowerCase();
+  const isSentOk = c => !!sentHere.get(emailKey(c)) && !failedHere.get(emailKey(c));
+  const sentOkCount = selectedContacts.filter(isSentOk).length;
+  function removeSentContacts() {
+    setSelectedContacts(prev => prev.filter(c => !isSentOk(c)));
+  }
   const [namingCampaign, setNamingCampaign] = useState(false);
   const [campaignName, setCampaignName] = useState('');
   const [savingCampaign, setSavingCampaign] = useState(false);
@@ -2887,6 +2899,15 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: '1rem' }}>
             <h3 className={styles.cardTitle} style={{ marginBottom: 0 }}>Compose</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {sentOkCount > 0 && (
+              <button
+                type="button"
+                data-remove-sent
+                onClick={removeSentContacts}
+                title="Remove the To recipients this email has already been sent to. Failed sends stay, since that email never arrived."
+                style={{ padding: '0.25rem 0.6rem', border: '1px solid #86EFAC', borderRadius: 6, background: '#fff', color: '#15803D', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+              >Remove sent ({sentOkCount})</button>
+            )}
             <button
               type="button"
               onClick={clearContactsOnly}
