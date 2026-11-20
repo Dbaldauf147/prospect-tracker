@@ -10,6 +10,7 @@ import { localOnlyFileIssues } from './localOnlyFiles.js';
 import { othersActivityIssues } from './hubspotActivity.js';
 import { gapFillIssues } from './hubspotContactGaps.js';
 import { missingCommissionFileIssues } from './commissionMonthUploads.js';
+import { upcomingScheduledOppIssues } from './scheduledOpps.js';
 import { siteListSizeIssues } from './siteListSize.js';
 import { asDate, fmtDate, isInactiveAgreement } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
@@ -885,7 +886,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 //
 // Service Exploration Coverage is deliberately not among them — see
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], ignoredSiteListWarnings = [], commissionUploads = null, hubspotOthersActivity = [], hubspotGapFill = [], bfoHistoryMissing = [], keyContactLinkedin = [], keyContactNoTargets = [], now = new Date() }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], ignoredSiteListWarnings = [], commissionUploads = null, hubspotOthersActivity = [], hubspotGapFill = [], bfoHistoryMissing = [], keyContactLinkedin = [], keyContactNoTargets = [], scheduledOpps = null, now = new Date() }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
   // handed to the opp-derived detectors so every issue row names its opp by
@@ -920,6 +921,8 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   // Last month's commissions file, while it hasn't been dropped on its
   // card under Commissions > Monthly.
   issues.push(...missingCommissionFileIssues(commissionUploads, now));
+  // Scheduled opps (Opps > Scheduled) due within the week.
+  issues.push(...upcomingScheduledOppIssues(scheduledOpps, { now, prospects }));
   // Activity somebody else logged in HubSpot on one of My Accounts (the
   // Hubspot Mapping page's Others' Activity), until it is ignored there.
   issues.push(...othersActivityIssues(hubspotOthersActivity, { prospects }));
