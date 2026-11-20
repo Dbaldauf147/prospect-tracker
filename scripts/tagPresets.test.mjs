@@ -50,7 +50,8 @@ const TAGS = ['ESG', 'Efficiency / Renewables', 'Procurement', 'Decision Maker',
     ESG: { answer: 'yes', status: '' },
     Procurement: { answer: 'no', status: '' },
     'Efficiency / Renewables': { answer: 'yes', status: 'notsold' },
-  }, 'records land under the vocabulary spelling, replacing other spellings; unknown tags are skipped');
+    'Decision Maker': { answer: 'no', status: '' },
+  }, 'records land under the vocabulary spelling, replacing other spellings; unknown tags are skipped; a blank unnamed tag is filled No, one that is on (Hide) is not');
 }
 
 {
@@ -99,7 +100,8 @@ eq(presetSummary({ tags: { ESG: { answer: 'yes', status: '' }, Procurement: { an
     'Decision Maker': { answer: 'unsure', status: '' },
     ESG: { answer: 'yes', status: '' },
     Procurement: { answer: 'no', status: '' },
-  }), 'bulk: records land under the spelling the map already uses, others untouched');
+    Hide: { answer: 'no', status: '' },
+  }), 'bulk: records land under the spelling the map already uses; an answered unnamed tag is untouched, a blank one is filled No');
   eq([out.tagsChanged, out.recordsChanged], [true, true], 'bulk: both writes flagged');
 
   const again = applyTagPresetToContact({ dansTags: out.dansTags, records: out.records, preset, tags: TAGS });
@@ -109,7 +111,42 @@ eq(presetSummary({ tags: { ESG: { answer: 'yes', status: '' }, Procurement: { an
     dansTags: '', records: { 'Efficiency / Renewables': { answer: 'no', status: '' }, 'Efficiency/Renewables': { answer: 'no', status: '' } },
     preset: { tags: { 'Efficiency / Renewables': { answer: 'no', status: '' } } }, tags: TAGS,
   });
-  eq(Object.keys(twin.records), ['Efficiency / Renewables'], 'bulk: a twin record under the other spelling is folded into one');
+  eq(Object.keys(twin.records).filter(k => k.startsWith('Efficiency')), ['Efficiency / Renewables'], 'bulk: a twin record under the other spelling is folded into one');
+}
+
+// Tags the preset leaves out: No, but only where the contact has nothing.
+{
+  const preset = { tags: { ESG: { answer: 'yes', status: '' } } };
+  const no = { answer: 'no', status: '' };
+
+  const fresh = applyTagPreset({ checked: new Set(), verdicts: {}, tags: TAGS, preset });
+  eq(fresh.verdicts, { ESG: { answer: 'yes', status: '' }, 'Efficiency / Renewables': no, Procurement: no, 'Decision Maker': no, Hide: no },
+    'fill: on a blank contact every unnamed tag becomes No');
+  eq([...fresh.checked], ['ESG'], 'fill: a No puts no tag on');
+
+  const kept = applyTagPreset({
+    checked: new Set(['Procurement']),
+    verdicts: { 'Efficiency/Renewables': { answer: 'unsure', status: '' }, 'Decision Maker': { answer: '', status: 'na' }, Hide: { answer: 'yes', status: 'notsold' } },
+    tags: TAGS, preset,
+  });
+  eq([kept.verdicts.Procurement, kept.verdicts['Efficiency/Renewables'], kept.verdicts['Decision Maker'], kept.verdicts.Hide],
+    [undefined, { answer: 'unsure', status: '' }, { answer: '', status: 'na' }, { answer: 'yes', status: 'notsold' }],
+    'fill: a tag that is on, a Not sure, an N/A and a Not sold are all left as they are');
+  eq([...kept.checked].sort(), ['ESG', 'Procurement'], 'fill: a tag that is on stays on');
+
+  // A Yes recorded for a tag that is off is stale (the table shows blank).
+  const stale = applyTagPreset({ checked: new Set(), verdicts: { Procurement: { answer: 'yes', status: '' } }, tags: TAGS, preset });
+  eq(stale.verdicts.Procurement, no, 'fill: a stale Yes the table shows as blank is filled');
+
+  const bulk = applyTagPresetToContact({ dansTags: 'Procurement', records: { Hide: { answer: 'unsure', status: '' } }, preset, tags: TAGS });
+  eq([bulk.dansTags, bulk.records.Procurement, bulk.records.Hide, bulk.records['Decision Maker']],
+    ['Procurement;ESG', undefined, { answer: 'unsure', status: '' }, no],
+    'fill, bulk: same rule, and the HubSpot tags are untouched by it');
+  const bulkAgain = applyTagPresetToContact({ dansTags: bulk.dansTags, records: bulk.records, preset, tags: TAGS });
+  eq([bulkAgain.tagsChanged, bulkAgain.recordsChanged], [false, false], 'fill, bulk: a second apply changes nothing');
+
+  const noVocab = applyTagPresetToContact({ dansTags: '', records: {}, preset });
+  eq(noVocab.records, { ESG: { answer: 'yes', status: '' } }, 'fill, bulk: with no tag list there are no rows to fill');
 }
 
 // updatePreset: the preset editor's save.

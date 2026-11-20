@@ -11,8 +11,23 @@ import { tagKey, findTagRecord, tagStateFrom, recordKeepsTag, sameTagRecord, pla
 // Stored in settings.tagPresets as
 //   [{ id, name, tags: { [tag]: { answer, status } } }]
 // with only the tags that had something recorded. Applying one sets every
-// tag it names and leaves the rest of the table alone, so a preset saved
-// before a tag existed doesn't wipe that tag's answer on the next contact.
+// tag it names. A tag it doesn't name is answered No, but only where the
+// contact has nothing there yet: a preset is a statement of what somebody
+// covers, so the rows it leaves out are the areas that aren't theirs, and
+// filling them in saves answering each by hand. An answer the contact
+// already has (or a tag that is on in HubSpot) is never replaced that way,
+// so a preset saved before a tag existed doesn't wipe that tag's answer on
+// the next contact.
+
+// The record an unnamed tag is filled with.
+const FILL_NO = { answer: 'no', status: '' };
+
+// Whether the table shows nothing for a tag: not on in HubSpot, and no
+// answer or status recorded.
+function tagIsBlank(tagged, stored) {
+  const st = tagStateFrom(tagged, stored);
+  return !st.answer && !st.status;
+}
 
 // The preset a contact's current table would save: every tag with an answer
 // or a status, as the table shows it (the HubSpot tag folded in, so a tag
@@ -45,6 +60,15 @@ export function applyTagPreset({ checked, verdicts, tags, preset }) {
     // One record per tag, under the vocabulary's spelling.
     for (const key of Object.keys(nextVerdicts)) if (tagKey(key) === tagKey(tag)) delete nextVerdicts[key];
     if (record.answer || record.status) nextVerdicts[tag] = record;
+  }
+  // Every row the preset leaves out, where the table is still blank: No.
+  const named = new Set(Object.keys(preset?.tags || {}).map(tagKey));
+  const onKeys = new Set([...nextChecked].map(tagKey));
+  for (const tag of tags || []) {
+    if (named.has(tagKey(tag))) continue;
+    if (!tagIsBlank(onKeys.has(tagKey(tag)), findTagRecord(nextVerdicts, tag))) continue;
+    for (const key of Object.keys(nextVerdicts)) if (tagKey(key) === tagKey(tag)) delete nextVerdicts[key];
+    nextVerdicts[tag] = { ...FILL_NO };
   }
   return { checked: nextChecked, verdicts: nextVerdicts };
 }
@@ -111,10 +135,12 @@ export function presetSummary(preset) {
 // Every tag the preset names gets the preset's record, under the spelling
 // the map already uses for it (a twin under the other spelling is dropped),
 // and the HubSpot tag follows that record: on for a Yes or a Sold, off for
-// a No, a Not sure or a Not sold. Tags the preset doesn't name are left as
-// they are. With `tags` (the tag vocabulary) a preset tag is written under
-// the vocabulary's spelling, and one the vocabulary no longer has is
-// skipped, as applyTagPreset does.
+// a No, a Not sure or a Not sold. With `tags` (the tag vocabulary) a preset
+// tag is written under the vocabulary's spelling, one the vocabulary no
+// longer has is skipped, and a tag the preset doesn't name is answered No
+// where the contact has nothing there yet, all as applyTagPreset does.
+// Without the vocabulary there is no list of rows to fill, so tags the
+// preset doesn't name are left as they are.
 //
 // Returns { records, recordsChanged, dansTags, tagsChanged }.
 export function applyTagPresetToContact({ dansTags = '', records = {}, preset, tags = null }) {
@@ -141,6 +167,18 @@ export function applyTagPresetToContact({ dansTags = '', records = {}, preset, t
     if (list.length === 0) continue;
     const step = planTagEdit(mode, list, cur);
     if (step.action === 'write') cur = step.tags;
+  }
+  if (tags) {
+    const named = new Set(Object.keys(preset?.tags || {}).map(tagKey));
+    const onKeys = new Set(cur.split(';').map(t => tagKey(t.trim())).filter(Boolean));
+    for (const tag of tags) {
+      if (named.has(tagKey(tag))) continue;
+      const keys = Object.keys(nextRecords).filter(k => tagKey(k) === tagKey(tag));
+      if (!tagIsBlank(onKeys.has(tagKey(tag)), keys.length ? nextRecords[keys[0]] : undefined)) continue;
+      for (const k of keys) delete nextRecords[k];
+      nextRecords[keys[0] || tag] = { ...FILL_NO };
+      recordsChanged = true;
+    }
   }
   return { records: nextRecords, recordsChanged, dansTags: cur, tagsChanged: cur !== String(dansTags || '') };
 }

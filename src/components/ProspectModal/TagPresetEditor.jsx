@@ -102,7 +102,7 @@ export function TagPresetEditor({ preset, presets, tags, onSave, onClose }) {
             style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', fontSize: '0.8rem', fontFamily: 'inherit', border: '1px solid #CBD5E1', borderRadius: 4 }}
           />
           <div style={{ fontSize: '0.66rem', color: '#94A3B8', marginTop: 4 }}>
-            Applying the preset sets each tag below to its answer. A tag left on "-" is left alone on the contact.
+            Applying the preset sets each tag below to its answer. A tag left on "-" is set to No on a contact with no answer for it yet, and left alone otherwise.
           </div>
         </div>
         <div style={{ overflowY: 'auto', padding: '0.3rem 0.9rem' }}>
