@@ -999,3 +999,16 @@
 }
 .statusIn { background: #DCFCE7; color: #166534; }
 .statusOut { background: #FEE2E2; color: #991B1B; }
+
+/* A contact's name in the search's contacts list: opens the contact popup. */
+.contactLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent, #2563EB);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.contactLink:hover { text-decoration: underline; }
