@@ -663,9 +663,10 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
   // table, not the To line or the order the emails go out in.
   const [sort, setSort] = useState(null); // { key, dir: 1 | -1 }
   // Which recipients are listed: everyone, only those this email has
-  // already gone to, or only those it hasn't. Like the sort, it only
-  // changes what this table shows.
-  const [reach, setReach] = useState('all'); // 'all' | 'reached' | 'remaining'
+  // already gone to, only those it hasn't, or only those whose address an
+  // email failed to reach. Like the sort, it only changes what this table
+  // shows.
+  const [reach, setReach] = useState('all'); // 'all' | 'reached' | 'remaining' | 'failed'
   const fields = fieldKeys.map(contactFieldColumn).filter(Boolean);
   const fieldValue = (c, f) => {
     const raw = rawOf ? rawOf(c) : null;
@@ -702,9 +703,12 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
 
   const sentOf = (c) => (sentDateOf ? String(sentDateOf(c) || '') : '');
   const reachedCount = sentDateOf ? contacts.filter(c => sentOf(c)).length : 0;
+  const failedCount = failedOf ? contacts.filter(c => failedOf(c)).length : 0;
   const listed = !sentDateOf || reach === 'all'
     ? contacts
-    : contacts.filter(c => (reach === 'reached') === !!sentOf(c));
+    : reach === 'failed'
+      ? contacts.filter(c => failedOf && failedOf(c))
+      : contacts.filter(c => (reach === 'reached') === !!sentOf(c));
   const sortValue = (c, key) => {
     if (key === 'recipient') return c.name || c.email || '';
     if (key === 'reached') {
@@ -743,7 +747,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
     <>
       {titleRow(`Variable Coverage (${contacts.length})`)}
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
-        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / DM at Tier 1-3), and each column after it is a variable used in the draft. Click a column heading to sort by it. <strong>Reached Out</strong> marks who this email has already gone to, and the Show buttons hide either group. Red <strong>Failed</strong> means an email to that address did not arrive. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
+        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / DM at Tier 1-3), and each column after it is a variable used in the draft. Click a column heading to sort by it. <strong>Reached Out</strong> marks who this email has already gone to, and the Show buttons hide either group. Red <strong>Failed</strong> means an email to that address did not arrive; Show Failed lists just those. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
       </p>
       {sentDateOf && (
         <div data-reach-filter style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '0 0 0.5rem 0' }}>
@@ -752,6 +756,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
             ['all', 'Everyone', contacts.length, 'Every recipient on this draft.'],
             ['reached', 'Reached out', reachedCount, 'Only the recipients this email has already gone to, per the Email Campaigns tracker. Hides the ones still to send.'],
             ['remaining', 'Remaining', contacts.length - reachedCount, 'Only the recipients this email has not gone to yet. Hides the ones already reached.'],
+            ...(failedOf ? [['failed', 'Failed', failedCount, 'Only the recipients whose address an email did not arrive at.']] : []),
           ].map(([key, label, count, tip]) => {
             const on = reach === key;
             return (
@@ -843,7 +848,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
           <tbody>
             {rows.length === 0 && (
               <tr><td colSpan={99} style={{ ...cellStyle, color: '#94A3B8', padding: '0.8rem 0.5rem' }}>
-                {reach === 'reached' ? 'This email has not gone to anyone on the draft yet.' : 'Everyone on the draft has already been sent this email.'}
+                {reach === 'failed' ? 'No failed addresses on this draft.' : reach === 'reached' ? 'This email has not gone to anyone on the draft yet.' : 'Everyone on the draft has already been sent this email.'}
               </td></tr>
             )}
             {rows.map(c => (
