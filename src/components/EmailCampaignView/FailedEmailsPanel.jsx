@@ -29,13 +29,44 @@ const SOURCE_TITLE = {
   [FAILED_SOURCE.BOTH]: 'A forwarded notice and the campaign both caught this bounce.',
 };
 
-export function FailedEmailsPanel({ rows, companyFor, onOpenContact, onOpenCampaign, settings, updateSettings }) {
+// A failed address whose contact is tagged "hide": the row is greyed and
+// its address struck through, with a Hidden pill, so it reads as already
+// put aside rather than one still to fix.
+const HIDDEN_ROW_STYLE = { background: '#F1F5F9', color: '#94A3B8', fontStyle: 'italic' };
+const hiddenPill = {
+  flexShrink: 0, padding: '0 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, fontStyle: 'normal',
+  background: '#EDE9FE', border: '1px solid #C4B5FD', color: '#5B21B6',
+};
+const HIDDEN_TITLE = 'This contact is tagged "hide", so it is hidden from the contact lists.';
+
+export function FailedEmailsPanel({ rows, hiddenEmails, companyFor, onOpenContact, onOpenCampaign, settings, updateSettings }) {
   const columns = useMemo(() => [
     {
       key: 'email', label: 'Email', defaultWidth: 240,
-      render: (r) => (
-        <button type="button" style={linkBtn} title="Open the contact to fix the address" onClick={(e) => { e.stopPropagation(); onOpenContact?.(r.email, r.company); }}>{r.email}</button>
-      ),
+      render: (r) => {
+        const hidden = hiddenEmails?.has(r.email);
+        const btn = (
+          <button
+            type="button"
+            style={hidden ? { ...linkBtn, color: '#94A3B8', textDecoration: 'line-through' } : linkBtn}
+            title={hidden ? `${HIDDEN_TITLE} Click to open the contact.` : 'Open the contact to fix the address'}
+            onClick={(e) => { e.stopPropagation(); onOpenContact?.(r.email, r.company); }}
+          >{r.email}</button>
+        );
+        if (!hidden) return btn;
+        return (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            {btn}
+            <span style={hiddenPill} title={HIDDEN_TITLE}>Hidden</span>
+          </span>
+        );
+      },
+    },
+    {
+      key: 'hidden', label: 'Hidden', defaultWidth: 80,
+      getFilterValue: (r) => (hiddenEmails?.has(r.email) ? 'Hidden' : 'Shown'),
+      getSortValue: (r) => (hiddenEmails?.has(r.email) ? 1 : 0),
+      render: (r) => (hiddenEmails?.has(r.email) ? <span title={HIDDEN_TITLE}>Hidden</span> : ''),
     },
     { key: 'name', label: 'Name', defaultWidth: 150 },
     {
@@ -72,15 +103,16 @@ export function FailedEmailsPanel({ rows, companyFor, onOpenContact, onOpenCampa
     { key: 'reason', label: 'Reason', defaultWidth: 260, render: (r) => <span title={r.reason}>{r.reason}</span> },
     { key: 'noticeSubject', label: 'Notice Subject', defaultWidth: 220, render: (r) => <span title={r.noticeSubject}>{r.noticeSubject}</span> },
     { key: 'replied', label: 'Replied', defaultWidth: 80, getFilterValue: (r) => (r.replied ? 'Yes' : ''), getSortValue: (r) => (r.replied ? 1 : 0), render: (r) => (r.replied ? 'Yes' : '') },
-  ], [companyFor, onOpenContact, onOpenCampaign]);
+  ], [companyFor, onOpenContact, onOpenCampaign, hiddenEmails]);
 
   const stillBad = rows.filter(r => r.state === FAILED_STATE.BAD).length;
+  const hiddenCount = hiddenEmails ? rows.filter(r => hiddenEmails.has(r.email)).length : 0;
   return (
     <div data-failed-emails>
       <BounceForwardNote />
       <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
         {rows.length
-          ? `${rows.length} failed send${rows.length === 1 ? '' : 's'} across your campaigns, ${stillBad} still flagged as a bad email. Click an address to fix it on the contact, or a campaign to open it.`
+          ? `${rows.length} failed send${rows.length === 1 ? '' : 's'} across your campaigns, ${stillBad} still flagged as a bad email${hiddenCount ? `, ${hiddenCount} on contacts tagged hide (greyed out)` : ''}. Click an address to fix it on the contact, or a campaign to open it.`
           : 'No failed emails on any campaign. Forward a delivery-failure notice to the address above and it shows up here.'}
       </div>
       {/* DataTable fills its parent's height, so give it a box: sized to
@@ -92,7 +124,8 @@ export function FailedEmailsPanel({ rows, companyFor, onOpenContact, onOpenCampa
         columns={columns}
         rows={rows}
         alwaysVisible={['email']}
-        defaultHidden={['noticeSubject', 'replied']}
+        defaultHidden={['noticeSubject', 'replied', 'hidden']}
+        rowStyle={(r) => (hiddenEmails?.has(r.email) ? HIDDEN_ROW_STYLE : undefined)}
         emptyMessage="No failed emails"
         settings={settings}
         updateSettings={updateSettings}

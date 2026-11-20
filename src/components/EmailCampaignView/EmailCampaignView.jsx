@@ -62,6 +62,7 @@ import { CampaignAudienceTicks } from './CampaignAudienceTicks';
 import { EmailSchedulePanel } from './EmailSchedulePanel';
 import { BounceForwardNote } from './BounceForwardNote';
 import { FailedEmailsPanel } from './FailedEmailsPanel';
+import { contactIsHidden } from '../ProspectModal/contactTags';
 import { failedCampaignEmailRows, failedEmailCount } from '../../utils/failedCampaignEmails';
 import { withAudience, withSchedule, campaignRowTone } from '../../utils/campaignAudience';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
@@ -1768,6 +1769,17 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   // The Failed Emails sub-tab: every failed send across the saved campaigns.
   const failedRows = useMemo(() => failedCampaignEmailRows(savedCampaigns, badEmailMap), [savedCampaigns, badEmailMap]);
   const failedBadge = useMemo(() => failedEmailCount(failedRows), [failedRows]);
+  // Failed addresses whose HubSpot contact carries the "hide" tag. The
+  // Failed Emails table greys these rows out and marks them Hidden, so the
+  // ones Dan has already put aside stand apart from the ones still to fix.
+  const hiddenFailedEmails = useMemo(() => {
+    const set = new Set();
+    for (const r of failedRows) {
+      const c = hubspotByEmail.get(r.email);
+      if (c && contactIsHidden(c)) set.add(r.email);
+    }
+    return set;
+  }, [failedRows, hubspotByEmail]);
   // Rows whose address a forwarded bounce notice flagged (utils/badEmails).
   const badEmailCount = useMemo(
     () => (displayResults?.contacts || []).filter(c => String(c?.email || '').split(';').some(a => badEmailInfo(badEmailMap, a.trim()))).length,
@@ -2404,6 +2416,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
       {subTab === 'failed' && (
         <FailedEmailsPanel
           rows={failedRows}
+          hiddenEmails={hiddenFailedEmails}
           companyFor={companyFor}
           onOpenContact={openContactByEmail}
           onOpenCampaign={(i) => { setSubTab('campaigns'); viewCampaign(i); }}
