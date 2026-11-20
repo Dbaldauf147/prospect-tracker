@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
-import { buildCompanyRecordLookup, hubspotCompanyNamesFor } from '../../utils/contactCompanyNames';
+import { tableViewNameKeys, isTableViewName, hubspotCompanyNameOf } from '../../utils/contactCompanyNames';
 import { apiFetch } from '../../utils/apiFetch';
-import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
+import { companyOverrideUpdate, companyOverridesByIdUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
@@ -1363,7 +1363,9 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
         const contacts = [];
         for (const c of prev.contacts) {
           const cid = String(c.id || c.vid || '');
-          if (cid === id) { found = true; contacts.push({ ...c, ...updated }); }
+          // The popup's Company is the Prospect Tracker name (a local pin);
+          // the synced row keeps HubSpot's own.
+          if (cid === id) { found = true; contacts.push({ ...c, ...updated, company: c.company }); }
           else if (replaced && cid === replaced) { if (!found) { found = true; contacts.push({ ...c, ...updated }); } }
           else contacts.push(c);
         }
@@ -1640,14 +1642,6 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
       setPushStatus({ type: 'error', message: `Reassign failed: ${err.message}` });
     }
     setReassigningId(null);
-  }, [updateSettings]);
-
-  // Drop the local company override for one contact, surfacing the
-  // HubSpot-synced value again. Useful once the user has fixed the
-  // association in HubSpot and wants Prospect Tracker to follow that
-  // again instead of pinning the local value.
-  const clearCompanyOverride = useCallback((contactId) => {
-    updateSettings(companyOverrideUpdate(contactId, null));
   }, [updateSettings]);
 
   const handleDeleteContact = useCallback(async (contactId, name) => {
@@ -2099,14 +2093,6 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
       .trim();
   };
 
-  const prospectCompanyKeys = useMemo(() => {
-    const set = new Set();
-    for (const p of prospects) {
-      const k = normalizeCompanyKey(p.company);
-      if (k) set.add(k);
-    }
-    return set;
-  }, [prospects]);
 
   // normKey → canonical prospect company name, so a contact whose
   // Company is a slightly-off variant ("Acme Corp") can be suggested
@@ -2200,7 +2186,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
     for (const p of prospects) {
       prospectMap.set((p.company || '').toLowerCase(), p);
     }
-    const findCompanyRecord = buildCompanyRecordLookup(prospects);
+    const tableViewNames = tableViewNameKeys(prospects);
 
     return contacts
       .filter(c => {
@@ -2225,17 +2211,17 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
         c = { ...c, ...localFields };
         if (typeof localFields._companyOverride === 'string' && localFields._companyOverride) {
           c.company = localFields._companyOverride;
-          c._companyIsOverride = true;
-          c._companyHubspotValue = hsCompany || '';
+          c._companyIsPinned = true;
         }
-        // Every contact carries its company twice: the name Prospect
-        // Tracker files it under, and the name(s) that company goes by in
-        // HubSpot. Those are the company record's own HubSpot Names where
-        // it has any (all of them kept), else the company name again
-        // (utils/contactCompanyNames).
+        // Every contact carries its company twice, and the two are kept
+        // apart (utils/contactCompanyNames). The HubSpot name is what
+        // HubSpot itself has on the contact, read before the local pin is
+        // laid over it, so changing the Prospect Tracker name never moves
+        // it. The Prospect Tracker name is meant to equal a Table View
+        // company name; one that doesn't is flagged.
         c.ptCompanyName = c.company || '';
-        c.hubspotCompanyNameList = hubspotCompanyNamesFor(c.company, findCompanyRecord(c.company));
-        c.hubspotCompanyName = c.hubspotCompanyNameList.join(', ');
+        c.hubspotCompanyName = hubspotCompanyNameOf(hsCompany);
+        c.ptCompanyUnmatched = !!String(c.company || '').trim() && !isTableViewName(c.company, tableViewNames);
         const companyKey = (c.company || '').toLowerCase();
         const prospect = prospectMap.get(companyKey);
 
@@ -2339,7 +2325,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
   }, [contacts, prospects, emailFilterMode, domainToCompany, tierByCompany, prospectKeyToCanonical, prospectTokenPrefixMap, prospectTokenPrefixKeysDesc, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
 
   // Dynamic filter options for HubSpot columns
-  const HUBSPOT_FILTER_SKIP = new Set(['id', '_select', '_delete', '_deleteRow', '_edit', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
+  const HUBSPOT_FILTER_SKIP = new Set(['id', 'ptCompanyUnmatched', '_companyIsPinned', '_select', '_delete', '_deleteRow', '_edit', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
   const HUBSPOT_FILTER_LABELS = { company: 'Company', tier: 'Tier', jobtitle: 'Title', city: 'City', state: 'State', country: 'Country', firstname: 'First Name', lastname: 'Last Name', email: 'Email', phone: 'Phone', sequenceStatus: 'Sequence', dans_tags: "Dan's Tags", dan_s_tags: "Dan's Tags" };
   const hsFilterOptions = useMemo(() => {
     const opts = {};
@@ -2417,12 +2403,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
       // filter mirrors what the user actually sees on screen.
       result = result.filter(c => hasActionableGuessedCompany(c));
     } else if (cardFilter === 'companyUnmapped') {
-      result = result.filter(c => {
-        const company = String(c.company || '').trim();
-        if (!company) return false;
-        const k = normalizeCompanyKey(company);
-        return !!k && !prospectCompanyKeys.has(k);
-      });
+      result = result.filter(c => c.ptCompanyUnmatched);
     }
 
     // Apply column filters. Each column may have:
@@ -2468,7 +2449,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
     }
 
     return result;
-  }, [enrichedContacts, search, cardFilter, colFilters, colFilterDrafts, prospectCompanyKeys]);
+  }, [enrichedContacts, search, cardFilter, colFilters, colFilterDrafts]);
 
   // What "Select All" actually operates on: the rows on screen. When
   // DataTable's internal column filters are active, tableVisibleRows is
@@ -2521,6 +2502,23 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
     setMassValue('');
   }
 
+  // Applying a guessed company changes the Prospect Tracker Company Name
+  // and nothing else: it is saved as the contact's local Company pin, in
+  // one settings write for the whole run. HubSpot is not called, so the
+  // contact's HubSpot Company Name (and the Company record every other
+  // contact there shares) stays exactly as it was.
+  function applyGuessedCompanies(list) {
+    const pins = {};
+    for (const c of list) {
+      const guess = String(c.guessedCompany || '').trim();
+      if (c.id && guess) pins[c.id] = guess;
+    }
+    const count = Object.keys(pins).length;
+    if (count > 0) updateSettings(companyOverridesByIdUpdate(pins));
+    return count;
+  }
+  const PT_ONLY_NOTE = 'Prospect Tracker Company Name only, HubSpot was not changed.';
+
   async function handleCopyGuessedCompany() {
     // Find selected contacts that have a guessed company but no actual company
     const toCopy = filteredContacts.filter(c => selected.has(c.id) && !c.company && c.guessedCompany);
@@ -2528,17 +2526,8 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
       setPushStatus({ type: 'error', message: 'No selected contacts have a guessed company to copy' });
       return;
     }
-    setMassProcessing(true);
-    setPushStatus(null);
-    let updated = 0, errors = 0;
-    for (const c of toCopy) {
-      try {
-        await handleInlineUpdate(c.id, { company: c.guessedCompany });
-        updated++;
-      } catch { errors++; }
-    }
-    setPushStatus({ type: errors === 0 ? 'success' : 'error', message: `Copied guessed company to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
-    setMassProcessing(false);
+    const updated = applyGuessedCompanies(toCopy);
+    setPushStatus({ type: 'success', message: `Copied guessed company to ${updated} contacts. ${PT_ONLY_NOTE}` });
   }
 
   // Accept the guessed company for one contact AND auto-apply the same
@@ -2557,36 +2546,15 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
       String(c.company || '').toLowerCase() !== target &&
       !dismissedGuesses[`${c.id}_company`]
     );
-    if (peers.length === 0) {
-      // Fallback to a plain single-row update — covers the case where the
-      // contact's existing Company already equals the guess (peer list
-      // would exclude it) but the user clicked anyway.
-      await handleInlineUpdate(contact.id, { company: guess });
-      return;
+    // The clicked row always goes; its peers go with it unless the user
+    // says no to the wider write.
+    let list = peers.some(c => c.id === contact.id) ? peers : [contact, ...peers];
+    if (list.length > 1 && !confirm(`Apply "${guess}" to ${list.length} contacts that share this suggestion? This sets their Prospect Tracker Company Name only. HubSpot is not changed.`)) {
+      list = [contact];
     }
-    if (peers.length > 1) {
-      if (!confirm(`Apply "${guess}" to ${peers.length} contacts that share this suggestion?`)) {
-        // User said no to bulk — apply just to the clicked row.
-        await handleInlineUpdate(contact.id, { company: guess });
-        return;
-      }
-    }
-    setMassProcessing(true);
-    setPushStatus(null);
-    let updated = 0, errors = 0;
-    // Route through handleInlineUpdate so each peer also gets the
-    // Company-association pinned in HubSpot (otherwise the typed value
-    // can revert on next sync) and the cache only updates when HubSpot
-    // actually accepted the write.
-    for (const c of peers) {
-      try {
-        await handleInlineUpdate(c.id, { company: guess });
-        updated++;
-      } catch { errors++; }
-    }
-    setPushStatus({ type: errors === 0 ? 'success' : 'error', message: `Applied "${guess}" to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
+    const updated = applyGuessedCompanies(list.map(c => ({ id: c.id, guessedCompany: guess })));
+    setPushStatus({ type: 'success', message: `Applied "${guess}" to ${updated} contact${updated === 1 ? '' : 's'}. ${PT_ONLY_NOTE}` });
     logAction(user, 'bulk_apply_same_guess', { count: updated, guess });
-    setMassProcessing(false);
   }
 
   async function handleCopyAllGuessedCompanies() {
@@ -2595,21 +2563,12 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
     const fillCount = toCopy.filter(c => !c.company).length;
     const overwriteCount = toCopy.length - fillCount;
     const overwriteNote = overwriteCount > 0
-      ? ` (${fillCount} empty, ${overwriteCount} will OVERWRITE the current company text)`
+      ? ` (${fillCount} empty, ${overwriteCount} will OVERWRITE the current Prospect Tracker name)`
       : '';
-    if (!confirm(`Copy the guessed company name to ${toCopy.length} contacts in HubSpot?${overwriteNote} (Names will NOT be changed)`)) return;
-    setMassProcessing(true);
-    setPushStatus(null);
-    let updated = 0, errors = 0;
-    for (const c of toCopy) {
-      try {
-        await handleInlineUpdate(c.id, { company: c.guessedCompany });
-        updated++;
-      } catch { errors++; }
-    }
-    setPushStatus({ type: errors === 0 ? 'success' : 'error', message: `Copied guessed company to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
+    if (!confirm(`Set the Prospect Tracker Company Name to the guessed company on ${toCopy.length} contacts?${overwriteNote} HubSpot is not changed.`)) return;
+    const updated = applyGuessedCompanies(toCopy);
+    setPushStatus({ type: 'success', message: `Copied guessed company to ${updated} contacts. ${PT_ONLY_NOTE}` });
     logAction(user, 'bulk_guess_companies', { count: updated });
-    setMassProcessing(false);
   }
 
   async function handleCopyAllGuessedNames() {
@@ -3044,14 +3003,9 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
           <div className={styles.summaryLabel}>All Contacts</div>
           <div className={styles.summaryValue}>{contacts.length}</div>
         </button>
-        <button className={`${styles.summaryCard} ${cardFilter === 'companyUnmapped' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'companyUnmapped' ? null : 'companyUnmapped')} title="Contacts whose Company is set but doesn't match any Table View prospect by name">
+        <button className={`${styles.summaryCard} ${cardFilter === 'companyUnmapped' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'companyUnmapped' ? null : 'companyUnmapped')} title="Contacts whose Prospect Tracker Company Name is set but is not exactly a Table View company name. These are the rows flagged amber in that column.">
           <div className={styles.summaryLabel}>Company Not in TV</div>
-          <div className={styles.summaryValue}>{enrichedContacts.filter(c => {
-            const company = String(c.company || '').trim();
-            if (!company) return false;
-            const k = normalizeCompanyKey(company);
-            return !!k && !prospectCompanyKeys.has(k);
-          }).length}</div>
+          <div className={styles.summaryValue}>{enrichedContacts.filter(c => c.ptCompanyUnmatched).length}</div>
         </button>
         <button className={`${styles.summaryCard} ${cardFilter === 'enrolled' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'enrolled' ? null : 'enrolled')}>
           <div className={styles.summaryLabel}>In Sequences</div>
@@ -3293,68 +3247,56 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
               // The company, twice. Prospect Tracker Company Name is the
               // old Company column under its new name: same key, so its
               // saved width, place and visibility carry over, and it is
-              // still the one that is edited. HubSpot Company Name is the
-              // name(s) that company goes by in HubSpot, read off the
-              // company record, so it is changed on the company popup.
+              // still the one that is edited. HubSpot Company Name is what
+              // HubSpot has on the contact, whatever Prospect Tracker
+              // calls the company.
               { key: 'hubspotCompanyName', label: 'HubSpot Company Name', defaultWidth: 200,
-                headerTitle: "The name(s) the contact's company goes by in HubSpot: the HubSpot Names on its company popup, or the company name when none are recorded there",
+                headerTitle: "The contact's company as HubSpot has it. Changing the Prospect Tracker Company Name does not change this.",
                 render: (c) => {
-                  const names = c.hubspotCompanyNameList || [];
-                  if (!names.length) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+                  if (!c.hubspotCompanyName) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
                   return (
                     <span
-                      title={names.length > 1
-                        ? `${names.length} HubSpot names recorded for ${c.company}:\n${names.join('\n')}`
-                        : names[0]}
+                      title={c.hubspotCompanyName}
                       style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    >{names.join(', ')}</span>
+                    >{c.hubspotCompanyName}</span>
                   );
                 } },
               { key: 'company', label: 'Prospect Tracker Company Name', defaultWidth: 220,
-                headerTitle: 'The company name Prospect Tracker uses for the contact: matching to accounts, tiers and filters all read this one',
+                headerTitle: 'The company name Prospect Tracker uses for the contact: matching to accounts, tiers and filters all read this one. It should equal a Table View company name; one that does not is flagged amber.',
                 render: (c) => (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
                   <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{ flex: 1, minWidth: 0, ...(c.ptCompanyUnmatched ? { background: '#FEF3C7', boxShadow: 'inset 3px 0 0 #D97706', borderRadius: 3, paddingLeft: 5 } : null) }}
+                    >
                       <HubSpotInlineCell contact={c} field="company" value={c.company} onSave={handleInlineUpdate} suggestions={prospectCompanyNames} />
                     </div>
-                    {c._companyIsOverride && (
+                    {c.ptCompanyUnmatched && (
                       <span
-                        title={`Local Prospect Tracker override active. HubSpot has "${c._companyHubspotValue || '(empty)'}" but Prospect Tracker is using the value you typed. Click ✕ to drop the override and follow HubSpot again.`}
-                        style={{ flexShrink: 0, padding: '0 5px', borderRadius: 999, background: '#DBEAFE', color: '#1E3A8A', border: '1px solid #93C5FD', fontSize: '0.6rem', fontWeight: 700, lineHeight: '1.4' }}
-                      >LOCAL</span>
+                        title={`"${c.company}" is not a Table View company name.${c.guessedCompany && !dismissedGuesses[`${c.id}_company`] ? ` Suggested: "${c.guessedCompany}" (apply it from the Guessed Company column).` : ' Pick the Table View name for this company, or add the company to Table View.'}`}
+                        style={{ flexShrink: 0, padding: '0 5px', borderRadius: 999, background: '#FEF3C7', color: '#92400E', border: '1px solid #F59E0B', fontSize: '0.6rem', fontWeight: 700, lineHeight: '1.4', whiteSpace: 'nowrap' }}
+                      >NOT IN TV</span>
                     )}
                   </div>
-                  {c._companyIsOverride ? (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); clearCompanyOverride(c.id); }}
-                      title="Clear the local override and follow HubSpot's company value again"
-                      style={{
-                        flexShrink: 0, width: 22, height: 22, padding: 0,
-                        border: '1px solid #FCA5A5', borderRadius: 4, background: '#fff',
-                        color: '#991B1B', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, fontFamily: 'inherit',
-                      }}
-                    >✕</button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); handleReassignCompany(c.id, c.company); }}
-                      disabled={!c.company || reassigningId === c.id}
-                      title={c.company
-                        ? `Re-fire the HubSpot primary-Company association for "${c.company}". Use this if a recent edit's text saved on HubSpot but the next sync reverts the company. If the reassign still fails, Prospect Tracker will keep your value as a local override.`
-                        : 'Set a company name first'}
-                      style={{
-                        flexShrink: 0, width: 22, height: 22, padding: 0,
-                        border: '1px solid var(--color-border)', borderRadius: 4,
-                        background: reassigningId === c.id ? '#FEF3C7' : '#fff',
-                        color: c.company ? '#475569' : '#CBD5E1',
-                        cursor: c.company && reassigningId !== c.id ? 'pointer' : 'not-allowed',
-                        fontSize: '0.85rem', lineHeight: 1, fontFamily: 'inherit',
-                      }}
-                    >
-                      {reassigningId === c.id ? '⋯' : '↻'}
-                    </button>
+                  {!c._companyIsPinned && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleReassignCompany(c.id, c.company); }}
+                    disabled={!c.company || reassigningId === c.id}
+                    title={c.company
+                      ? `Re-fire the HubSpot primary-Company association for "${c.company}". Use this if a recent edit's text saved on HubSpot but the next sync reverts the company. If the reassign still fails, Prospect Tracker will keep your value as a local override.`
+                      : 'Set a company name first'}
+                    style={{
+                      flexShrink: 0, width: 22, height: 22, padding: 0,
+                      border: '1px solid var(--color-border)', borderRadius: 4,
+                      background: reassigningId === c.id ? '#FEF3C7' : '#fff',
+                      color: c.company ? '#475569' : '#CBD5E1',
+                      cursor: c.company && reassigningId !== c.id ? 'pointer' : 'not-allowed',
+                      fontSize: '0.85rem', lineHeight: 1, fontFamily: 'inherit',
+                    }}
+                  >
+                    {reassigningId === c.id ? '⋯' : '↻'}
+                  </button>
                   )}
                 </div>
               ) },
@@ -3385,7 +3327,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
                 if (c.guessedCompany && c.guessedCompany.toLowerCase() !== String(c.company || '').toLowerCase()) {
                   return (
                     <span
-                      title={`Apply "${c.guessedCompany}" as the contact's Company in HubSpot`}
+                      title={`Set "${c.guessedCompany}" as the Prospect Tracker Company Name. HubSpot is not changed.`}
                       style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#854D0E', maxWidth: '100%' }}
                     >
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
@@ -3393,7 +3335,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
                       </span>
                       <button
                         type="button"
-                        title="Use this as Company (auto-applies to every other contact with the same suggestion)"
+                        title="Use this as the Prospect Tracker Company Name (auto-applies to every other contact with the same suggestion). HubSpot is not changed."
                         onClick={async (e) => { e.stopPropagation(); await handleAcceptGuessedCompany(c); }}
                         style={{ background: '#16A34A', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.62rem', padding: '0 5px', lineHeight: 1.4, fontFamily: 'inherit', fontWeight: 700, borderRadius: 999 }}
                       >✓</button>

@@ -1,49 +1,34 @@
-// A contact's two company names: the one Prospect Tracker files it under,
-// and the name(s) the same company goes by in HubSpot.
+// A contact's two company names, kept apart.
 //
-// The HubSpot names are the company record's own list (its popup's HubSpot
-// Names field, hubspotCompanyNames): one company can carry several, and all
-// of them are kept. A company with none recorded goes by its plain company
-// name in HubSpot, so that is what the contact shows.
-import { splitNameList } from './hubspotMapping.js';
+// HubSpot Company Name is what HubSpot itself has on the contact. Nothing
+// Prospect Tracker does to its own name for the company moves it.
+//
+// Prospect Tracker Company Name is the name the contact is filed under
+// here (HubSpot's, or the local pin laid over it). It is meant to equal a
+// Table View company name, so one that doesn't is flagged.
 
 const keyOf = (name) => String(name || '').trim().toLowerCase();
 
-// Find the company record a contact's company name belongs to: the record
-// called that, else the record that lists it as one of its HubSpot names.
-// A record's own name always wins over another record's HubSpot name.
-export function buildCompanyRecordLookup(prospects) {
-  const byName = new Map();
-  const byHubspotName = new Map();
-  for (const p of prospects || []) {
-    const k = keyOf(p?.company);
-    if (k && !byName.has(k)) byName.set(k, p);
-  }
-  for (const p of prospects || []) {
-    for (const n of splitNameList(p?.hubspotCompanyNames)) {
-      const k = keyOf(n);
-      if (k && !byHubspotName.has(k)) byHubspotName.set(k, p);
-    }
-  }
-  return (name) => {
-    const k = keyOf(name);
-    return k ? (byName.get(k) || byHubspotName.get(k) || null) : null;
-  };
+// The contact's company as HubSpot has it, tidied. `hubspotCompany` must be
+// the synced value from BEFORE the local Company pin is applied.
+export function hubspotCompanyNameOf(hubspotCompany) {
+  return String(hubspotCompany || '').trim();
 }
 
-// The HubSpot name(s) for a contact at `companyName`, given its company
-// record (or none): the record's recorded names, one spelling each, else
-// the company name on its own. Empty when there is no company at all.
-export function hubspotCompanyNamesFor(companyName, record) {
-  const seen = new Set();
-  const out = [];
-  for (const n of splitNameList(record?.hubspotCompanyNames)) {
-    const k = keyOf(n);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(n);
+// Every Table View company name, as a lookup set.
+export function tableViewNameKeys(prospects) {
+  const keys = new Set();
+  for (const p of prospects || []) {
+    const k = keyOf(p?.company);
+    if (k) keys.add(k);
   }
-  if (out.length) return out;
-  const own = String(companyName || '').trim();
-  return own ? [own] : [];
+  return keys;
+}
+
+// Whether `name` is exactly a Table View company name. Case and outer
+// spaces are forgiven; a different spelling ("Acme Corp" for "Acme
+// Corporation") is not, which is the point: the names are meant to be equal.
+export function isTableViewName(name, keys) {
+  const k = keyOf(name);
+  return !!k && keys.has(k);
 }
