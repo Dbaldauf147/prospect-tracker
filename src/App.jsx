@@ -970,7 +970,7 @@ function App() {
       <OtherTabBanner />
       <BackupHealthBanner user={user} />
       {isAdmin && <HubspotExportMailWatcher />}
-      {settingsLoaded && <BouncedEmailWatcher badEmails={settings.badEmails} updateSettings={updateSettings} />}
+      {settingsLoaded && <BouncedEmailWatcher badEmails={settings.badEmails} contactFailedEmails={settings.contactFailedEmails} updateSettings={updateSettings} />}
     </div>
   );
 }

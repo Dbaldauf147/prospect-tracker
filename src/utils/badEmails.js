@@ -60,6 +60,62 @@ export function clearBadEmailUpdate(email, nowIso = new Date().toISOString()) {
   };
 }
 
+// ---- Failed addresses a contact has moved off -------------------------------
+// A bad-email flag is keyed by the address, so replacing a bounced address on
+// the contact popup used to lose it: the new address is clean and nothing on
+// the contact said the old one had failed. The popup now files the old
+// address here when it saves the change:
+// settings.contactFailedEmails = { [contactId]: [{ email, at, reason,
+// replacedAt }] }, newest first, one entry per address.
+
+/** The failed addresses on record for a contact, newest first. */
+export function contactFailedEmails(map, contactId) {
+  const list = map && typeof map === 'object' ? map[String(contactId ?? '')] : null;
+  return Array.isArray(list) ? list.filter(x => x && x.email) : [];
+}
+
+/**
+ * updateSettings() function filing `email` as a failed address of the
+ * contact. `info` is its bad-email entry (for the bounce date and reason).
+ */
+export function recordFailedEmailUpdate(contactId, email, info, nowIso = new Date().toISOString()) {
+  return (settings) => {
+    const id = String(contactId ?? '');
+    const key = normEmail(email);
+    if (!id || !key) return null;
+    const all = settings?.contactFailedEmails && typeof settings.contactFailedEmails === 'object' ? settings.contactFailedEmails : {};
+    const cur = contactFailedEmails(all, id);
+    const entry = { email: key, at: info?.at || '', reason: String(info?.reason || '').slice(0, 200), replacedAt: nowIso };
+    const same = cur.find(x => normEmail(x.email) === key);
+    if (same && same.at === entry.at) return null;
+    return { contactFailedEmails: { ...all, [id]: [entry, ...cur.filter(x => normEmail(x.email) !== key)] } };
+  };
+}
+
+/** updateSettings() function taking one failed address off a contact. */
+export function removeFailedEmailUpdate(contactId, email) {
+  return (settings) => {
+    const id = String(contactId ?? '');
+    const key = normEmail(email);
+    const all = settings?.contactFailedEmails;
+    const cur = contactFailedEmails(all, id);
+    if (!cur.some(x => normEmail(x.email) === key)) return null;
+    const rest = cur.filter(x => normEmail(x.email) !== key);
+    const next = { ...all };
+    if (rest.length) next[id] = rest; else delete next[id];
+    return { contactFailedEmails: next };
+  };
+}
+
+/** The tooltip line for a failed address a contact has moved off. */
+export function failedEmailChipTitle(entry) {
+  if (!entry) return '';
+  const day = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); };
+  const bounced = day(entry.at);
+  const replaced = day(entry.replacedAt);
+  return `Bounced${bounced ? ` on ${bounced}` : ''}${entry.reason ? `: ${entry.reason}` : ''}.${replaced ? ` Replaced on ${replaced}.` : ''}`;
+}
+
 /** The tooltip line for a flagged address. */
 export function badEmailTitle(info) {
   if (!info) return '';
@@ -72,11 +128,15 @@ export function badEmailTitle(info) {
 // rather than thread settings.badEmails through all of them, App publishes
 // the map (and the Mark fixed save) here through BouncedEmailWatcher, and
 // useBadEmails() in components/badEmailsHook reads it.
-let published = { map: {}, clear: null };
+let published = { map: {}, clear: null, failedByContact: {}, recordFailed: null, removeFailed: null };
 const listeners = new Set();
-export function publishBadEmails(map, clear) {
-  if (published.map === map && published.clear === clear) return;
-  published = { map: map && typeof map === 'object' ? map : {}, clear: clear || null };
+export function publishBadEmails(map, clear, failed = {}) {
+  const failedByContact = failed.failedByContact && typeof failed.failedByContact === 'object' ? failed.failedByContact : published.failedByContact;
+  const recordFailed = failed.recordFailed || null;
+  const removeFailed = failed.removeFailed || null;
+  if (published.map === map && published.clear === clear && published.failedByContact === failedByContact
+    && published.recordFailed === recordFailed && published.removeFailed === removeFailed) return;
+  published = { map: map && typeof map === 'object' ? map : {}, clear: clear || null, failedByContact, recordFailed, removeFailed };
   for (const l of listeners) l();
 }
 export function subscribeBadEmails(l) { listeners.add(l); return () => listeners.delete(l); }

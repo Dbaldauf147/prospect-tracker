@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense, Fragment, isValidElement, cloneElement } from 'react';
 import { useBadEmails } from '../../hooks/useBadEmails';
-import { badEmailInfo, badEmailTitle } from '../../utils/badEmails';
+import { badEmailInfo, badEmailTitle, getPublishedBadEmails, contactFailedEmails, failedEmailChipTitle, normEmail } from '../../utils/badEmails';
 import { BfoHistoryTab } from './BfoHistoryTab';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { lsHas, settingsHaveLoaded } from '../../utils/tablePrefsSync';
@@ -1339,6 +1339,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // changes. Read live, so a scan landing while the popup is open shows.
   const badEmailsStore = useBadEmails();
   const badEmail = badEmailInfo(badEmailsStore.map, f.email);
+  // The address as HubSpot last had it, so a save that changes it away from
+  // a bounced one can file the old address under this contact's Failed
+  // Emails (see handleSave) instead of the flag vanishing with it.
+  const lastSavedEmailRef = useRef(contact.email || '');
+  const failedEmails = contactFailedEmails(badEmailsStore.failedByContact, contact.id || contact.vid)
+    .filter(x => normEmail(x.email) !== normEmail(f.email));
   // Clicking the "Bad email" badge lists the other addresses to try, by the
   // company's Email Domains tiers (utils/emailSuggestions).
   const [badEmailOpen, setBadEmailOpen] = useState(false);
@@ -2270,6 +2276,16 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       if (savedCid && onSaveOldEmails) {
         onSaveOldEmails(savedCid, oldEmailsValue);
       }
+      // The address was changed away from one that bounced: keep the old
+      // one on this contact as a failed email. Read the store live, since
+      // this runs from the autosave timer as well as from a click.
+      const prevEmail = lastSavedEmailRef.current;
+      if (savedCid && normEmail(prevEmail) && normEmail(prevEmail) !== normEmail(snap.f.email)) {
+        const store = getPublishedBadEmails();
+        const prevBad = badEmailInfo(store.map, prevEmail);
+        if (prevBad && store.recordFailed) store.recordFailed(savedCid, prevEmail, prevBad);
+      }
+      lastSavedEmailRef.current = snap.f.email;
       if (savedCid && onSaveOldCompany) {
         onSaveOldCompany(savedCid, oldCompanyValue);
       }
@@ -3139,6 +3155,29 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                 style={{ padding: '0.3rem 0.55rem', border: '1px solid #BFDBFE', borderRadius: 4, background: emailCopied ? '#DCFCE7' : '#EFF6FF', color: emailCopied ? '#166534' : '#1E40AF', fontSize: '0.68rem', fontWeight: 600, cursor: f.email ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
               >{emailCopied ? 'Copied!' : 'Copy'}</button>
             </div>
+            {failedEmails.length > 0 && (
+              <div data-failed-emails style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem', marginTop: '0.3rem' }}>
+                <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Failed emails</span>
+                {failedEmails.map(x => (
+                  <span
+                    key={x.email}
+                    title={failedEmailChipTitle(x)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0 6px', borderRadius: 999, background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B', fontSize: '0.66rem', lineHeight: 1.7 }}
+                  >
+                    <span style={{ textDecoration: 'line-through' }}>{x.email}</span>
+                    {badEmailsStore.removeFailed && (
+                      <button
+                        type="button"
+                        aria-label={`Remove ${x.email} from failed emails`}
+                        title="Remove from this contact's failed emails"
+                        onClick={() => badEmailsStore.removeFailed(contact.id || contact.vid, x.email)}
+                        style={{ padding: 0, border: 0, background: 'none', color: '#991B1B', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1, fontFamily: 'inherit' }}
+                      >&times;</button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
             {/* The bounced address's alternatives, opened from its badge:
                 one per tier of the company's Email Domains that can build
                 an address for this name, in tier order, then the usual

@@ -4,16 +4,23 @@
 // contact popup and the email campaigns show the flags.
 import { useEffect, useMemo, useRef } from 'react';
 import { scanForBounces, bounceScanDue } from '../utils/bounceScan';
-import { publishBadEmails, clearBadEmailUpdate } from '../utils/badEmails';
+import { publishBadEmails, clearBadEmailUpdate, recordFailedEmailUpdate, removeFailedEmailUpdate } from '../utils/badEmails';
 
 const POLL_MS = 30 * 60 * 1000;
 
-export function BouncedEmailWatcher({ badEmails, updateSettings }) {
+export function BouncedEmailWatcher({ badEmails, contactFailedEmails, updateSettings }) {
   const saveRef = useRef(updateSettings);
   useEffect(() => { saveRef.current = updateSettings; }, [updateSettings]);
   // Hand the flags (and Mark fixed) to the contact popup and the campaigns.
   const clear = useMemo(() => (email) => saveRef.current?.(clearBadEmailUpdate(email)), []);
-  useEffect(() => { publishBadEmails(badEmails, clear); }, [badEmails, clear]);
+  // ...and the failed addresses each contact has moved off, with the saves
+  // the popup makes when a bounced address is replaced or its chip removed.
+  const failedSaves = useMemo(() => ({
+    recordFailed: (contactId, email, info) => saveRef.current?.(recordFailedEmailUpdate(contactId, email, info)),
+    removeFailed: (contactId, email) => saveRef.current?.(removeFailedEmailUpdate(contactId, email)),
+  }), []);
+  const failedByContact = useMemo(() => contactFailedEmails || {}, [contactFailedEmails]);
+  useEffect(() => { publishBadEmails(badEmails, clear, { failedByContact, ...failedSaves }); }, [badEmails, clear, failedByContact, failedSaves]);
   useEffect(() => {
     let running = false;
     const tick = async () => {
