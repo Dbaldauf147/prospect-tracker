@@ -2888,7 +2888,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '0.4rem 0.7rem', borderBottom: '1px solid #E2E8F0', background: '#FAF5FF' }}>
                       <span
                         style={{ fontSize: '0.64rem', fontWeight: 700, color: '#6D28D9', textTransform: 'uppercase', letterSpacing: '0.03em' }}
-                        title="Click a preset to set every answer it saved on this contact at once. Tags the preset doesn't mention are left as they are."
+                        title="Click a preset to set every answer it saved on this contact at once. Tags the preset doesn't mention are set to No where nothing is answered yet, and left as they are otherwise."
                       >Presets</span>
                       {(tagPresets || []).map(p => (
                         <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #C4B5FD', borderRadius: 999, background: '#fff', overflow: 'hidden' }}>
@@ -15890,7 +15890,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             );
                           })}
                           <div style={{ fontSize: '0.68rem', color: '#64748B', lineHeight: 1.45 }}>
-                            Sets every answer the preset saved on each selected contact, the same as clicking it on one contact. Yes and Sold put the tag on in HubSpot; No, Not sure and Not sold take it off. Tags the preset doesn't mention are left alone.
+                            Sets every answer the preset saved on each selected contact, the same as clicking it on one contact. Yes and Sold put the tag on in HubSpot; No, Not sure and Not sold take it off. Tags the preset leaves out are set to No where the contact has no answer yet. Tags the preset doesn't mention are left alone.
                           </div>
                         </div>
                       )}

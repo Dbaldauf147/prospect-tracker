@@ -38,12 +38,17 @@ const pc = [
   { id: '2', dans_tags: 'ESG' },
   { dans_tags: 'no id' },
 ];
-const pp = planBulkTagPreset(pc, preset, { 2: { ESG: { answer: 'yes', status: '' }, Utilities: { answer: 'no', status: '' } } }, ['ESG', 'Utilities', 'Decision Maker']);
+// Contact 2 already has every row answered, so the preset has nothing to do
+// there; a tag the preset leaves out is only filled (No) where it is blank.
+const pp = planBulkTagPreset(pc, preset, { 2: { ESG: { answer: 'yes', status: '' }, Utilities: { answer: 'no', status: '' }, 'Decision Maker': { answer: 'unsure', status: '' } } }, ['ESG', 'Utilities', 'Decision Maker']);
 check('preset: tag list follows the answers, other tags kept',
   pp.writes, [{ cid: '1', properties: { dans_tags: 'Decision Maker;ESG' } }]);
 check('preset: answers recorded only where they change',
   pp.records, { 1: { ESG: { answer: 'yes', status: '' }, Utilities: { answer: 'no', status: '' } } });
 check('preset: already-answered and no-id contacts are skipped', pp.skipped, 2);
+check('preset: a tag it leaves out is filled No on a contact with no answer there',
+  planBulkTagPreset([{ id: '2', dans_tags: 'ESG' }], preset, {}, ['ESG', 'Utilities', 'Decision Maker']).records,
+  { 2: { ESG: { answer: 'yes', status: '' }, Utilities: { answer: 'no', status: '' }, 'Decision Maker': { answer: 'no', status: '' } } });
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll passed');

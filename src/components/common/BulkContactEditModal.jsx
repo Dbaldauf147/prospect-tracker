@@ -154,7 +154,7 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, updat
               <span style={{ fontWeight: 400, fontSize: '0.7rem', color: '#64748B' }}>
                 {preset
                   ? `${presetSummary(preset)}.`
-                  : 'Sets every tag answer the preset names on each selected contact and leaves their other tags alone.'}
+                  : 'Sets every tag answer the preset names on each selected contact. Their other tags are set to No where nothing is answered yet, and left alone otherwise.'}
               </span>
             </label>
           ))}
