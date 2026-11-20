@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { sortCoverageRows, nextCoverageSort } from '../../utils/coverageSort';
 import { failedEmailMap, failedEmailTitle } from '../../utils/failedEmailLookup';
+import { contactMovedOffEmail } from '../../utils/badEmails';
 import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { CONTACT_FIELD_COLUMNS, contactFieldColumn, cleanFieldColumnKeys } from '../../utils/contactFieldColumns';
 import { contactConnectedUpdate } from '../../utils/contactConnected';
@@ -1853,7 +1854,9 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     // and opening a made-up record for an address HubSpot already holds
     // would save the edit through a create-then-update detour.
     const raw = (flat.id != null ? rawById.get(String(flat.id)) : null)
-      || rawByEmail.get(String(flat.email || '').toLowerCase().trim());
+      || rawByEmail.get(String(flat.email || '').toLowerCase().trim())
+      // A failed address since replaced: the contact who had it.
+      || contactMovedOffEmail(flat.email, rawContacts);
     if (raw) { setEditingContact(raw); return; }
     const parts = String(flat.name || '').trim().split(/\s+/).filter(Boolean);
     setEditingContact({
