@@ -112,6 +112,17 @@ export function companyOverridesByIdUpdate(pins) {
 }
 
 /**
+ * The Company to show for one contact: its pin when it has one, else the
+ * synced `company`. The Edit HubSpot Contact popup opens on this, because
+ * several pages hand it the raw synced record, and without the pin the
+ * popup showed HubSpot's name again right after a pick had been saved.
+ */
+export function companyWithPin(contact, localFields) {
+  const pin = localFields?.[String(contact?.id ?? contact?.vid ?? '')]?._companyOverride;
+  return (typeof pin === 'string' && pin.trim()) ? pin : String(contact?.company || '');
+}
+
+/**
  * `contacts` with each one's Company pin laid over the synced `company`,
  * the way App.jsx and the contact pages read them. A list with no pins
  * comes back as it is.

@@ -19499,6 +19499,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           contactOldCompany={settings?.contactOldCompany || {}}
           onSaveOldCompany={saveContactOldCompany}
           onSaveCompanyOverride={saveCompanyOverride}
+          contactLocalFields={settings?.contactLocalFields || null}
           contactNicknames={settings?.contactNicknames || {}}
           onSaveNickname={saveContactNickname}
           contactTeamNames={settings?.contactTeamNames || {}}

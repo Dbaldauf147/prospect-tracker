@@ -111,7 +111,7 @@ import {
 } from '../../utils/scheduledOpps';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { OPPS2_EXTERNAL_UPDATE_EVENT } from '../../utils/serviceRenameRunner';
-import { companyOverrideUpdate, companyOverridesUpdate } from '../../utils/contactCompanyOverride';
+import { companyOverrideUpdate, companyOverridesUpdate, companyWithPin } from '../../utils/contactCompanyOverride';
 import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites, renameContactTargets } from '../../utils/companyRenameCascade';
@@ -1235,7 +1235,7 @@ function findPortfolioProspect(row, byName, byId) {
 // can share the exact same auto-fill behavior as this modal.
 
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactJobDescriptions = {}, onSaveJobDescription, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, onAddContactEvent = null, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [], companyContactExclusions = null, onRestoreToCompany = null, onAddCompetitorConsultant = null, competitorFirmOptions = [], isCompetitor = false, onMarkCompetitor = null }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactLocalFields = null, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactConnected = {}, onSaveConnected, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactJobDescriptions = {}, onSaveJobDescription, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, onAddContactEvent = null, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null, prospects = [], companyContactExclusions = null, onRestoreToCompany = null, onAddCompetitorConsultant = null, competitorFirmOptions = [], isCompetitor = false, onMarkCompetitor = null }) {
   const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -1280,7 +1280,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     phone: contact.phone || '',
     mobilephone: contact.mobilephone || contact.mobile_phone || '',
     jobtitle: contact.jobtitle || '',
-    company: contact.company || '',
+    // The pinned Prospect Tracker name when there is one (contactLocalFields),
+    // whatever copy of the contact the page opened the popup with.
+    company: companyWithPin(contact, contactLocalFields),
     hs_linkedin_url: contact.hs_linkedin_url || contact.linkedin_url || '',
     city: contact.city || '',
     state: contact.state || '',
@@ -2409,7 +2411,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // dismissing it puts the box back to mirroring, which by then shows the
   // same words.
   const [fullNameDraft, setFullNameDraft] = useState(null);
-  const companyCommittedRef = useRef(contact.company || '');
+  const companyCommittedRef = useRef(companyWithPin(contact, contactLocalFields));
   const [, setCompanyCommittedTick] = useState(0);
   function commitCompany(value) {
     if (companyCommittedRef.current === value) return;
