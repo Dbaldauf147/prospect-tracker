@@ -41,6 +41,13 @@ export function TagContactsPopup({ title, people, yesOnly = false, settings, upd
     };
   }), [people]);
 
+  // "Missing tags only": the contacts with a tag question still unanswered
+  // (anything short of the Tagged column's tick), which are the ones this
+  // popup is opened to work through.
+  const [missingOnly, setMissingOnly] = useState(false);
+  const missingCount = useMemo(() => rows.filter(r => !r.done).length, [rows]);
+  const shownRows = useMemo(() => (missingOnly ? rows.filter(r => !r.done) : rows), [rows, missingOnly]);
+
   const [selected, setSelected] = useState(() => new Set());
   const [filteredIds, setFilteredIds] = useState(null);
   const [editField, setEditField] = useState(null);
@@ -50,8 +57,8 @@ export function TagContactsPopup({ title, people, yesOnly = false, settings, upd
   // in a bulk write.
   const onScreen = useMemo(() => {
     const ids = filteredIds ? new Set(filteredIds) : null;
-    return ids ? rows.filter(r => ids.has(r.id)) : rows;
-  }, [rows, filteredIds]);
+    return ids ? shownRows.filter(r => ids.has(r.id)) : shownRows;
+  }, [shownRows, filteredIds]);
   const selectedRows = onScreen.filter(r => selected.has(r.id));
   // Nothing ticked means everybody on screen: "bulk edit them all" is the
   // common case here, and ticking 296 boxes first would be the long way.
@@ -111,7 +118,7 @@ export function TagContactsPopup({ title, people, yesOnly = false, settings, upd
     },
     {
       key: 'tags', label: 'Tags', defaultWidth: 360,
-      headerTitle: "The contact's HubSpot tags as they stand now. Bulk Edit can add to, remove from or replace them, and a tag preset turns them on and off to match its answers.",
+      headerTitle: "The contact's HubSpot tags as they stand now. Edit Tags can mark a tag Yes, No or Not sure, or add to, remove from or replace them, and a tag preset turns them on and off to match its answers.",
       getSortValue: r => r.tags.length,
       getFilterValue: r => r.tags.join('; '), exportValue: r => r.tags.join('; '),
       render: r => (r.tags.length ? (
@@ -173,7 +180,15 @@ export function TagContactsPopup({ title, people, yesOnly = false, settings, upd
           {notEditable > 0 && <span style={{ color: '#64748B' }}>({notEditable} without a HubSpot record will be skipped)</span>}
           {flash && <span style={{ color: '#15803D', fontWeight: 600 }}>{flash}</span>}
           <div style={{ flex: 1 }} />
-          <button type="button" disabled={cannot} onClick={() => setEditField('dans_tags')} style={barBtn(true, cannot)} title={`Add, remove or replace tags on ${who}`}>Edit Tags ({targetContacts.length})</button>
+          <label
+            data-missing-tags-only
+            title={yesOnly ? 'Show only the contacts not yet tagged Yes on every tag in question.' : 'Show only the contacts with a tag question still unanswered.'}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '0.25rem 0.6rem', borderRadius: 4, fontWeight: 600, cursor: 'pointer', border: `1px solid ${missingOnly ? '#B45309' : '#CBD5E1'}`, background: missingOnly ? '#FEF3C7' : '#fff', color: missingOnly ? '#92400E' : '#475569' }}
+          >
+            <input type="checkbox" checked={missingOnly} onChange={e => setMissingOnly(e.target.checked)} style={{ cursor: 'pointer' }} />
+            Missing tags only ({missingCount})
+          </label>
+          <button type="button" disabled={cannot} onClick={() => setEditField('dans_tags')} style={barBtn(true, cannot)} title={`Mark Yes, No or Not sure for a tag, or add, remove or replace tags, on ${who}`}>Edit Tags ({targetContacts.length})</button>
           <button type="button" disabled={cannot} onClick={() => setEditField(TAG_PRESET_FIELD)} style={barBtn(false, cannot)} title={`Apply a saved tag preset to ${who}`}>Apply Tag Preset</button>
           <button type="button" disabled={cannot} onClick={() => setEditField('jobtitle')} style={barBtn(false, cannot)} title={`Bulk edit title, city, country or notes on ${who}`}>Bulk Edit other fields</button>
           {selectedRows.length > 0 && (
@@ -185,10 +200,10 @@ export function TagContactsPopup({ title, people, yesOnly = false, settings, upd
             tableId="prospecting-tag-contacts"
             exportFileName={title}
             columns={columns}
-            rows={rows}
+            rows={shownRows}
             alwaysVisible={['__select__', 'name']}
             onFilteredRowsChange={onFilteredRowsChange}
-            emptyMessage="No contacts on this roster."
+            emptyMessage={missingOnly ? 'Nobody on this roster is missing tags.' : 'No contacts on this roster.'}
             settings={settings}
             updateSettings={updateSettings}
           />

@@ -13,7 +13,7 @@ import { apiFetch } from '../../utils/apiFetch';
 import { updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { TAG_OPTIONS, tagVocabulary } from '../../utils/contactTagReview';
 import { presetSummary } from '../../utils/tagPresets';
-import { BULK_CONTACT_FIELDS, TAG_PRESET_FIELD, planBulkContactEdit, planBulkTagPreset } from '../../utils/bulkContactEdit';
+import { BULK_CONTACT_FIELDS, TAG_PRESET_FIELD, TAG_ANSWER_MODES, TAG_MODE_HELP, planBulkContactEdit, planBulkTagPreset, planBulkTagAnswer } from '../../utils/bulkContactEdit';
 
 const label = { display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', color: '#334155', fontWeight: 600 };
 const input = { padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit' };
@@ -25,7 +25,9 @@ const btn = { padding: '0.35rem 0.85rem', borderRadius: 4, fontSize: '0.78rem', 
 export function BulkContactEditModal({ contacts, settings, updateSettings, updateSettingsPath = null, onClose, onDone, initialField = 'jobtitle', tagOptions = null }) {
   const [field, setField] = useState(initialField);
   const def = BULK_CONTACT_FIELDS.find(f => f.key === field) || BULK_CONTACT_FIELDS[0];
-  const [mode, setMode] = useState('replace');
+  // The field's own first way of editing (Mark Yes for Tags), so a popup
+  // opened straight on Tags never starts on Replace all.
+  const [mode, setMode] = useState(() => (BULK_CONTACT_FIELDS.find(f => f.key === initialField)?.modes?.[0]?.[0]) || 'replace');
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
@@ -49,6 +51,8 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, updat
   const presets = settings?.tagPresets || [];
   const isPreset = def.kind === 'preset';
   const preset = isPreset ? presets.find(p => p.id === value) : null;
+  // A Tags mode that records an answer as well as moving the HubSpot tag.
+  const isAnswer = def.kind === 'tags' && TAG_ANSWER_MODES.includes(mode);
   const blank = isPreset ? !preset : value.trim() === '';
   // Clearing a field on every selected contact is a Notes "Replace" only.
   const canApply = !busy && n > 0 && !(blank && !(def.kind === 'notes' && mode === 'replace'));
@@ -58,12 +62,14 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, updat
     setBusy(true);
     setError('');
     let plan;
-    if (isPreset) {
+    if (isPreset || isAnswer) {
       // The answers first, in one settings write (a path per contact where
       // the caller has one, so a burst can't drop any), then the HubSpot tag
-      // lists below, only where the preset changed them.
+      // lists below, only where the preset or the answer changed them.
       const review = settings?.contactTagReview || {};
-      plan = planBulkTagPreset(contacts, preset, review, tagOptions || tagVocabulary(tagChoices));
+      plan = isPreset
+        ? planBulkTagPreset(contacts, preset, review, tagOptions || tagVocabulary(tagChoices))
+        : planBulkTagAnswer(contacts, mode, value, review);
       if (Object.keys(plan.records).length > 0) {
         if (updateSettingsPath) {
           updateSettingsPath(Object.fromEntries(Object.entries(plan.records).map(([cid, map]) => [`contactTagReview.${cid}`, map])));
@@ -112,6 +118,11 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, updat
       onDone?.(`"${preset.name}" applied to ${n - plan.skipped} of ${n}${plan.skipped ? ` (${plan.skipped} already matched it)` : ''}.`);
       return;
     }
+    if (isAnswer) {
+      const answer = { yes: 'Yes', no: 'No', unsure: 'Not sure' }[mode];
+      onDone?.(`Marked ${answer} on ${n - plan.skipped} of ${n}${plan.skipped ? ` (${plan.skipped} already had it)` : ''}.`);
+      return;
+    }
     onDone?.(`${def.label} updated on ${done} of ${n}${plan.skipped ? ` (${plan.skipped} already had it)` : ''}.`);
   };
 
@@ -123,7 +134,7 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, updat
       <div role="dialog" aria-label="Bulk edit contacts" style={{ width: 440, maxWidth: '92vw', background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)', overflow: 'hidden' }}>
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0' }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>Bulk Edit {n} contact{n === 1 ? '' : 's'}</div>
-          <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Writes to HubSpot for every selected contact. Notes are yours only and skip HubSpot. A tag preset saves its answers and updates the HubSpot tags to match.</div>
+          <div style={{ fontSize: '0.7rem', color: '#64748B' }}>Writes to HubSpot for every selected contact. Notes are yours only and skip HubSpot. A tag answer (Yes, No, Not sure) or a tag preset saves the answers and updates the HubSpot tags to match.</div>
         </div>
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
           <label style={label}>
@@ -138,6 +149,9 @@ export function BulkContactEditModal({ contacts, settings, updateSettings, updat
               <select value={mode} onChange={e => setMode(e.target.value)} disabled={busy} style={input}>
                 {def.modes.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
+              {def.kind === 'tags' && TAG_MODE_HELP[mode] && (
+                <span data-tag-mode-help style={{ fontWeight: 400, fontSize: '0.7rem', color: mode === 'replace' ? '#B45309' : '#64748B' }}>{TAG_MODE_HELP[mode]}</span>
+              )}
             </label>
           )}
           {isPreset && (presets.length === 0 ? (
