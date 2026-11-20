@@ -7,7 +7,7 @@
 //
 // planBulkContactEdit is pure: it says what to write for each contact, and
 // the caller sends it (api/hubspot update-contact) and patches the cache.
-import { planTagEdit } from './contactTagReview.js';
+import { planTagEdit, findTagRecord, tagRecordKeyFor, recordForVerdict, recordKeepsTag, sameTagRecord } from './contactTagReview.js';
 import { applyTagPresetToContact } from './tagPresets.js';
 
 // The Field choice that applies a saved tag preset (settings.tagPresets).
@@ -17,10 +17,30 @@ export const BULK_CONTACT_FIELDS = [
   { key: 'jobtitle', label: 'Title', kind: 'text' },
   { key: 'city', label: 'City', kind: 'text' },
   { key: 'country', label: 'Country', kind: 'text' },
-  { key: 'dans_tags', label: 'Tags', kind: 'tags', modes: [['add', 'Add'], ['remove', 'Remove'], ['replace', 'Replace all']] },
+  { key: 'dans_tags', label: 'Tags', kind: 'tags', modes: [
+    ['yes', 'Mark Yes (adds the tag)'],
+    ['no', 'Mark No (removes the tag)'],
+    ['unsure', 'Mark Not sure (removes the tag)'],
+    ['add', 'Add the tag only'],
+    ['remove', 'Remove the tag only'],
+    ['replace', 'Replace all tags'],
+  ] },
   { key: 'notes', label: 'Notes (per-user)', kind: 'notes', modes: [['append', 'Append'], ['replace', 'Replace']] },
   { key: TAG_PRESET_FIELD, label: 'Tag preset', kind: 'preset' },
 ];
+
+// The Tags modes that record an answer (the contact popup's Yes / No / Not
+// sure) as well as moving the HubSpot tag, and what each one does, for the
+// line under the How box.
+export const TAG_ANSWER_MODES = ['yes', 'no', 'unsure'];
+export const TAG_MODE_HELP = {
+  yes: 'Records Yes for each tag on every selected contact and puts the tag on in HubSpot.',
+  no: 'Records No for each tag on every selected contact and takes the tag off in HubSpot.',
+  unsure: 'Records Not sure for each tag on every selected contact and takes the tag off in HubSpot.',
+  add: 'Puts the tag on in HubSpot. No answer is recorded, so the tag table reads it as Yes.',
+  remove: 'Takes the tag off in HubSpot. No answer is recorded, so the tag stays unanswered.',
+  replace: 'Replaces every tag each selected contact has with the ones typed here. Their other tags are removed.',
+};
 
 export const contactIdOf = (c) => String(c?.id || c?.vid || '');
 const tagsOf = (c) => c?.dans_tags ?? c?.dan_s_tags ?? c?.dans_tag;
@@ -84,6 +104,49 @@ export function planBulkTagPreset(contacts, preset, review = {}, tags = null) {
     if (out.recordsChanged) records[cid] = out.records;
     if (out.tagsChanged) writes.push({ cid, properties: { dans_tags: out.dansTags } });
     if (!out.recordsChanged && !out.tagsChanged) skipped += 1;
+  }
+  return { records, writes, skipped };
+}
+
+/**
+ * One answer (yes / no / unsure) recorded for the typed tags on every
+ * selected contact, the way the company popup's Bulk Edit does it. The
+ * answer goes on top of whatever record is there (recordForVerdict), and
+ * the HubSpot tag follows the record that leaves behind: on for a Yes, off
+ * for a No or a Not sure, and still off for a Yes over a Not sold hold-off.
+ * Returns the same shape as planBulkTagPreset:
+ *   { records: { cid: recordMap }, writes: [{ cid, properties }], skipped }
+ */
+export function planBulkTagAnswer(contacts, verdict, value, review = {}) {
+  const records = {};
+  const writes = [];
+  let skipped = 0;
+  const tags = String(value ?? '').split(';').map(t => t.trim()).filter(Boolean);
+  for (const c of contacts || []) {
+    const cid = contactIdOf(c);
+    if (!cid || tags.length === 0) { skipped += 1; continue; }
+    const map = { ...(review?.[cid] || {}) };
+    let recordsChanged = false;
+    const on = [];
+    const off = [];
+    for (const tag of tags) {
+      const stored = findTagRecord(map, tag);
+      const record = recordForVerdict(stored, verdict);
+      (recordKeepsTag(record) ? on : off).push(tag);
+      if (sameTagRecord(stored, record)) continue;
+      map[tagRecordKeyFor(map, tag)] = record;
+      recordsChanged = true;
+    }
+    const before = String(tagsOf(c) ?? '');
+    let cur = before;
+    for (const [mode, list] of [['remove', off], ['add', on]]) {
+      if (list.length === 0) continue;
+      const step = planTagEdit(mode, list, cur);
+      if (step.action === 'write') cur = step.tags;
+    }
+    if (recordsChanged) records[cid] = map;
+    if (cur !== before) writes.push({ cid, properties: { dans_tags: cur } });
+    if (!recordsChanged && cur === before) skipped += 1;
   }
   return { records, writes, skipped };
 }

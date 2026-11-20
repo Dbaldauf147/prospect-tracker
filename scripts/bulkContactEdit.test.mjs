@@ -1,6 +1,6 @@
 // Assertion tests for the shared contact Bulk Edit plan. Plain Node:
 //   node scripts/bulkContactEdit.test.mjs
-import { planBulkContactEdit, planBulkTagPreset } from '../src/utils/bulkContactEdit.js';
+import { planBulkContactEdit, planBulkTagPreset, planBulkTagAnswer, BULK_CONTACT_FIELDS } from '../src/utils/bulkContactEdit.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -49,6 +49,43 @@ check('preset: already-answered and no-id contacts are skipped', pp.skipped, 2);
 check('preset: a tag it leaves out is filled No on a contact with no answer there',
   planBulkTagPreset([{ id: '2', dans_tags: 'ESG' }], preset, {}, ['ESG', 'Utilities', 'Decision Maker']).records,
   { 2: { ESG: { answer: 'yes', status: '' }, Utilities: { answer: 'no', status: '' }, 'Decision Maker': { answer: 'no', status: '' } } });
+
+// Tag answers: Mark Yes / No / Not sure on a tag for every selected contact.
+{
+  const ac = [
+    { id: '1', dans_tags: 'Decision Maker' },
+    { id: '2', dans_tags: 'ESG;Decision Maker' },
+    { id: '3', dans_tags: 'ESG' },
+    { dans_tags: 'no id' },
+  ];
+  const yes = planBulkTagAnswer(ac, 'yes', 'ESG', { 3: { ESG: { answer: 'yes', status: '' } } });
+  check('answer yes: the tag goes on where it is missing',
+    yes.writes, [{ cid: '1', properties: { dans_tags: 'Decision Maker;ESG' } }]);
+  check('answer yes: recorded where it was not already',
+    yes.records, { 1: { ESG: { answer: 'yes', status: '' } }, 2: { ESG: { answer: 'yes', status: '' } } });
+  check('answer yes: already-Yes and no-id contacts are skipped', yes.skipped, 2);
+
+  const no = planBulkTagAnswer(ac.slice(0, 2), 'no', 'esg', {});
+  check('answer no: the tag comes off where it is on, other tags kept',
+    no.writes, [{ cid: '2', properties: { dans_tags: 'Decision Maker' } }]);
+  check('answer no: recorded on everyone, including those who never had the tag',
+    Object.keys(no.records), ['1', '2']);
+
+  const unsure = planBulkTagAnswer([ac[2]], 'unsure', 'ESG', {});
+  check('answer not sure: recorded and the tag comes off',
+    [unsure.records, unsure.writes], [{ 3: { ESG: { answer: 'unsure', status: '' } } }, [{ cid: '3', properties: { dans_tags: '' } }]]);
+
+  const held = planBulkTagAnswer([{ id: '9', dans_tags: '' }], 'yes', 'ESG', { 9: { ESG: { answer: '', status: 'notsold' } } });
+  check('answer yes over a Not sold hold-off: Yes is recorded, the tag stays off',
+    [held.records[9].ESG, held.writes], [{ answer: 'yes', status: 'notsold' }, []]);
+
+  const two = planBulkTagAnswer([ac[0]], 'yes', 'ESG; Utilities', {});
+  check('answer: several tags at once',
+    [two.writes[0].properties.dans_tags, Object.keys(two.records[1])], ['Decision Maker;ESG;Utilities', ['ESG', 'Utilities']]);
+  check('answer: nothing typed changes nothing', planBulkTagAnswer(ac, 'yes', ' ', {}).writes, []);
+  check('tags field opens on Mark Yes, not Replace all',
+    BULK_CONTACT_FIELDS.find(f => f.key === 'dans_tags').modes[0][0], 'yes');
+}
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll passed');
