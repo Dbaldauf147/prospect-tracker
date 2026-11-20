@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { sortCoverageRows, nextCoverageSort } from '../../utils/coverageSort';
 import { companyContactRestoreUpdate } from '../../utils/companyContactExclusions';
 import { CONTACT_FIELD_COLUMNS, contactFieldColumn, cleanFieldColumnKeys } from '../../utils/contactFieldColumns';
 import { contactConnectedUpdate } from '../../utils/contactConnected';
@@ -656,6 +657,10 @@ function AddFieldColumn({ fieldKeys, onChangeFieldKeys }) {
 }
 
 function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFor = null, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null, onOpenContact = null }) {
+  // Click a header to sort the rows by it: A to Z, then Z to A, then back
+  // to the order the recipients were added in. It only re-orders this
+  // table, not the To line or the order the emails go out in.
+  const [sort, setSort] = useState(null); // { key, dir: 1 | -1 }
   const fields = fieldKeys.map(contactFieldColumn).filter(Boolean);
   const fieldValue = (c, f) => {
     const raw = rawOf ? rawOf(c) : null;
@@ -690,11 +695,39 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
   const cellStyle = { padding: '0.3rem 0.5rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.74rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 };
   const headStyle = { ...cellStyle, position: 'sticky', top: 0, background: '#F8FAFC', fontWeight: 700, color: '#475569', borderBottom: '1px solid var(--color-border)', textAlign: 'left', zIndex: 1 };
 
+  const sortValue = (c, key) => {
+    if (key === 'recipient') return c.name || c.email || '';
+    if (key === 'category') return (categorize ? categorize(c) || [] : []).join(', ');
+    if (key.startsWith('tok:')) return String(resolve(c, key.slice(4)) || '').trim();
+    const f = fields.find(x => `field:${x.key}` === key);
+    return f ? String(fieldValue(c, f) || '') : '';
+  };
+  const rows = sortCoverageRows(contacts, sort, sortValue);
+  const toggleSort = (key) => setSort(prev => nextCoverageSort(prev, key));
+  // A header's sort handle: the label itself, with an arrow once it is the
+  // sorted column.
+  const sortHead = (key, label) => {
+    const on = sort?.key === key;
+    return (
+      <button
+        type="button"
+        data-sort-key={key}
+        onClick={() => toggleSort(key)}
+        aria-label={`Sort by ${label}${on ? (sort.dir === 1 ? ', currently A to Z' : ', currently Z to A') : ''}`}
+        title={on ? (sort.dir === 1 ? 'Sorted A to Z. Click for Z to A.' : 'Sorted Z to A. Click to go back to the original order.') : `Sort by ${label}`}
+        style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', fontWeight: 700, color: on ? '#1D4ED8' : 'inherit', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+      >
+        <span>{label}</span>
+        <span aria-hidden="true" style={{ fontSize: '0.6rem', color: on ? '#1D4ED8' : '#CBD5E1' }}>{on ? (sort.dir === 1 ? '▲' : '▼') : '↕'}</span>
+      </button>
+    );
+  };
+
   return (
     <>
       {titleRow(`Variable Coverage (${contacts.length})`)}
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
-        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / DM at Tier 1-3), and each column after it is a variable used in the draft. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
+        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / DM at Tier 1-3), and each column after it is a variable used in the draft. Click a column heading to sort by it. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
       </p>
       <div style={{
         // Grow with the viewport - leaves enough room for the page
@@ -711,10 +744,10 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
         <table style={{ borderCollapse: 'collapse', fontSize: '0.74rem', tableLayout: 'auto', width: '100%' }}>
           <thead>
             <tr>
-              <th style={headStyle}>Recipient</th>
+              <th style={headStyle} aria-sort={sort?.key === 'recipient' ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined}>{sortHead('recipient', 'Recipient')}</th>
               {categorize && (
                 <th style={headStyle} title="Which contact rosters this recipient is on - the same Key / Active / Client / DM at Tier 1-3 gates the Contacts pages run">
-                  Category
+                  {sortHead('category', 'Category')}
                 </th>
               )}
               {usedTokens.map(v => {
@@ -723,7 +756,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
                 return (
                   <th key={v.token} style={headStyle} title={`${v.label} · ${cov.filled}/${cov.total} populated`}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-                      <span>{v.label}</span>
+                      {sortHead(`tok:${v.token}`, v.label)}
                       <span style={{ fontSize: '0.62rem', fontWeight: 600, color: partial ? '#B91C1C' : '#16A34A' }}>
                         {cov.filled}/{cov.total}
                       </span>
@@ -737,7 +770,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
                   <th key={`field:${f.key}`} style={{ ...headStyle, background: '#F1F5F9' }} title={`${f.label} (contact field) · ${filled}/${contacts.length} filled`}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-                        <span>{f.label}</span>
+                        {sortHead(`field:${f.key}`, f.label)}
                         <span style={{ fontSize: '0.62rem', fontWeight: 600, color: filled < contacts.length ? '#B91C1C' : '#16A34A' }}>
                           {filled}/{contacts.length}
                         </span>
@@ -758,7 +791,7 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
             </tr>
           </thead>
           <tbody>
-            {contacts.map(c => (
+            {rows.map(c => (
               <tr key={c.id || c.email}>
                 <td style={{ ...cellStyle, fontWeight: 600, color: '#1E293B' }} title={`${c.name || ''}${c.email ? ` · ${c.email}` : ''}${c.company ? ` · ${c.company}` : ''}`}>
                   {onOpenContact ? (
