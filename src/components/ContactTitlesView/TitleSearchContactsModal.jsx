@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
+import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { applyCompanyOverride } from '../../utils/contactRosters';
+import { companyPopupTarget } from '../../utils/companyLookup';
 import styles from './ContactTitlesView.module.css';
 
 // The full-page list behind a search's Contacts button on the Titles page:
@@ -17,20 +21,61 @@ const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 const nameOf = (c) => [c?.firstname, c?.lastname].map(clean).filter(Boolean).join(' ') || clean(c?.email) || 'Unnamed contact';
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
-export function TitleSearchContactsModal({ entry, result, settings, updateSettings, onClose }) {
-  const [showExcluded, setShowExcluded] = useState(false);
+const lower = (s) => clean(s).toLowerCase();
 
+export function TitleSearchContactsModal({ entry, result, settings, updateSettings, prospects, allContacts, onSelectProspect, onClose }) {
+  const [showExcluded, setShowExcluded] = useState(false);
+  // The contact popup, opened by clicking a name. Holds the raw HubSpot
+  // record, which is what the popup edits.
+  const [editingContact, setEditingContact] = useState(null);
+  const contactEditSettings = useContactEditSettings({ settings, updateSettings });
+
+  // Escape closes the list, but not from under an open contact popup.
   useEffect(() => {
+    if (editingContact) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, editingContact]);
+
+  // Vertical and Sub Vertical live on the company (the company popup), so
+  // they are joined on by the contact's company name, whole-name match as
+  // utils/companyLookup does it.
+  const prospectByCompany = useMemo(() => {
+    const map = new Map();
+    for (const p of prospects || []) {
+      const key = lower(p?.company);
+      if (key && !map.has(key)) map.set(key, p);
+    }
+    return map;
+  }, [prospects]);
+
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setEditingContact(null);
+    onSelectProspect(target);
+  }, [prospects, onSelectProspect]);
+  const editCompanyKey = lower(editingContact?.company);
+  const editCompanyContacts = useMemo(
+    () => (editCompanyKey ? (allContacts || []).filter(c => lower(c?.company) === editCompanyKey) : []),
+    [editCompanyKey, allContacts],
+  );
+  const editEmailDomains = useMemo(() => {
+    const p = editCompanyKey ? prospectByCompany.get(editCompanyKey) : null;
+    return p?.emailDomain ? String(p.emailDomain).split(/[\n;,]+/).map(x => x.trim()).filter(Boolean) : [];
+  }, [editCompanyKey, prospectByCompany]);
+  const companyNames = useMemo(() => (prospects || []).map(p => p.company).filter(Boolean), [prospects]);
 
   const localFields = settings?.contactLocalFields;
   const rows = useMemo(() => {
     const toRow = (m, status) => {
       const c = applyCompanyOverride(m.contact, localFields);
+      const account = prospectByCompany.get(lower(c?.company));
       return {
+        contact: c,
+        vertical: clean(account?.vertical),
+        subVertical: clean(account?.subVertical),
         id: String(c?.id || c?.vid || c?.email || `${nameOf(c)}|${m.title}`),
         status,
         name: nameOf(c),
@@ -48,7 +93,7 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
     const list = result.matched.map(m => toRow(m, 'Included'));
     if (showExcluded) list.push(...result.excluded.map(m => toRow(m, 'Left out by Not')));
     return list;
-  }, [result, showExcluded, localFields]);
+  }, [result, showExcluded, localFields, prospectByCompany]);
 
   const columns = useMemo(() => [
     ...(showExcluded ? [{
@@ -57,9 +102,21 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
         <span className={r.status === 'Included' ? styles.statusIn : styles.statusOut}>{r.status}</span>
       ),
     }] : []),
-    { key: 'name', label: 'Name', defaultWidth: 180 },
+    {
+      key: 'name', label: 'Name', defaultWidth: 180,
+      render: (r) => (
+        <button
+          type="button"
+          className={styles.contactLink}
+          onClick={() => setEditingContact(r.contact)}
+          title={`Open ${r.name}`}
+        >{r.name}</button>
+      ),
+    },
     { key: 'jobtitle', label: 'Job Title', defaultWidth: 300 },
     { key: 'company', label: 'Company', defaultWidth: 200 },
+    { key: 'vertical', label: 'Vertical', defaultWidth: 150 },
+    { key: 'subVertical', label: 'Sub Vertical', defaultWidth: 160 },
     { key: 'hits', label: 'Matched Terms', defaultWidth: 180 },
     ...(showExcluded ? [{ key: 'notHits', label: 'Not Terms Hit', defaultWidth: 160 }] : []),
     { key: 'email', label: 'Email', defaultWidth: 220 },
@@ -120,6 +177,25 @@ export function TitleSearchContactsModal({ entry, result, settings, updateSettin
           )}
         </div>
       </div>
+      {editingContact && createPortal(
+        // Clicks inside the popup must not reach the list's overlay, which
+        // closes the list: a portal still bubbles through its React parent.
+        <div onClick={(e) => e.stopPropagation()}>
+          <ContactEditModal
+            prospects={prospects || []}
+            contact={editingContact}
+            onSave={(_updated, opts) => { if (!opts?.silent) setEditingContact(null); }}
+            onClose={() => setEditingContact(null)}
+            onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
+            {...contactEditSettings}
+            companyContacts={editCompanyContacts}
+            allContacts={allContacts || []}
+            emailDomains={editEmailDomains}
+            companyNames={companyNames}
+          />
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
