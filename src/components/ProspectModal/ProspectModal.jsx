@@ -144,6 +144,7 @@ import { coverageFromSettings, salespeopleForVertical, isCoverageVertical } from
 import { buildTargetTierResolver, tierMismatch, targetVerticalFor, targetVerticalAgrees, withTargetVerticalEquivalent } from '../../utils/targetTier';
 import { normalizeTierText } from '../../utils/tierText';
 import { targetAccountRows, suggestTargetMatches, mappedTargetNames, targetRowFlags } from '../../utils/targetAccountMatch';
+import { VerticalConflictPopup } from './VerticalConflictPopup';
 import {
   buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict,
   canonicalCdmOption, targetCdmApplyHint,
@@ -6505,6 +6506,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const liveVerticalSuggestion = verticalSuggestion
     && verticalSuggestion.company === String(fields.company || '').trim() ? verticalSuggestion : null;
 
+  // The card's Vertical against the Targets list's, settled in one popup
+  // (VerticalConflictPopup) rather than by a row of small buttons. Holds
+  // the list's side of the disagreement while the popup is open:
+  // { listVertical, apply, source, onList }.
+  const [verticalConflict, setVerticalConflict] = useState(null);
+  const resolveVerticalConflict = (choice) => {
+    const open = verticalConflict;
+    setVerticalConflict(null);
+    if (!open || !choice) return;
+    if (choice.id === 'targets') set('vertical', open.apply || open.listVertical);
+    else if (choice.id === 'card') keepCardVertical();
+    else if (choice.id === 'same') mapTargetVertical(open.listVertical, fields.vertical);
+    else if (choice.id === 'suggested') { set('vertical', choice.value); setVerticalSuggestion(null); }
+  };
+
   // Company name (lowercased) → the tracker record's status, so the
   // Portfolio Companies Status column can show where a mapped company
   // already stands without the user re-entering it. First record wins on
@@ -10881,8 +10897,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       {flag && (
                         <button
                           type="button"
-                          onClick={() => (key === 'cdm' ? applyTargetCdm(flag.apply) : set(key, flag.apply))}
-                          title={`This card has ${flag.card || 'nothing'} for ${label}. Click to set it to ${flag.apply}, as the Targets list has it.`}
+                          onClick={() => {
+                            if (key === 'cdm') applyTargetCdm(flag.apply);
+                            // A Vertical the card already has is a choice, not a fill: ask.
+                            else if (key === 'vertical' && fields.vertical) setVerticalConflict({ listVertical: flag.row, apply: flag.apply, source: row.name });
+                            else set(key, flag.apply);
+                          }}
+                          title={key === 'vertical' && fields.vertical
+                            ? `This card has ${flag.card} for Vertical and the Targets list has ${flag.row}. Click to choose which one to use.`
+                            : `This card has ${flag.card || 'nothing'} for ${label}. Click to set it to ${flag.apply}, as the Targets list has it.`}
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '0 0.3rem', borderRadius: 4, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
                         >
                           <span aria-hidden="true">⚠</span>{`card: ${flag.card || 'none'}`}
@@ -10916,18 +10939,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             {flags.vertical && !verticalKept && fields.vertical && (
                               <button
                                 type="button"
-                                onClick={keepCardVertical}
-                                title={`Keep ${fields.vertical} as this company's Vertical, whatever the Targets list says. The warning comes back if the Vertical changes.`}
-                                style={{ marginLeft: -8, marginRight: 12, padding: '0 0.35rem', borderRadius: 4, background: '#fff', border: '1px solid #CBD5E1', color: '#334155', fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
-                              >Keep {fields.vertical}</button>
-                            )}
-                            {flags.vertical && !verticalKept && fields.vertical && (
-                              <button
-                                type="button"
-                                onClick={() => mapTargetVertical(flags.vertical.row, fields.vertical)}
-                                title={`Count the Targets list's ${flags.vertical.row} as ${fields.vertical} from now on, for every company, so this stops showing as a mismatch.`}
-                                style={{ ...mapBtnStyle, marginLeft: -6, marginRight: 12 }}
-                              >Map {flags.vertical.row} = {fields.vertical}</button>
+                                data-vertical-choose
+                                onClick={() => setVerticalConflict({ listVertical: flags.vertical.row, apply: flags.vertical.apply, source: row.name })}
+                                title={`The Targets list has ${flags.vertical.row}, this card has ${fields.vertical}. Open the choices side by side.`}
+                                style={{ ...mapBtnStyle, marginLeft: -8, marginRight: 12 }}
+                              >Choose...</button>
                             )}
                             {verticalMapped && (
                               <span style={{ marginLeft: -8, marginRight: 12, color: '#64748B', fontSize: '0.62rem' }}>
@@ -11102,27 +11118,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         {` (from ${targetsVertical.name}${targetsVertical.onList ? '' : ', not on your Dropdowns › Vertical list'})`}
                       </span>
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => set('vertical', targetsVertical.vertical)}
-                      title={`Set Vertical to ${targetsVertical.vertical}, from the Target Accounts row this company is mapped to (${targetsVertical.name})`}
-                      style={{ padding: '0 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#EFF6FF', color: '#1E40AF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
-                    >Import</button>
-                    {fields.vertical && (
+                    {fields.vertical ? (
                       <button
                         type="button"
-                        onClick={keepCardVertical}
-                        title={`Keep ${fields.vertical} as this company's Vertical and stop suggesting ${targetsVertical.vertical}. The suggestion comes back if the Vertical changes.`}
-                        style={{ padding: '0 0.4rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#334155', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
-                      >Keep mine</button>
-                    )}
-                    {fields.vertical && (
+                        data-vertical-choose
+                        onClick={() => setVerticalConflict({ listVertical: targetsVertical.vertical, apply: targetsVertical.vertical, source: targetsVertical.name, onList: !!targetsVertical.onList })}
+                        title={`The Targets list has ${targetsVertical.vertical}, this card has ${fields.vertical}. Open the choices side by side.`}
+                        style={{ padding: '0 0.5rem', border: '1px solid #F59E0B', borderRadius: 4, background: '#FFFBEB', color: '#92400E', fontSize: '0.66rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >Choose...</button>
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => mapTargetVertical(targetsVertical.vertical, fields.vertical)}
-                        title={`Count the Targets list's ${targetsVertical.vertical} as ${fields.vertical} from now on, for every company.`}
-                        style={{ ...mapBtnStyle, fontSize: '0.66rem' }}
-                      >Map to {fields.vertical}</button>
+                        onClick={() => set('vertical', targetsVertical.vertical)}
+                        title={`Set Vertical to ${targetsVertical.vertical}, from the Target Accounts row this company is mapped to (${targetsVertical.name})`}
+                        style={{ padding: '0 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#EFF6FF', color: '#1E40AF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                      >Import</button>
                     )}
                   </div>
                 )}
@@ -11161,6 +11171,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 )}
               </div>
             </div>
+
+            {verticalConflict && (
+              <VerticalConflictPopup
+                conflict={{ ...verticalConflict, company: String(fields.company || '').trim(), cardVertical: fields.vertical }}
+                suggestion={liveVerticalSuggestion && !liveVerticalSuggestion.loading ? liveVerticalSuggestion : null}
+                suggesting={!!liveVerticalSuggestion?.loading}
+                onSuggest={suggestVertical}
+                onChoose={resolveVerticalConflict}
+                onClose={() => setVerticalConflict(null)}
+              />
+            )}
 
             <SubVerticalField
               vertical={fields.vertical}
