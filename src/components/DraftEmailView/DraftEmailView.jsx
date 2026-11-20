@@ -656,11 +656,15 @@ function AddFieldColumn({ fieldKeys, onChangeFieldKeys }) {
   );
 }
 
-function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFor = null, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null, onOpenContact = null }) {
+function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFor = null, isEditable, onEditField, categorize, fieldKeys = [], onChangeFieldKeys = null, rawOf = null, fieldCtx = null, sentDateOf = null, onOpenContact = null }) {
   // Click a header to sort the rows by it: A to Z, then Z to A, then back
   // to the order the recipients were added in. It only re-orders this
   // table, not the To line or the order the emails go out in.
   const [sort, setSort] = useState(null); // { key, dir: 1 | -1 }
+  // Which recipients are listed: everyone, only those this email has
+  // already gone to, or only those it hasn't. Like the sort, it only
+  // changes what this table shows.
+  const [reach, setReach] = useState('all'); // 'all' | 'reached' | 'remaining'
   const fields = fieldKeys.map(contactFieldColumn).filter(Boolean);
   const fieldValue = (c, f) => {
     const raw = rawOf ? rawOf(c) : null;
@@ -695,14 +699,25 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
   const cellStyle = { padding: '0.3rem 0.5rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.74rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 };
   const headStyle = { ...cellStyle, position: 'sticky', top: 0, background: '#F8FAFC', fontWeight: 700, color: '#475569', borderBottom: '1px solid var(--color-border)', textAlign: 'left', zIndex: 1 };
 
+  const sentOf = (c) => (sentDateOf ? String(sentDateOf(c) || '') : '');
+  const reachedCount = sentDateOf ? contacts.filter(c => sentOf(c)).length : 0;
+  const listed = !sentDateOf || reach === 'all'
+    ? contacts
+    : contacts.filter(c => (reach === 'reached') === !!sentOf(c));
   const sortValue = (c, key) => {
     if (key === 'recipient') return c.name || c.email || '';
+    if (key === 'reached') {
+      const d = sentOf(c);
+      if (!d) return '';
+      const ms = Date.parse(d);
+      return Number.isNaN(ms) ? '0' : String(ms);
+    }
     if (key === 'category') return (categorize ? categorize(c) || [] : []).join(', ');
     if (key.startsWith('tok:')) return String(resolve(c, key.slice(4)) || '').trim();
     const f = fields.find(x => `field:${x.key}` === key);
     return f ? String(fieldValue(c, f) || '') : '';
   };
-  const rows = sortCoverageRows(contacts, sort, sortValue);
+  const rows = sortCoverageRows(listed, sort, sortValue);
   const toggleSort = (key) => setSort(prev => nextCoverageSort(prev, key));
   // A header's sort handle: the label itself, with an arrow once it is the
   // sorted column.
@@ -727,8 +742,34 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
     <>
       {titleRow(`Variable Coverage (${contacts.length})`)}
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
-        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / DM at Tier 1-3), and each column after it is a variable used in the draft. Click a column heading to sort by it. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
+        Each row is a recipient; <strong>Category</strong> is the roster(s) they're on (Key / Active / Client / DM at Tier 1-3), and each column after it is a variable used in the draft. Click a column heading to sort by it. <strong>Reached Out</strong> marks who this email has already gone to, and the Show buttons hide either group. Red <strong>-</strong> = the source data has no value to substitute, so that personalization will land blank. <strong>+ Add column</strong> adds any contact field (title, company, team name, ...) after them.
       </p>
+      {sentDateOf && (
+        <div data-reach-filter style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '0 0 0.5rem 0' }}>
+          <span style={{ fontSize: '0.7rem', color: '#64748B', fontWeight: 600 }}>Show</span>
+          {[
+            ['all', 'Everyone', contacts.length, 'Every recipient on this draft.'],
+            ['reached', 'Reached out', reachedCount, 'Only the recipients this email has already gone to, per the Email Campaigns tracker. Hides the ones still to send.'],
+            ['remaining', 'Remaining', contacts.length - reachedCount, 'Only the recipients this email has not gone to yet. Hides the ones already reached.'],
+          ].map(([key, label, count, tip]) => {
+            const on = reach === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                data-reach={key}
+                aria-pressed={on}
+                onClick={() => setReach(key)}
+                title={tip}
+                style={{
+                  padding: '0.15rem 0.6rem', borderRadius: 999, fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+                  border: `1px solid ${on ? '#0A66C2' : '#E2E8F0'}`, background: on ? '#EFF6FF' : '#fff', color: on ? '#0A66C2' : '#475569',
+                }}
+              >{label} ({count})</button>
+            );
+          })}
+        </div>
+      )}
       <div style={{
         // Grow with the viewport - leaves enough room for the page
         // chrome / header / Saved Drafts above, but uses the rest of
@@ -745,6 +786,14 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
           <thead>
             <tr>
               <th style={headStyle} aria-sort={sort?.key === 'recipient' ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined}>{sortHead('recipient', 'Recipient')}</th>
+              {sentDateOf && (
+                <th style={headStyle} title={`Whether this email has already gone to the recipient, per the Email Campaigns tracker · ${reachedCount}/${contacts.length} reached`}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+                    {sortHead('reached', 'Reached Out')}
+                    <span style={{ fontSize: '0.62rem', fontWeight: 600, color: '#64748B' }}>{reachedCount}/{contacts.length}</span>
+                  </div>
+                </th>
+              )}
               {categorize && (
                 <th style={headStyle} title="Which contact rosters this recipient is on - the same Key / Active / Client / DM at Tier 1-3 gates the Contacts pages run">
                   {sortHead('category', 'Category')}
@@ -791,6 +840,11 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={99} style={{ ...cellStyle, color: '#94A3B8', padding: '0.8rem 0.5rem' }}>
+                {reach === 'reached' ? 'This email has not gone to anyone on the draft yet.' : 'Everyone on the draft has already been sent this email.'}
+              </td></tr>
+            )}
             {rows.map(c => (
               <tr key={c.id || c.email}>
                 <td style={{ ...cellStyle, fontWeight: 600, color: '#1E293B' }} title={`${c.name || ''}${c.email ? ` · ${c.email}` : ''}${c.company ? ` · ${c.company}` : ''}`}>
@@ -804,6 +858,18 @@ function VariableCoverageTable({ contacts, usedTokens, coverage, resolve, warnFo
                     >{c.name || c.email || '(unnamed)'}</button>
                   ) : (c.name || c.email || '(unnamed)')}
                 </td>
+                {sentDateOf && (() => {
+                  const d = sentOf(c);
+                  if (!d) return <td style={cellStyle} title="This email has not gone to this recipient yet"><span style={{ color: '#94A3B8' }}>Not yet</span></td>;
+                  const label = Number.isNaN(Date.parse(d)) ? '' : new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  return (
+                    <td style={cellStyle} title={`Already sent this email${label ? ` on ${label}` : ''} (per the Email Campaigns tracker)`}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', padding: '0 6px', borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
+                        ✓ Sent{label ? ` ${label}` : ''}
+                      </span>
+                    </td>
+                  );
+                })()}
                 {categorize && <CategoryCell categories={categorize(c)} cellStyle={cellStyle} />}
                 {usedTokens.map(v => {
                   const val = String(resolve(c, v.token) || '').trim();
@@ -3464,6 +3530,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               rawOf={rawOfRecipient}
               fieldCtx={coverageFieldCtx}
               onOpenContact={openContact}
+              sentDateOf={c => sentHere.get(String(c.email || '').trim().toLowerCase()) || ''}
             />
           </div>
 
