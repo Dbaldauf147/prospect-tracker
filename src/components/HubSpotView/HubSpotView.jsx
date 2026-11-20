@@ -2172,6 +2172,9 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
         //     itself so "@acme.com" still yields "Acme" even when no
         //     prospect has that domain on file.
         let guessedCompany = '';
+        // Which of the routes below produced the guess. The review popup
+        // turns it into a confidence (see companyGuessConfidence.js).
+        let guessedCompanyMatch = '';
         let emailDomain = '';
         if (c.email) {
           const atIdx = c.email.lastIndexOf('@');
@@ -2185,6 +2188,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
           if (normKey) {
             // 1. Exact normalized match — "Acme Corp" → "Acme Corporation".
             let canonical = prospectKeyToCanonical.get(normKey);
+            let route = 'name-exact';
             // 2. Loose compact-key match — "Alexandria" compact
             //    "alexandria" → "Alexandria Real Estate Equities",
             //    "Amtrustgroup" compact "amtrustgroup" (starts with
@@ -2192,14 +2196,17 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
             if (!canonical) {
               const compactKey = normKey.replace(/\s+/g, '');
               canonical = findProspectByCompactKey(compactKey);
+              route = 'name-loose';
             }
             if (canonical && canonical.toLowerCase() !== currentLower) {
               guessedCompany = canonical;
+              guessedCompanyMatch = route;
             }
           }
         } else if (emailDomain) {
           // 1. Explicit domain-to-prospect map.
           let hit = domainToCompany.get(emailDomain) || '';
+          if (hit) guessedCompanyMatch = 'domain-known';
           // 2. Loose match against the prospect-name prefix index
           //    (covers "strategichotels.com" → "Strategic Hotels &
           //    Resorts", "amtrustgroup.com" → "Amtrust Financial").
@@ -2208,6 +2215,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
             if (brand) {
               const brandKey = brand.toLowerCase().replace(/[^a-z0-9]/g, '');
               hit = findProspectByCompactKey(brandKey);
+              if (hit) guessedCompanyMatch = 'domain-loose';
             }
           }
           guessedCompany = hit;
@@ -2248,6 +2256,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
         return {
           ...c,
           guessedCompany,
+          guessedCompanyMatch,
           guessedName,
           guessedFirstName,
           guessedLastName,
@@ -2261,7 +2270,7 @@ export function HubSpotView({ prospects, settings, updateSettings, onSelectProsp
   }, [contacts, prospects, emailFilterMode, domainToCompany, tierByCompany, prospectKeyToCanonical, prospectTokenPrefixMap, prospectTokenPrefixKeysDesc, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
 
   // Dynamic filter options for HubSpot columns
-  const HUBSPOT_FILTER_SKIP = new Set(['id', 'ptCompanyUnmatched', '_select', '_delete', '_deleteRow', '_edit', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
+  const HUBSPOT_FILTER_SKIP = new Set(['id', 'ptCompanyUnmatched', '_select', '_delete', '_deleteRow', '_edit', 'guessedCompany', 'guessedCompanyMatch', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
   const HUBSPOT_FILTER_LABELS = { company: 'Company', tier: 'Tier', jobtitle: 'Title', city: 'City', state: 'State', country: 'Country', firstname: 'First Name', lastname: 'Last Name', email: 'Email', phone: 'Phone', sequenceStatus: 'Sequence', dans_tags: "Dan's Tags", dan_s_tags: "Dan's Tags" };
   const hsFilterOptions = useMemo(() => {
     const opts = {};

@@ -10,6 +10,8 @@
 // not a map because the keys carry email domains, and a dot in a map key
 // reads as a field path on the way to Firestore.
 
+import { guessConfidence } from './companyGuessConfidence.js';
+
 function lower(v) { return String(v || '').trim().toLowerCase(); }
 
 function emailDomain(email) {
@@ -80,6 +82,7 @@ export function groupGuessedCompanies(contacts) {
         current: typed || (source ? `(blank) ${source}` : '(blank)'),
         basis: typed ? 'Company name' : 'Email domain',
         guess: String(c.guessedCompany).trim(),
+        confidence: guessConfidence({ source: typed || source, guess: c.guessedCompany, match: c.guessedCompanyMatch }),
         count: 0,
         contacts: [],
       };

@@ -788,6 +788,19 @@
   overflow-y: auto;
 }
 
+/* The guessed-company review: several hundred rows to read, so it takes
+   nearly the whole window and its table fills what is left. */
+.guessReviewModal {
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  width: 96vw;
+  height: 94vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .bulkDesc {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);

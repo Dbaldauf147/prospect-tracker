@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { groupGuessedCompanies } from '../../utils/companyGuessIgnore';
+import { confidenceBand } from '../../utils/companyGuessConfidence';
 import styles from './HubSpotView.module.css';
 
 // The review step in front of "Copy All Guessed Companies": every pending
@@ -8,6 +9,18 @@ import styles from './HubSpotView.module.css';
 // View name suggested for it. Each row starts ticked. Unticking one marks
 // that suggestion to be ignored for good, and the footer says how many of
 // each there are before anything is saved.
+// How sure the match is, at a glance: green to trust, red to read first.
+const BAND_COLORS = {
+  high: { bg: '#DCFCE7', color: '#166534' },
+  medium: { bg: '#FEF3C7', color: '#92400E' },
+  low: { bg: '#FEE2E2', color: '#991B1B' },
+};
+const BAND_TITLES = {
+  high: 'Strong match: the suggested name accounts for the whole current name or email domain.',
+  medium: 'Partial match: worth a look before mapping.',
+  low: 'Weak match: the names only share a beginning. Check it, and untick it if it is a different company.',
+};
+
 export function GuessedCompanyReviewModal({ contacts, onConfirm, onClose, settings, updateSettings }) {
   const groups = useMemo(() => groupGuessedCompanies(contacts), [contacts]);
   const [skipped, setSkipped] = useState(() => new Set());
@@ -59,6 +72,15 @@ export function GuessedCompanyReviewModal({ contacts, onConfirm, onClose, settin
         ? <span style={{ color: 'var(--color-text-muted)' }}><s>{g.guess}</s> <em>will be ignored</em></span>
         : <strong>{g.guess}</strong>
     ) },
+    { key: 'confidence', label: 'Match %', defaultWidth: 100, render: (g) => {
+      const c = BAND_COLORS[confidenceBand(g.confidence)];
+      return (
+        <span
+          title={BAND_TITLES[confidenceBand(g.confidence)]}
+          style={{ display: 'inline-block', minWidth: 44, textAlign: 'center', padding: '1px 8px', borderRadius: 999, fontSize: '0.72rem', fontWeight: 700, background: c.bg, color: c.color }}
+        >{g.confidence}%</span>
+      );
+    } },
     { key: 'count', label: 'Contacts', defaultWidth: 90 },
     { key: 'basis', label: 'Matched On', defaultWidth: 130 },
     { key: 'examples', label: 'Contacts Affected', defaultWidth: 320 },
@@ -73,24 +95,25 @@ export function GuessedCompanyReviewModal({ contacts, onConfirm, onClose, settin
 
   return (
     <div className={styles.modalOverlay} onClick={onClose}>
-      <div className={styles.bulkModal} onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className={styles.guessReviewModal} onClick={(e) => e.stopPropagation()}>
         <div className={styles.modalHeader}>
           <h3 className={styles.modalTitle}>Review Guessed Companies</h3>
           <button className={styles.modalClose} onClick={onClose} aria-label="Close">&times;</button>
         </div>
-        <div className={styles.modalBody} style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+        <div className={styles.modalBody} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <p className={styles.bulkDesc}>
             {plural(groups.length, 'suggestion')} covering {plural(contacts.length, 'contact')}. Untick any you
             do not want. An unticked suggestion is ignored permanently: it will not be offered again for
-            those contacts or for new ones with the same company or email domain. Mapping sets the
-            Prospect Tracker Company Name only, HubSpot is not changed.
+            those contacts or for new ones with the same company or email domain. Match % is how
+            closely the suggested name fits the current one, so sort by it to read the weakest first.
+            Mapping sets the Prospect Tracker Company Name only, HubSpot is not changed.
           </p>
           <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
             <button type="button" className={styles.modalCancelBtn} onClick={() => setShownTo(true)}>Untick shown</button>
             <button type="button" className={styles.modalCancelBtn} onClick={() => setShownTo(false)}>Tick shown</button>
           </div>
           {/* DataTable fills a flex column, so it needs a box with a height. */}
-          <div style={{ height: '55vh', display: 'flex', flexDirection: 'column', border: '1px solid var(--color-border-light)', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 240, display: 'flex', flexDirection: 'column', border: '1px solid var(--color-border-light)', borderRadius: 8, overflow: 'hidden' }}>
           <DataTable
             tableId="hubspot-guess-review"
             columns={columns}
