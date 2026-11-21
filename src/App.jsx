@@ -65,6 +65,7 @@ const ContactsView = lazyView(() => import('./components/ContactsView/ContactsVi
 const DraftEmailsPage = lazyView(() => import('./components/DraftEmailView/DraftEmailsPage'), 'DraftEmailsPage');
 const DropdownsView = lazyView(() => import('./components/DropdownsView/DropdownsView'), 'DropdownsView');
 const EfficiencyTreeView = lazyView(() => import('./components/EfficiencyTreeView/EfficiencyTreeView'), 'EfficiencyTreeView');
+const IkigaiView = lazyView(() => import('./components/IkigaiView/IkigaiView'), 'IkigaiView');
 const IssuesView = lazyView(() => import('./components/IssuesView/IssuesView'), 'IssuesView');
 const KanbanView = lazyView(() => import('./components/KanbanView/KanbanView'), 'KanbanView');
 const ListsView = lazyView(() => import('./components/ListsView/ListsView'), 'ListsView');
@@ -849,6 +850,8 @@ function App() {
             <OppsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps2' ? (
             <OppsView2 settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} addProspect={addProspect} onSelectProspect={handleSelect} targetAccountsData={targetAccountsData} cdmName={cdmName} />
+          ) : view === 'ikigai' ? (
+            <IkigaiView settings={settings} settingsLoaded={settingsLoaded} updateSettingsPath={updateSettingsPath} />
           ) : view === 'dropdowns' ? (
             <DropdownsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' ? (

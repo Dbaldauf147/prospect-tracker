@@ -1,0 +1,443 @@
+.wrapper {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.loading {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.subtitle {
+  margin-top: 0.25rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.pasteBtn,
+.primaryBtn {
+  flex-shrink: 0;
+  padding: 0.4rem 0.8rem;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.pasteBtn {
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.pasteBtn:hover {
+  background: var(--color-surface-alt);
+}
+
+.primaryBtn {
+  color: #fff;
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+}
+
+.primaryBtn:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pastePanel,
+.card,
+.circleCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.pastePanel {
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.pasteHelp {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.pasteBox,
+.notes {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+
+.pasteBox:focus,
+.notes:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-light);
+}
+
+.pasteActions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.pasteNote {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* Visuals on the left stay in view while the questions scroll. */
+.body {
+  display: grid;
+  grid-template-columns: minmax(340px, 440px) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.visuals {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+@media (max-width: 1100px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .visuals {
+    position: static;
+  }
+}
+
+.card {
+  padding: 1rem;
+}
+
+.cardLabel,
+.cardLabelGap {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.cardLabelGap {
+  margin-top: 1rem;
+}
+
+/* ---- Diagram ---- */
+
+.diagram {
+  display: block;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+/* Multiply lets the overlaps darken by themselves where circles stack. */
+.blend {
+  isolation: isolate;
+}
+
+.blend circle {
+  mix-blend-mode: multiply;
+}
+
+.circleName {
+  font-size: 14px;
+  font-weight: 700;
+  fill: var(--color-text);
+}
+
+.circleScore {
+  font-size: 13px;
+  font-weight: 600;
+  fill: var(--color-text-secondary);
+}
+
+.lensName {
+  font-size: 11.5px;
+  font-weight: 600;
+  fill: var(--color-text);
+}
+
+.lensScore {
+  font-size: 11px;
+  font-weight: 500;
+  fill: var(--color-text);
+}
+
+.centerName {
+  font-size: 13px;
+  font-weight: 800;
+  fill: var(--color-text);
+}
+
+.marker {
+  fill: var(--color-text);
+  stroke: #fff;
+  stroke-width: 2.5;
+}
+
+.legend {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legendRing {
+  width: 10px;
+  height: 10px;
+  background: var(--color-text);
+  border-radius: 50%;
+}
+
+/* ---- Standing ---- */
+
+.standingHeadline {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.2;
+}
+
+.standingDetail {
+  margin-top: 0.4rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.focus {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.progress {
+  margin-top: 0.5rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.swatch {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* ---- Meters ---- */
+
+.meterRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 4.5rem;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+  font-size: var(--font-size-sm);
+}
+
+.meterLabel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.4rem;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.meterSub {
+  flex-basis: 100%;
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.meterTrack {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.meterFill {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  border-radius: 999px;
+  background: var(--color-text-secondary);
+}
+
+.meterValue {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.footnote {
+  margin-top: 0.6rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+/* ---- Questions ---- */
+
+.questions {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.circleCard {
+  padding: 1rem 1.25rem;
+  border-top-width: 4px;
+  border-top-style: solid;
+}
+
+.circleHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.circleTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.circleHeadScore {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.question {
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.question:last-child {
+  border-bottom: none;
+  padding-bottom: 0.25rem;
+}
+
+.questionText {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 0.4rem;
+}
+
+.ratingRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.ratingBtns {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.ratingBtn,
+.ratingBtnOn {
+  width: 28px;
+  height: 26px;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.ratingBtn:first-child,
+.ratingBtnOn:first-child {
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+
+.ratingBtn:last-child,
+.ratingBtnOn:last-child {
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.ratingBtn:hover {
+  background: var(--color-accent-light);
+}
+
+.ratingBtnOn {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.ratingLabel {
+  font-weight: 600;
+  color: var(--color-text);
+}

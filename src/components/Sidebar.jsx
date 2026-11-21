@@ -289,6 +289,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         { kind: 'action', key: 'dailyLog', label: 'Open Daily Success Log', icon: '\u{1F4D6}', onClick: () => { onOpenDailyLog?.(); setSettingsOpen(false); } },
       ] : []),
     ] : []),
+    { kind: 'view',    key: 'ikigai',  label: 'Ikigai',             icon: '\u{1F3AF}' },
     { kind: 'view',    key: 'privacy', label: 'Privacy & Security', icon: '\u{1F512}' },
   ];
   const activeInSettings = settingsItems.some(it => it.kind === 'view' && it.key === view);
