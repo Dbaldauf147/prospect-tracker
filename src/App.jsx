@@ -851,7 +851,7 @@ function App() {
           ) : view === 'opps2' ? (
             <OppsView2 settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} addProspect={addProspect} onSelectProspect={handleSelect} targetAccountsData={targetAccountsData} cdmName={cdmName} />
           ) : view === 'ikigai' ? (
-            <IkigaiView settings={settings} settingsLoaded={settingsLoaded} updateSettingsPath={updateSettingsPath} />
+            <IkigaiView settings={settings} settingsLoaded={settingsLoaded} updateSettingsPath={updateSettingsPath} isAdmin={isAdmin} />
           ) : view === 'dropdowns' ? (
             <DropdownsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' ? (

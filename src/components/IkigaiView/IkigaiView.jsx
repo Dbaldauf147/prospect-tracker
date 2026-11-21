@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CIRCLES, OVERLAPS, RATING_LABELS, IKIGAI_SETTINGS_KEY, CIRCLE_DIRECTION,
-  sanitizeAnswers, scoreIkigai, readStanding, markerOffset, parsePastedAnswers,
+  sanitizeAnswers, scoreIkigai, readStanding, markerOffset, parsePastedAnswers, ownerSeedUpdates,
 } from '../../utils/ikigai';
 import styles from './IkigaiView.module.css';
 
@@ -150,11 +150,21 @@ function Question({ q, answer, onSave }) {
   );
 }
 
-export function IkigaiView({ settings, settingsLoaded = true, updateSettingsPath }) {
+export function IkigaiView({ settings, settingsLoaded = true, updateSettingsPath, isAdmin = false }) {
   const answers = useMemo(
     () => sanitizeAnswers(settings?.[IKIGAI_SETTINGS_KEY]?.answers),
     [settings],
   );
+  // The owner's first answers go in once, the first time the page opens
+  // with settings loaded. The flag it writes stops it running again, so
+  // clearing one of those answers later stays cleared.
+  const stored = settings?.[IKIGAI_SETTINGS_KEY];
+  useEffect(() => {
+    if (!isAdmin || !settingsLoaded) return;
+    const updates = ownerSeedUpdates(stored);
+    if (updates) updateSettingsPath?.(updates);
+  }, [isAdmin, settingsLoaded, stored, updateSettingsPath]);
+
   const scores = useMemo(() => scoreIkigai(answers), [answers]);
   const standing = useMemo(() => readStanding(scores), [scores]);
   const [pasteOpen, setPasteOpen] = useState(false);

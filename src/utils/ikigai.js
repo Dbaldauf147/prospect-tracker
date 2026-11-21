@@ -214,3 +214,27 @@ export function parsePastedAnswers(pasted) {
   }
   return out;
 }
+
+// The owner's own first answers, taken from the sheet the page was built
+// from. Written into the owner's settings once (see ownerSeedUpdates) so the
+// page doesn't open blank; after that they are ordinary answers to edit.
+export const OWNER_SEED_ANSWERS = {
+  'love-flow': 'When I am designing a system or tool',
+  'love-free': 'I am not sure that I would do any of it for free',
+  'love-research': 'I have been digging into food, nutrition, and AI',
+  'love-energy': 'I feel energized when I am running analysis and building tools',
+};
+
+// The settings paths to write for the one-time seed, or null when it has
+// already run. A question that already has notes keeps them; a rating
+// already given is kept alongside the seeded text.
+export function ownerSeedUpdates(stored) {
+  if (stored?.seeded) return null;
+  const answers = sanitizeAnswers(stored?.answers);
+  const updates = { [`${IKIGAI_SETTINGS_KEY}.seeded`]: true };
+  for (const [id, text] of Object.entries(OWNER_SEED_ANSWERS)) {
+    if (answers[id]?.text?.trim()) continue;
+    updates[`${IKIGAI_SETTINGS_KEY}.answers.${id}`] = { text, rating: answers[id]?.rating ?? null };
+  }
+  return updates;
+}

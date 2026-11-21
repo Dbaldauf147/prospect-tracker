@@ -7,6 +7,7 @@
 // gap, and a paste from the spreadsheet lands on the right questions.
 import {
   CIRCLES, sanitizeAnswers, scoreIkigai, readStanding, markerOffset, parsePastedAnswers,
+  ownerSeedUpdates, OWNER_SEED_ANSWERS,
 } from '../src/utils/ikigai.js';
 
 let failures = 0;
@@ -92,6 +93,18 @@ const sheet = [
 same('pasted rows land on their questions, blanks skipped', parsePastedAnswers(sheet),
   { 'love-flow': 'When I am designing a system or tool', 'love-free': 'I am not sure' });
 same('a paste with no questions finds nothing', parsePastedAnswers('hello\tworld'), {});
+
+// --- owner seed ---------------------------------------------------------------
+
+const fresh = ownerSeedUpdates(undefined);
+same('first run writes the flag and all four answers', Object.keys(fresh).sort(),
+  ['ikigai.answers.love-energy', 'ikigai.answers.love-flow', 'ikigai.answers.love-free', 'ikigai.answers.love-research', 'ikigai.seeded']);
+same('a seeded answer carries its text and no rating', fresh['ikigai.answers.love-flow'],
+  { text: OWNER_SEED_ANSWERS['love-flow'], rating: null });
+const kept = ownerSeedUpdates({ answers: { 'love-flow': { text: 'my own words', rating: 4 }, 'love-free': { text: '', rating: 2 } } });
+same('notes already written are left alone', 'ikigai.answers.love-flow' in kept, false);
+same('a rating already given is kept with the seeded text', kept['ikigai.answers.love-free'].rating, 2);
+same('once seeded it never runs again', ownerSeedUpdates({ seeded: true, answers: {} }), null);
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll passed');
 process.exit(failures ? 1 : 0);
