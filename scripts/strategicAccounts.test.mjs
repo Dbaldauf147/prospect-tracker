@@ -6,7 +6,7 @@
 // (fuzzy or already mapped elsewhere), and missing one that is (a mapped
 // row whose name differs). Owners must come through whatever the column
 // is called and however several names are packed into one cell.
-import { strategicMatches, strategicNameKey } from '../src/utils/strategicAccounts.js';
+import { strategicMatches, strategicNameKey, strategicLookup, strategicAccountRows } from '../src/utils/strategicAccounts.js';
 
 let failed = 0;
 function eq(actual, expected, name) {
@@ -32,5 +32,35 @@ eq(strategicMatches(rows, 'Hines'), [{ name: 'Hines', owners: ['Pat Kim', 'Lee P
 eq(strategicMatches(rows, 'Prologis'), [{ name: 'Prologis', owners: [], mapped: false }], 'a row with no owner still matches');
 eq(strategicMatches([], 'Hines'), [], 'empty list');
 eq(strategicNameKey([{ 'Owner Name': 'x', 'Company': 'y' }]), 'Company', 'an owner column is never the name column');
+
+// My Accounts > Strategic Accounts: Tier 1 and Tier 2 accounts, plus the
+// CDM's own companies that the list names.
+{
+  const prospects = [
+    { id: 'a', company: 'Blackstone', cdm: 'Dan', status: 'Prospect', tier: 'Tier 1' },
+    { id: 'b', company: 'Hines', cdm: 'Dan', status: 'Client', tier: 'Tier 3' },
+    { id: 'c', company: 'Prologis', cdm: 'Someone Else', tier: 'Tier 3' },
+    { id: 'd', company: 'Acme', cdm: 'Dan', tier: 'Tier 3' },
+    { id: 'e', company: 'Zeta', cdm: 'Dan', tier: 'Tier 2' },
+    { id: 'f', company: 'Brookfield', cdm: 'Dan', tier: '' },
+  ];
+  // My Accounts carries a, d, e and (Tier 3) b; f is not on it at all.
+  const accounts = [
+    { ...prospects[0], myTier: 'Tier 1', tierLabel: 'Tier 1' },
+    { ...prospects[1], myTier: 'Tier 3', tierLabel: 'Tier 3' },
+    { ...prospects[3], myTier: 'Tier 3', tierLabel: 'Tier 3' },
+    { ...prospects[4], myTier: 'Tier 2', tierLabel: 'Tier 2' },
+  ];
+  const lookup = strategicLookup(rows, { 'name::brookfield asset management': 'Brookfield' });
+  const got = strategicAccountRows({ accounts, prospects, lookup, isCdm: c => c === 'Dan' });
+  eq(got.map(r => [r.company, r.tier, r.reasons.join(' + '), r.owners.join(' + ')]), [
+    ['Blackstone', 'Tier 1', 'Tier 1 + Strategic Accounts list', 'Jane Doe + John Roe'],
+    ['Brookfield', '', 'Strategic Accounts list', 'Sam Lee'],
+    ['Hines', 'Tier 3', 'Strategic Accounts list', 'Pat Kim + Lee Park + Ana Ruiz'],
+    ['Zeta', 'Tier 2', 'Tier 2', ''],
+  ], 'Tier 1, Tier 2 and my listed companies, not another CDM\'s listed company or my unlisted Tier 3');
+  eq(got.find(r => r.company === 'Brookfield').listNames, ['Brookfield Asset Management'], 'the list row behind a mapped company is named');
+  eq(strategicAccountRows({ accounts, prospects, lookup: strategicLookup([]), isCdm: () => true }).map(r => r.company), ['Blackstone', 'Zeta'], 'no list uploaded leaves the tiers');
+}
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

@@ -41,6 +41,7 @@ import { DmTagHistoryView } from './DmTagHistoryView';
 import { isQualifyingCompany } from '../../utils/companyDataFields';
 import { CompanyDataTab } from './CompanyDataTab';
 import { DealSizeTab } from './DealSizeTab';
+import { StrategicAccountsTab } from './StrategicAccountsTab';
 import { HubspotMappingTab } from './HubspotMappingTab';
 import { NameMatcherTab } from './NameMatcherTab';
 import { MissingHistoryView } from './MissingHistoryView';
@@ -3948,6 +3949,50 @@ Fix that now?
         <DealSizeTab
           accounts={rows}
           prospects={prospects}
+          settings={settings}
+          updateSettings={updateSettings}
+          onSelect={onSelect}
+          filterBar={(
+            <>
+              <input
+                className={styles.searchInput}
+                type="text"
+                placeholder="Search accounts..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+              <button
+                onClick={() => setInactiveMode(prev => prev === 'hide' ? 'only' : prev === 'only' ? 'show' : 'hide')}
+                title="Cycle how inactive accounts (Old Client / Hold Off / Lost - Not Sold) are shown: hidden → only → all"
+                style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+              >
+                {inactiveMode === 'only' ? 'Inactive only' : inactiveMode === 'show' ? 'Showing all' : 'Inactive hidden'}
+              </button>
+            </>
+          )}
+        />
+      </div>
+    );
+  }
+
+  // Strategic Accounts subtab - the Tier 1 and Tier 2 accounts, plus this
+  // CDM's companies the Strategic Accounts list names (on My Accounts or
+  // not). Honours the inactive toggle and the search box.
+  if (mode === 'strategicAccounts') {
+    const term = search.trim().toLowerCase();
+    const keep = (r) => {
+      const inactive = isInactive(r.record || r);
+      if (inactiveMode === 'hide' && inactive) return false;
+      if (inactiveMode === 'only' && !inactive) return false;
+      return !term || [r.company, r.type, r.status, r.tier, ...r.reasons, ...r.owners, ...r.listNames].filter(Boolean).join(' ').toLowerCase().includes(term);
+    };
+    return (
+      <div className={styles.wrapper}>
+        <StrategicAccountsTab
+          accounts={allAccounts}
+          prospects={prospects}
+          cdmName={cdmName}
+          keep={keep}
           settings={settings}
           updateSettings={updateSettings}
           onSelect={onSelect}

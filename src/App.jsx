@@ -685,7 +685,7 @@ function App() {
         onCreateCompany={handleCreateCompany}
       />
       <div className="main">
-        {(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' || view === 'pe' || view === 'table' || view === 'kanban') && (
+        {(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'strategicAccounts' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' || view === 'pe' || view === 'table' || view === 'kanban') && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', padding: '0 0.25rem' }}>
             {[
               { key: 'accounts', label: 'My Accounts', active: view === 'accounts' },
@@ -703,6 +703,9 @@ function App() {
               // Same My Accounts set: each account's tier and its biggest
               // deal, largest first.
               { key: 'dealSize', label: 'Deal Size', active: view === 'dealSize' },
+              // Tier 1 and Tier 2 accounts, plus this CDM's companies the
+              // Strategic Accounts list names.
+              { key: 'strategicAccounts', label: 'Strategic Accounts', active: view === 'strategicAccounts' },
               // Same My Accounts set lined up against the HubSpot companies
               // export Dan drops there.
               { key: 'hubspotMapping', label: 'Hubspot Mapping', active: view === 'hubspotMapping' },
@@ -854,9 +857,9 @@ function App() {
             <IkigaiView settings={settings} settingsLoaded={settingsLoaded} updateSettingsPath={updateSettingsPath} isAdmin={isAdmin} />
           ) : view === 'dropdowns' ? (
             <DropdownsView settings={settings} updateSettings={updateSettings} />
-          ) : view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' ? (
+          ) : view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'strategicAccounts' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' ? (
             <MyAccountsView
-              mode={view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' ? view : 'table'}
+              mode={view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'strategicAccounts' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' ? view : 'table'}
               prospects={prospects}
               onSelect={handleSelect}
               onUpdate={updateProspect}

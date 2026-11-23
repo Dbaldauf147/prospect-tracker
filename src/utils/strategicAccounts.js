@@ -10,7 +10,7 @@
 // are deliberately not flagged; a strategic account is a hard stop, and a
 // false one on every "Capital" in the CRM would teach people to ignore it.
 import { normalizeCompany, pickNameKey } from './companyNorm.js';
-import { listMatchKey, mapsToCompany } from './listAccountMapping.js';
+import { listMatchKey } from './listAccountMapping.js';
 
 export const STRATEGIC_STORAGE_KEY = 'strategic-accounts-override';
 
@@ -60,28 +60,29 @@ export function rowOwners(row, headers) {
 }
 
 /**
- * Strategic Accounts rows that are `company`.
- * Returns [{ name, owners: string[], mapped: boolean }], deduped by name.
+ * The list read once, for asking about many companies: returns
+ * `company => [{ name, owners: string[], mapped: boolean }]`, deduped by
+ * name. A row answers to the company its Table View mapping names, else
+ * (unless dismissed) to the one its own name normalises to.
  */
-export function strategicMatches(rows, company, mapping = {}, dismissed = {}) {
-  const target = normalizeCompany(company);
-  if (!target || !Array.isArray(rows) || rows.length === 0) return [];
+export function strategicLookup(rows, mapping = {}, dismissed = {}) {
+  const none = () => [];
+  if (!Array.isArray(rows) || rows.length === 0) return none;
   const nameKey = strategicNameKey(rows);
-  if (!nameKey) return [];
+  if (!nameKey) return none;
   const owners = ownerHeaders(rows);
-  const byKey = new Map();
+  // normalised company -> (row matchKey -> match), in list order.
+  const byCompany = new Map();
   for (const row of rows) {
     const name = String(row?.[nameKey] || '').trim();
     const key = listMatchKey(name);
     if (!key) continue;
     const mappedTo = mapping[key] || '';
-    let mapped = false;
-    if (mappedTo) {
-      if (!mapsToCompany(mappedTo, company)) continue;
-      mapped = true;
-    } else if (dismissed[key] || normalizeCompany(name) !== target) {
-      continue;
-    }
+    if (!mappedTo && dismissed[key]) continue;
+    const target = normalizeCompany(mappedTo || name);
+    if (!target) continue;
+    if (!byCompany.has(target)) byCompany.set(target, new Map());
+    const byKey = byCompany.get(target);
     const prev = byKey.get(key);
     const rowOwnerList = rowOwners(row, owners);
     if (prev) {
@@ -89,8 +90,75 @@ export function strategicMatches(rows, company, mapping = {}, dismissed = {}) {
         if (!prev.owners.some(p => p.toLowerCase() === o.toLowerCase())) prev.owners.push(o);
       }
     } else {
-      byKey.set(key, { name, owners: rowOwnerList, mapped });
+      byKey.set(key, { name, owners: rowOwnerList, mapped: !!mappedTo });
     }
   }
-  return [...byKey.values()];
+  return (company) => {
+    const found = byCompany.get(normalizeCompany(company));
+    return found ? [...found.values()] : [];
+  };
+}
+
+/**
+ * Strategic Accounts rows that are `company`.
+ * Returns [{ name, owners: string[], mapped: boolean }], deduped by name.
+ */
+export function strategicMatches(rows, company, mapping = {}, dismissed = {}) {
+  return strategicLookup(rows, mapping, dismissed)(company);
+}
+
+const STRATEGIC_TIERS = new Set(['Tier 1', 'Tier 2']);
+export const ON_STRATEGIC_LIST = 'Strategic Accounts list';
+
+/**
+ * My Accounts > Strategic Accounts: every Tier 1 and Tier 2 account on My
+ * Accounts, plus every tracker company this CDM is on that the Strategic
+ * Accounts list names (whether or not My Accounts carries it).
+ *
+ * `accounts` are My Accounts rows (myTier / tierLabel set), `prospects` the
+ * tracker records, `lookup` a strategicLookup, `isCdm` whether a CDM cell is
+ * this CDM. Returns [{ id, company, tier, reasons, listNames, owners,
+ * status, type, cdm, record }] A to Z, where `reasons` says why the row is
+ * here and `record` is the tracker record to open ('' fields when none).
+ */
+export function strategicAccountRows({ accounts = [], prospects = [], lookup, isCdm }) {
+  const byId = new Map(prospects.map(p => [p.id, p]));
+  const out = new Map();
+  const add = (source, tier, reason) => {
+    const id = source.id || source.company;
+    if (!id) return;
+    let row = out.get(id);
+    if (!row) {
+      const matches = lookup ? lookup(source.company) : [];
+      const owners = [];
+      for (const m of matches) for (const o of m.owners) {
+        if (!owners.some(x => x.toLowerCase() === o.toLowerCase())) owners.push(o);
+      }
+      row = {
+        id,
+        company: source.company || '',
+        tier: tier || '',
+        reasons: [],
+        listNames: matches.map(m => m.name),
+        owners,
+        status: source.status || '',
+        type: source.type || '',
+        cdm: source.cdm || '',
+        record: byId.get(source.id) || null,
+      };
+      out.set(id, row);
+    }
+    if (!row.reasons.includes(reason)) row.reasons.push(reason);
+  };
+  for (const a of accounts) {
+    if (STRATEGIC_TIERS.has(a.myTier)) add(a, a.tierLabel || a.myTier, a.myTier);
+  }
+  const accountById = new Map(accounts.map(a => [a.id, a]));
+  for (const p of prospects) {
+    if (!p?.company || !isCdm?.(p.cdm)) continue;
+    if (!lookup || lookup(p.company).length === 0) continue;
+    const account = accountById.get(p.id);
+    add(account || p, account ? (account.tierLabel || account.myTier) : String(p.tier || '').trim(), ON_STRATEGIC_LIST);
+  }
+  return [...out.values()].sort((a, b) => a.company.localeCompare(b.company));
 }
