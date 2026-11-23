@@ -17,6 +17,7 @@ import { computeAppDescriptionOpps } from '../../utils/appDescriptionOpps';
 import { computeCloseNotSoldOpps, hasBfoOppNameIndex, detectBfoUrl, resolveOppForRow } from '../../utils/closeNotSoldOpps';
 import { BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, BFO_ACTIVITY_EVENT } from '../../utils/bfoActivityStore';
 import { buildActivityAddressLines, ACTIVITY_PROMPT_LIMIT } from '../../utils/activityAddressLines';
+import { saveSentEmailLog } from '../../utils/sentEmailLog';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { findRecoverableLinks, applyRecoveredLinks, ledgerRows, LEAD_LINK_LEDGER_KEY } from '../../utils/leadLinks';
 import { listBackups } from '../../utils/settingsBackup';
@@ -2590,6 +2591,9 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       } catch (err) {
         console.warn('Agents activity cache write skipped (quota):', err?.message || err);
       }
+      // The compact copy Draft Emails' Sent pills read, which fits when the
+      // feed above does not.
+      saveSentEmailLog(result);
       setCache(result);
     })();
     const oppsPromise = fetchOpps();
