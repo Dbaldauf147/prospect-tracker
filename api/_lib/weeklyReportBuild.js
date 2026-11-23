@@ -310,8 +310,12 @@ export function buildReport(sources, period, { now = null, timeZone = '' } = {})
 
   // My Accounts > All Missing History, the recorded days up to the end of
   // the period. The days are the app's own local dates, so they are cut
-  // in the schedule's zone.
-  const missingSteps = withMissingStepsImage(missingStepsTrend(s.missingHistory, { endMs: end, timeZone }));
+  // in the schedule's zone. Days hidden on the subtab are left out here as
+  // they are there. The setting's name is restated rather than imported:
+  // utils/missingHistory talks to localStorage.
+  const missingSteps = withMissingStepsImage(missingStepsTrend(s.missingHistory, {
+    endMs: end, timeZone, hidden: settings.missingHistoryHiddenDays,
+  }));
 
   const funnelStages = buildFunnelStages({
     stages: Array.isArray(s.pipeline?.stages) ? s.pipeline.stages : [],
