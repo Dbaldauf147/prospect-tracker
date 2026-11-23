@@ -345,3 +345,17 @@ export function ratioAxisRange(values, goal) {
   if (max - min < 1e-9) max = min + Math.max(0.1, Math.abs(min) * 0.1);
   return { min, max };
 }
+
+// Which week the account-coverage charts run up to.
+//
+// Coverage is a level, not a count of the period's work, so a report on the
+// week that has just closed should end on where coverage stands when it is
+// sent: Monday's email covers last week, but the reader wants this week's
+// point, the one the Progress tab is already showing. So a report on the
+// current period, or on one that closed within the last week, runs through
+// `now`. An older period keeps its own last week, so looking back at June
+// still shows June.
+export function coverageRefMs({ start, end, now = Date.now() } = {}) {
+  if (!Number.isFinite(now) || !Number.isFinite(start) || !Number.isFinite(end)) return start;
+  return now >= start && now - end <= 7 * DAY_MS ? now : start;
+}

@@ -9,7 +9,7 @@
 // with more weeks to get wrong.
 import {
   monthBounds, recentWeeks, recentMonths, emailsByWeek, newOppsByWeek, coverageByWeek,
-  coverageWeeksFor, COVERAGE_MONTHS,
+  coverageWeeksFor, COVERAGE_MONTHS, coverageRefMs,
 } from '../src/utils/weeklyReportTrends.js';
 
 let passed = 0, failed = 0;
@@ -282,6 +282,23 @@ const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', 'BFO L
     'coverage: it opens in the week holding the first month\u2019s 1st and ends on the reported week');
   eq(coverageByWeek({ progressWeeks: [{ week: '2026-09-21', t1ContactPct: 50 }], refMs: ref, weeks: 5 }).months, undefined,
     'coverage: a week-count series carries no month span');
+}
+
+// --- which week the coverage charts run up to ---------------------------------
+{
+  const DAY = 86400000;
+  const start = new Date(2026, 10, 16).getTime(); // Mon Nov 16
+  const end = start + 7 * DAY;                    // Mon Nov 23
+  const monday = end + 9 * 3600000;               // the Monday send
+  eq(coverageRefMs({ start, end, now: monday }), monday, 'coverage ref: the week just closed runs through the send week');
+  eq(coverageRefMs({ start, end, now: start + 2 * DAY }), start + 2 * DAY, 'coverage ref: the current week runs through today');
+  eq(coverageRefMs({ start, end, now: end + 8 * DAY }), start, 'coverage ref: an older week keeps its own last week');
+  eq(coverageRefMs({ start, end, now: start - DAY }), start, 'coverage ref: a week still to come is left alone');
+  eq(coverageRefMs({ start, end, now: null }), start, 'coverage ref: no clock, no change');
+  const weeks = [{ week: '2026-10-26', t1ContactPct: 100 }, { week: '2026-11-23', t1ContactPct: 100, t3ContactPct: 82 }];
+  const lastKey = (refMs) => coverageByWeek({ progressWeeks: weeks, refMs, months: COVERAGE_MONTHS }).charts[0].points.at(-1).key;
+  eq(lastKey(start), '2026-10-26', 'coverage: read at the reported week, this week is not a point');
+  eq(lastKey(coverageRefMs({ start, end, now: monday })), '2026-11-23', 'coverage: read at the send, this week is the last point');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -27,7 +27,7 @@ import {
   loadWeeklyActivityLog, emailsSentFor, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
 import {
-  emailsByWeek, newOppsByWeek, coverageByWeek,
+  emailsByWeek, newOppsByWeek, coverageByWeek, coverageRefMs,
   TREND_WEEKS, COVERAGE_MONTHS,
   coverageReading, coverageRatioByWeek, withCoverageReading, sameReading, weekKeyAt,
   COVERAGE_FILL_GRACE_MS,
@@ -656,7 +656,9 @@ export function WeeklyReportView({ prospects = [], settings, updateSettings, cdm
     [progressWeeks, clientUntrackedMap, prospects],
   );
   const coverageSeries = useMemo(() => withCoverageImages(coverageByWeek({
-    progressWeeks: trackedProgressWeeks, refMs: bounds.start, months: COVERAGE_MONTHS,
+    // Through this week when the period is the current or last one, so the
+    // email ends on the point the Progress tab is showing.
+    progressWeeks: trackedProgressWeeks, refMs: coverageRefMs(bounds), months: COVERAGE_MONTHS,
   })), [trackedProgressWeeks, bounds]);
 
   // The coverage ratio by week, with today's reading standing in for this
