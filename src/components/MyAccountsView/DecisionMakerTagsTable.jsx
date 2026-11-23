@@ -31,7 +31,7 @@ import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage, zoomE
 import { TIERS } from '../../data/enums';
 import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
 import { ZoomExcludedCell } from './ZoomExcludedCell';
-import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, buildTitleSearchedMatcher } from '../../utils/zoomSearchLog';
+import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, buildTitleSearchedMatcher, titlesLoggedForTag, titleKey } from '../../utils/zoomSearchLog';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { OWN_TARGET_TIER_LABEL } from '../../utils/tierSource';
 import { companyClosedBucketReasons, serviceBucketContext } from '../../utils/bucketServices';
@@ -48,6 +48,9 @@ const tierRank = (tier) => {
   if (i >= 0) return i + 1;
   return tier ? TIERS.length + 1 : null;
 };
+
+const NO_TITLES = new Set();
+const NO_PICKS = {};
 
 // The fill of a tag cell that has at least one confirmed decision maker.
 const HAS_DM_CELL = { background: '#DCFCE7' };
@@ -79,10 +82,16 @@ function TierCoverage({ coverage }) {
 // Pick a tag, get its Zoom CSV. Each tag shows how many accounts its file
 // would hold, and a tag with none can't be picked. `rowsFor(tag)` is the
 // file for a tag, already cut by the skip-searched and skip-Qualifying ticks.
-function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearched, skipQualifying, onSkipQualifying, onPick, onClose }) {
+//
+// "Show the titles searched" opens, under each tag, the job titles typed into
+// that tag's logged title searches. Ticking some cuts the tag's file by
+// those titles instead of by "any search logged": to the companies where
+// none of them has been searched yet, or to the ones where one has.
+function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearched, skipQualifying, onSkipQualifying, onPick, onClose,
+  showTitles, onShowTitles, titlesFor, pickedTitles, onToggleTitle, onClearTitles, titleMode, onTitleMode }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
-      <div style={{ background: '#fff', borderRadius: 10, padding: '1rem 1.1rem', width: 380, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: '#fff', borderRadius: 10, padding: '1rem 1.1rem', width: showTitles ? 460 : 380, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
           <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>Zoom Export by Tag</strong>
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>&times;</button>
@@ -98,17 +107,35 @@ function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearch
           <input type="checkbox" checked={skipQualifying} onChange={e => onSkipQualifying(e.target.checked)} style={{ marginTop: 2 }} />
           <span>Leave out companies with a Qualifying status</span>
         </label>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: '0.75rem', color: '#334155', marginBottom: '0.6rem', cursor: 'pointer', lineHeight: 1.35 }}>
+          <input type="checkbox" checked={showTitles} onChange={e => onShowTitles(e.target.checked)} style={{ marginTop: 2 }} />
+          <span>Show the titles searched under each tag, and filter companies by them</span>
+        </label>
+        {showTitles && (
+          <div style={{ fontSize: '0.72rem', color: '#475569', margin: '0 0 0.6rem 1.25rem', lineHeight: 1.5 }}>
+            Tick titles under a tag, then keep the companies where
+            <label style={{ display: 'block', cursor: 'pointer' }}>
+              <input type="radio" name="zoom-title-mode" checked={titleMode === 'without'} onChange={() => onTitleMode('without')} /> none of the ticked titles has been searched
+            </label>
+            <label style={{ display: 'block', cursor: 'pointer' }}>
+              <input type="radio" name="zoom-title-mode" checked={titleMode === 'with'} onChange={() => onTitleMode('with')} /> at least one ticked title has been searched
+            </label>
+          </div>
+        )}
         {tags.map(tag => {
           const n = rowsFor(tag).length;
-          const skipped = skipSearched ? skippedFor(tag) : 0;
+          const titles = showTitles ? titlesFor(tag) : [];
+          const picked = pickedTitles[tag] || NO_TITLES;
+          const byTitle = showTitles && picked.size > 0;
+          const skipped = !byTitle && skipSearched ? skippedFor(tag) : 0;
           return (
+            <div key={tag} style={{ marginBottom: 4 }}>
             <button
-              key={tag}
               type="button"
               disabled={n === 0}
               onClick={() => onPick(tag)}
               style={{
-                display: 'flex', justifyContent: 'space-between', width: '100%', padding: '0.45rem 0.6rem', marginBottom: 4,
+                display: 'flex', justifyContent: 'space-between', width: '100%', padding: '0.45rem 0.6rem',
                 border: '1px solid #E2E8F0', borderRadius: 6, background: n ? '#fff' : '#F8FAFC', fontFamily: 'inherit',
                 fontSize: '0.8rem', color: n ? '#1E293B' : '#94A3B8', cursor: n ? 'pointer' : 'default', textAlign: 'left',
               }}
@@ -117,8 +144,34 @@ function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearch
               <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: '0.72rem', color: n ? '#3B82F6' : '#CBD5E1' }}>
                 {n} account{n === 1 ? '' : 's'}
                 {skipped > 0 && <span style={{ color: '#94A3B8' }}> ({skipped} already searched)</span>}
+                {byTitle && <span style={{ color: '#94A3B8' }}> ({titleMode === 'with' ? 'searched for' : 'not searched for'} {picked.size} title{picked.size === 1 ? '' : 's'})</span>}
               </span>
             </button>
+            {/* A tag nobody has run a title search for has nothing to list,
+                and a box saying so under each of them buried the ones that do. */}
+            {showTitles && titles.length > 0 && (
+              <div style={{ padding: '0.3rem 0.6rem 0.4rem', border: '1px solid #E2E8F0', borderTop: 'none', borderRadius: '0 0 6px 6px', background: '#F8FAFC' }}>
+                {(
+                  <>
+                    {titles.map(t => (
+                      <label
+                        key={t.title}
+                        title={`Typed into ${t.searches} logged search${t.searches === 1 ? '' : 'es'} covering ${t.companies} compan${t.companies === 1 ? 'y' : 'ies'}`}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#334155', cursor: 'pointer', lineHeight: 1.6 }}
+                      >
+                        <input type="checkbox" checked={picked.has(titleKey(t.title))} onChange={() => onToggleTitle(tag, t.title)} />
+                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+                        <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{t.companies} compan{t.companies === 1 ? 'y' : 'ies'}</span>
+                      </label>
+                    ))}
+                    {picked.size > 0 && (
+                      <button type="button" onClick={() => onClearTitles(tag)} style={{ marginTop: 2, padding: 0, border: 'none', background: 'none', color: '#3B82F6', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit' }}>Clear ticked titles</button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+            </div>
           );
         })}
       </div>
@@ -133,6 +186,11 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
   const [zoomOpen, setZoomOpen] = useState(false);
   const [skipSearched, setSkipSearched] = useState(true);
   const [skipQualifying, setSkipQualifying] = useState(true);
+  // The picker's title filter: whether the titles are showing, which are
+  // ticked under each tag (by titleKey), and which side of them to keep.
+  const [showTitles, setShowTitles] = useState(false);
+  const [pickedTitles, setPickedTitles] = useState({});
+  const [titleMode, setTitleMode] = useState('without');
   // The Zoom Search Log, re-read when it changes elsewhere.
   const [zoomLog, setZoomLog] = useState(() => readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)));
   useEffect(() => {
@@ -303,14 +361,45 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
           zoomCompanyName: p?.zoomCompanyName || r.zoomCompanyName,
         });
       });
-      out.set(tag, { all, fresh });
+      // With titles ticked under the tag, the cut is by those titles
+      // instead: the accounts where one of them has been searched, and the
+      // accounts where none has.
+      const picked = showTitles ? pickedTitles[tag] : null;
+      let withTitle = null;
+      let withoutTitle = null;
+      if (picked?.size) {
+        const titleSearched = buildTitleSearchedMatcher(zoomLog.searches, tag, picked);
+        withTitle = [];
+        withoutTitle = [];
+        for (const r of all) {
+          const p = prospectById.get(r.id);
+          (titleSearched({
+            company: p?.company || r.company,
+            zoomCompanyId: p?.zoomCompanyId || r.zoomCompanyId,
+            zoomCompanyName: p?.zoomCompanyName || r.zoomCompanyName,
+          }) ? withTitle : withoutTitle).push(r);
+        }
+      }
+      out.set(tag, { all, fresh, withTitle, withoutTitle });
     }
     return out;
-  }, [tags, zoomSource, zoomLog, prospectById, skipQualifying]);
+  }, [tags, zoomSource, zoomLog, prospectById, skipQualifying, showTitles, pickedTitles]);
+  const titlesByTag = useMemo(
+    () => new Map(tags.map(tag => [tag, titlesLoggedForTag(zoomLog.searches, tag)])),
+    [tags, zoomLog],
+  );
+  const filteredByTitle = (tag) => !!zoomByTag.get(tag)?.withTitle;
   const rowsFor = (tag) => {
     const e = zoomByTag.get(tag);
+    if (e?.withTitle) return titleMode === 'with' ? e.withTitle : e.withoutTitle;
     return (skipSearched ? e?.fresh : e?.all) || [];
   };
+  const toggleTitle = (tag, title) => setPickedTitles(prev => {
+    const next = new Set(prev[tag] || []);
+    const k = titleKey(title);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return { ...prev, [tag]: next };
+  });
   const skippedFor = (tag) => {
     const e = zoomByTag.get(tag);
     return e ? e.all.length - e.fresh.length : 0;
@@ -319,7 +408,11 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
     const picked = rowsFor(tag);
     setZoomOpen(false);
     if (picked.length === 0) {
-      alert(skipSearched && skippedFor(tag)
+      alert(filteredByTitle(tag)
+        ? (titleMode === 'with'
+          ? `None of the accounts left for ${tag} has had the ticked titles searched.`
+          : `Every account left for ${tag} has already had one of the ticked titles searched.`)
+        : skipSearched && skippedFor(tag)
         ? `Every account left for ${tag} already has its ${tag} title search logged. Untick the box to include them.`
         : skipQualifying
         ? `Every Inside Sales and Client account shown here already has a Decision Maker who is a Yes, Sold or Not sold for ${tag}. Untick the Qualifying box to include Qualifying accounts.`
@@ -368,6 +461,14 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
         onSkipQualifying={setSkipQualifying}
         onPick={exportTag}
         onClose={() => setZoomOpen(false)}
+        showTitles={showTitles}
+        onShowTitles={setShowTitles}
+        titlesFor={(tag) => titlesByTag.get(tag) || []}
+        pickedTitles={showTitles ? pickedTitles : NO_PICKS}
+        onToggleTitle={toggleTitle}
+        onClearTitles={(tag) => setPickedTitles(prev => ({ ...prev, [tag]: new Set() }))}
+        titleMode={titleMode}
+        onTitleMode={setTitleMode}
       />
     )}
     </>
