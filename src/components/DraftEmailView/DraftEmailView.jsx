@@ -43,6 +43,7 @@ import { CampaignPicker } from '../common/CampaignPicker';
 import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 import { responseRateOf } from '../../utils/campaignContactHold';
 import { recipientMapSaver } from '../../utils/recipientMaps';
+import { recipientHoverTitle } from '../../utils/recipientHoverTitle';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
 import { companyGoesByGaps } from '../../utils/companyGoesByGaps';
 import { makeCompanyByEmailDomain } from '../../utils/companyByEmailDomain';
@@ -2963,14 +2964,26 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                   overflow: 'hidden', textOverflow: 'ellipsis',
                 };
                 const pillLabel = { fontWeight: 800, fontSize: '0.55rem', textTransform: 'uppercase', letterSpacing: '0.03em' };
+                // Hovering a recipient says who they are: name, then title
+                // (and company), ahead of any warning the chip already
+                // carries. A recipient added without a title (a campaign
+                // import, say) gets it from the HubSpot record for the address.
+                const raw = rawByEmail.get(String(c.email || '').trim().toLowerCase());
+                const whoTitle = recipientHoverTitle({
+                  name: c.name,
+                  title: c.title || raw?.jobtitle,
+                  company: c.company || raw?.company,
+                  email: c.email,
+                });
+                const statusTitle = selfDup
+                  ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)'
+                  : failed ? failedEmailTitle(failed)
+                    : sentDate ? `Already sent this email${sentLabel ? ` on ${sentLabel}` : ''} (per the Email Campaigns tracker)` : '';
                 return (
                   <span
                     key={c.id}
                     className={styles.contactTag}
-                    title={selfDup
-                      ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)'
-                      : failed ? failedEmailTitle(failed)
-                        : sentDate ? `Already sent this email${sentLabel ? ` on ${sentLabel}` : ''} (per the Email Campaigns tracker)` : undefined}
+                    title={[whoTitle, statusTitle].filter(Boolean).join('\n\n')}
                     style={{
                       ...(hasExtras ? { flexDirection: 'column', alignItems: 'flex-start', whiteSpace: 'normal', gap: '0.2rem' } : {}),
                       ...(sentDate ? { background: '#DCFCE7', borderColor: '#4ADE80', color: '#166534' } : {}),
@@ -2984,7 +2997,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                         tabIndex={0}
                         onClick={() => openContact(c)}
                         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openContact(c); } }}
-                        title={`Open ${c.name}`}
+                        title={`${whoTitle}\n\nClick to open ${c.name}`}
                         style={{ cursor: 'pointer', textDecoration: 'underline' }}
                       >{c.name}</span> <span className={styles.contactEmail} style={failed ? { color: '#B91C1C', textDecoration: 'line-through' } : sentDate ? { color: '#15803D' } : undefined}>({c.email})</span>
                       {failed && (
