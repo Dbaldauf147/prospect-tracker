@@ -48,7 +48,7 @@ import { contactIsHidden } from '../ProspectModal/contactTags.js';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
 import { companyGoesByGaps } from '../../utils/companyGoesByGaps';
 import { makeCompanyByEmailDomain } from '../../utils/companyByEmailDomain';
-import { recentCampaignWarnings, sentThisCampaign, RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
+import { recentCampaignWarnings, sentThisCampaign, sentPerActivity, mergeSent, RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
 import RecentCampaignNotice from './RecentCampaignNotice';
 import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
 import { recordDraftHistory } from '../../utils/emailDraftHistoryStore';
@@ -1445,6 +1445,11 @@ const SELF_RECIPIENT = Object.freeze({
   company: '',
 });
 
+// The feed the Activity tab keeps of HubSpot emails, calls and meetings.
+function readActivityFeed() {
+  try { return JSON.parse(userLsGet('hubspot-activity-cache') || 'null'); } catch { return null; }
+}
+
 export function DraftEmailView({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '', onSelectProspect }) {
   const { isAdmin, user } = useAuth();
   // Restore auto-saved compose state
@@ -2307,7 +2312,25 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   );
   // Recipients this draft's own campaign (same subject) has already emailed:
   // their To pills turn green with the send date.
-  const sentHere = useMemo(() => sentThisCampaign(allCampaigns, subject), [allCampaigns, subject]);
+  // Two sources, the later send winning: the saved campaign's rows, which
+  // only learn of a send when the campaign is refreshed, and the Activity
+  // tab's own feed, which has the send as soon as that tab has pulled it.
+  // Without the second, a send the Activity tab already listed left its
+  // pill white until somebody refreshed the campaign.
+  const [activityFeed, setActivityFeed] = useState(readActivityFeed);
+  useEffect(() => {
+    const refresh = () => setActivityFeed(readActivityFeed());
+    window.addEventListener('hubspot-activity-cache-updated', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('hubspot-activity-cache-updated', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+  const sentHere = useMemo(
+    () => mergeSent(sentThisCampaign(allCampaigns, subject), sentPerActivity(activityFeed, subject, settings?.workEmail)),
+    [allCampaigns, subject, activityFeed, settings?.workEmail],
+  );
   // Addresses an email has failed to reach (a bounce on any campaign, or a
   // forwarded failure notice not yet marked fixed): red on the To line and
   // on Variable Coverage, whatever this draft's own send says.
@@ -2983,7 +3006,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                 const statusTitle = selfDup
                   ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)'
                   : failed ? failedEmailTitle(failed)
-                    : sentDate ? `Already sent this email${sentLabel ? ` on ${sentLabel}` : ''} (per the Email Campaigns tracker)` : '';
+                    : sentDate ? `Already sent this email${sentLabel ? ` on ${sentLabel}` : ''} (per the Activity tab or the Email Campaigns tracker)` : '';
                 return (
                   <span
                     key={c.id}

@@ -70,3 +70,76 @@ export function sentThisCampaign(campaigns, currentSubject) {
   }
   return out;
 }
+
+// ---- Sent, per the activity feed -------------------------------------------
+//
+// sentThisCampaign reads the saved campaign's rows, and a row only gets its
+// sentDate when the campaign is refreshed on the Email Campaigns tab. So a
+// send that the Activity tab already listed left the To pill white until
+// somebody went and refreshed the campaign. The feed the Activity tab keeps
+// (the `hubspot-activity-cache`) has the same send, so the pills read it too.
+
+// The draft's subject as a test of a sent subject. A `{variable}` in the
+// draft stands for whatever the send filled in, so the fixed text either
+// side of it has to appear, in order. A subject that is nothing but
+// variables matches nothing.
+function subjectTest(draftSubject) {
+  const parts = String(draftSubject || '').split(/\{[^{}]*\}/).map(norm).filter(Boolean);
+  if (!parts.length || parts.join('').length < 3) return null;
+  return (sentSubject) => {
+    const sent = norm(sentSubject);
+    let from = 0;
+    for (const p of parts) {
+      const at = sent.indexOf(p, from);
+      if (at < 0) return false;
+      from = at + p.length;
+    }
+    return true;
+  };
+}
+
+// An email the user sent, by the Activity tab's own rule: from an @se.com
+// address or the configured work email, or, with no sender on the record
+// (HubSpot leaves it blank on some sends), anything not logged as incoming.
+function isOutbound(e, workEmail) {
+  const from = norm(e?.hs_email_from_email);
+  if (from) return from.includes('@se.com') || (!!workEmail && from === workEmail);
+  return String(e?.hs_email_direction || '').toUpperCase() !== 'INCOMING_EMAIL';
+}
+
+/**
+ * Map of lowercased email -> latest send (ISO string) for outbound emails in
+ * the activity feed whose subject matches this draft's.
+ *
+ *   feed       the Activity tab's cache ({ emails: [...] })
+ *   subject    the draft's subject line
+ *   workEmail  settings.workEmail
+ */
+export function sentPerActivity(feed, subject, workEmail = '') {
+  const out = new Map();
+  const matches = subjectTest(subject);
+  if (!matches) return out;
+  const me = norm(workEmail);
+  for (const e of Array.isArray(feed?.emails) ? feed.emails : []) {
+    if (!matches(e?.hs_email_subject) || !isOutbound(e, me)) continue;
+    const t = new Date(e?.hs_timestamp).getTime();
+    if (!Number.isFinite(t)) continue;
+    for (const part of String(e?.hs_email_to_email || '').split(/[;,]/)) {
+      const email = norm(part);
+      if (!email || email.endsWith('@se.com')) continue;
+      const prev = out.get(email);
+      if (!prev || t > Date.parse(prev)) out.set(email, new Date(t).toISOString());
+    }
+  }
+  return out;
+}
+
+/** Two sent maps as one, the later send winning for an address on both. */
+export function mergeSent(a, b) {
+  const out = new Map(a);
+  for (const [email, sent] of b) {
+    const prev = out.get(email);
+    if (!prev || Date.parse(sent) > Date.parse(prev) || Number.isNaN(Date.parse(prev))) out.set(email, sent);
+  }
+  return out;
+}
