@@ -1,7 +1,7 @@
 // Assertion tests for the Zoom Search Log's parsing and roll-up.
 //   node scripts/zoomSearchLog.test.mjs
 import {
-  splitPastedTable, parseZoomPaste, splitTitles, readLog, makeSearch, companyLog, buildProspectMatcher, cleanZoomId, titleSearchesForCompany, buildTitleSearchedMatcher,
+  splitPastedTable, parseZoomPaste, splitTitles, readLog, makeSearch, companyLog, buildProspectMatcher, cleanZoomId, titleSearchesForCompany, buildTitleSearchedMatcher, titlesLoggedForTag,
 } from '../src/utils/zoomSearchLog.js';
 
 let passed = 0, failed = 0;
@@ -110,6 +110,34 @@ check('company search drops tag and titles',
   check('title searched: company searches do not count', buildTitleSearchedMatcher(searches, '')(urw), '');
   check('title searched: name match with a different Zoom ID is not it',
     buildTitleSearchedMatcher(searches, 'Capital Planning')({ company: 'URW', zoomCompanyId: '9' }), '');
+}
+
+// The titles logged under a tag, and the matcher narrowed to some of them:
+// what Zoom Export by Tag's title filter reads.
+{
+  const log = [
+    { type: 'title', tag: 'ESG', date: '2026-11-01', titles: ['Head of Sustainability', 'ESG Director'], companies: [{ zoomId: '1', name: 'Acme' }, { zoomId: '2', name: 'Beta' }] },
+    { type: 'title', tag: 'esg', date: '2026-11-10', titles: ['esg  director', 'Chief Sustainability Officer'], companies: [{ zoomId: '2', name: 'Beta' }, { zoomId: '3', name: 'Gamma' }] },
+    { type: 'title', tag: 'Utilities', date: '2026-11-05', titles: ['Energy Manager'], companies: [{ zoomId: '1', name: 'Acme' }] },
+    { type: 'company', date: '2026-11-06', companies: [{ zoomId: '1', name: 'Acme' }] },
+  ];
+  check('titles for a tag: one entry per title however it was typed, most companies first',
+    titlesLoggedForTag(log, 'ESG'), [
+      { title: 'ESG Director', searches: 2, companies: 3 },
+      { title: 'Chief Sustainability Officer', searches: 1, companies: 2 },
+      { title: 'Head of Sustainability', searches: 1, companies: 2 },
+    ]);
+  check('titles for a tag: another tag has its own', titlesLoggedForTag(log, 'Utilities').map(t => t.title), ['Energy Manager']);
+  check('titles for a tag: none logged', titlesLoggedForTag(log, 'Procurement'), []);
+
+  const acme = { company: 'Acme', zoomCompanyId: '1' };
+  const gamma = { company: 'Gamma', zoomCompanyId: '3' };
+  const cso = buildTitleSearchedMatcher(log, 'ESG', ['chief sustainability officer']);
+  check('by title: a company in a search that used the title', cso(gamma), '2026-11-10');
+  check('by title: a company only in searches that did not', cso(acme), '');
+  check('by title: any of several titles counts', buildTitleSearchedMatcher(log, 'ESG', new Set(['head of sustainability', 'nope']))(acme), '2026-11-01');
+  check('by title: no titles given is any search for the tag', buildTitleSearchedMatcher(log, 'ESG', [])(acme), '2026-11-01');
+  check('by title: the tag still has to match', buildTitleSearchedMatcher(log, 'ESG', ['Energy Manager'])(acme), '');
 }
 
 console.log(`${passed} passed, ${failed} failed`);

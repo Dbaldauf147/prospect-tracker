@@ -243,15 +243,51 @@ export function titleSearchesForCompany(searches, { company = '', zoomCompanyId 
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
+// How two typed titles are compared: case and spacing don't count.
+export const titleKey = (t) => String(t || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * The titles typed into the title searches logged for `tag`, most used
+ * first: [{ title, searches, companies }]. `searches` is how many logged
+ * searches used the title and `companies` how many distinct companies those
+ * searches covered. A title typed two ways ("CFO", "cfo") is one entry,
+ * spelled the way it was first logged.
+ */
+export function titlesLoggedForTag(searches, tag) {
+  const k = tagKey(tag);
+  const byKey = new Map();
+  for (const s of (searches || [])) {
+    if (s?.type !== 'title' || !k || tagKey(s.tag) !== k) continue;
+    const seen = new Set();
+    for (const raw of (s.titles || [])) {
+      const key = titleKey(raw);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      let e = byKey.get(key);
+      if (!e) { e = { title: String(raw).trim(), searches: 0, companyKeys: new Set() }; byKey.set(key, e); }
+      e.searches += 1;
+      for (const c of (s.companies || [])) { const ck = companyKey(c); if (ck) e.companyKeys.add(ck); }
+    }
+  }
+  return [...byKey.values()]
+    .map(e => ({ title: e.title, searches: e.searches, companies: e.companyKeys.size }))
+    .sort((a, b) => b.companies - a.companies || a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+}
+
 /**
  * (identity) => the newest date a title search for `tag` is logged against
  * that company, or '' when none is. Same identity rule as
  * titleSearchesForCompany (Zoom Company ID when both sides have one, else
  * either name), and the tag compared on tagKey. Read by Zoom Export by Tag
  * to leave out companies whose title search for the tag has already run.
+ *
+ * `titles`, when given and not empty, narrows it to the searches that
+ * typed in at least one of those titles (case and spacing ignored), so the
+ * question becomes "has THIS title been searched here", not "has anything".
  */
-export function buildTitleSearchedMatcher(searches, tag) {
+export function buildTitleSearchedMatcher(searches, tag, titles = null) {
   const k = tagKey(tag);
+  const wanted = new Set([...(titles || [])].map(titleKey).filter(Boolean));
   const byId = new Map();
   const byName = new Map();
   const keep = (map, key, date, cid) => {
@@ -261,6 +297,7 @@ export function buildTitleSearchedMatcher(searches, tag) {
   };
   for (const s of (searches || [])) {
     if (s?.type !== 'title' || !k || tagKey(s.tag) !== k) continue;
+    if (wanted.size && !(s.titles || []).some(t => wanted.has(titleKey(t)))) continue;
     const date = String(s.date || '');
     for (const c of (s.companies || [])) {
       const cid = cleanZoomId(c?.zoomId);
