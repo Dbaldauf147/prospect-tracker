@@ -9,7 +9,7 @@
 // survives the stored snapshot and lands in the email.
 import {
   coverageReading, sameReading, withCoverageReading, coverageRatioByWeek, weekKeyAt,
-  COVERAGE_RATIO_WEEKS,
+  COVERAGE_RATIO_WEEKS, ratioAxisRange,
 } from '../src/utils/weeklyReportTrends.js';
 import { emailSnapshotPayload } from '../src/utils/weeklyReportEmailSnapshot.js';
 import { buildSnapshotDoc } from '../api/_lib/weeklyReportSnapshot.js';
@@ -152,6 +152,15 @@ const REF = at(2026, 9, 23); // a Wednesday; its week starts Mon Sep 21
     !!coverageRatioChartImage({ points: [{ label: 'a', value: null }, { label: 'b', value: 1.2 }] }), true);
   check('no readings is no picture', coverageRatioChartImage({ points: [{ label: 'a', value: null }] }), null);
   check('no series is no picture', coverageRatioChartImage(null), null);
+
+  // The axis both drawings share.
+  check('the axis starts at the lowest week and ends a little above the goal',
+    ratioAxisRange([1.68, 2.31, 2.7], 3.21), { min: 1.68, max: 3.21 * 1.05 });
+  check('a week above the goal is the top of the axis', ratioAxisRange([1.68, 3.9], 3.21), { min: 1.68, max: 3.9 });
+  check('with no goal the axis runs lowest week to highest', ratioAxisRange([1.2, null, 2.4], null), { min: 1.2, max: 2.4 });
+  const flat = ratioAxisRange([2, 2], null);
+  check('a flat series still has a scale', [flat.min, flat.max > flat.min], [2, true]);
+  check('a flat series is still drawn', !!coverageRatioChartImage({ points: [{ label: 'a', value: 2 }, { label: 'b', value: 2 }] }), true);
 
   // The picture survives the payload and the stored snapshot, and becomes
   // an attachment for a sent message.

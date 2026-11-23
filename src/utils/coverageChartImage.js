@@ -20,6 +20,7 @@ import {
 } from './chartRaster.js';
 import { monotonePolyline, numberRuns } from './monotoneCurve.js';
 import { COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from './progressCoverage.js';
+import { ratioAxisRange } from './weeklyReportTrends.js';
 
 export const SCALE = 2;
 // Laid-out size, in CSS pixels: the email's full 800px column, less the
@@ -353,11 +354,13 @@ const RATIO_INSET_X = 18 * SCALE;
 const RATIO_PAD_T = 12 * SCALE;
 const RATIO_PAD_B = 14 * SCALE;
 
-// A gridline step that gives three to six lines whatever the scale.
-function ratioStep(top) {
-  if (top <= 1.5) return 0.25;
-  if (top <= 3) return 0.5;
-  if (top <= 6) return 1;
+// A gridline step that gives two to six lines whatever the span of the axis.
+function ratioStep(span) {
+  if (span <= 0.3) return 0.05;
+  if (span <= 0.6) return 0.1;
+  if (span <= 1.5) return 0.25;
+  if (span <= 3) return 0.5;
+  if (span <= 6) return 1;
   return 2;
 }
 
@@ -385,24 +388,30 @@ export function coverageRatioChartImage(cr) {
   const plotW = plotR - plotL;
   const plotH = plotB - plotT;
 
-  // The axis runs a little past the higher of the goal and the best week,
-  // so neither sits on the top edge, and ends on a whole step.
-  const peak = Math.max(goal || 0, ...known.map(p => p.value), 0.5);
-  const step = ratioStep(peak * 1.1);
-  const top = Math.ceil((peak * 1.1) / step) * step;
+  // The axis starts at the lowest week and ends a little above the goal, or
+  // at the best week where that is higher (ratioAxisRange, shared with the
+  // tab's chart).
+  const { min: bottom, max: top } = ratioAxisRange(known.map(p => p.value), goal);
+  const step = ratioStep(top - bottom);
 
   // A single week is drawn in the middle rather than pinned to one edge.
   const spanL = plotL + RATIO_INSET_X;
   const spanW = plotW - 2 * RATIO_INSET_X;
   const xAt = (i) => spanL + (points.length === 1 ? spanW / 2 : (spanW * i) / (points.length - 1));
-  const yAt = (v) => plotB - (plotH * Math.max(0, v)) / top;
+  const yAt = (v) => plotB - (plotH * (Math.min(top, Math.max(bottom, v)) - bottom)) / (top - bottom);
 
-  for (let v = step; v <= top + 1e-9; v += step) {
+  // Gridlines on whole steps above the baseline. One too close to the
+  // baseline to fit its own figure is left out, since the baseline carries
+  // the lowest week's exact figure.
+  const clear = (GLYPH_H + 3) * SCALE;
+  for (let k = Math.floor(bottom / step) + 1; k * step <= top + 1e-9; k += 1) {
+    const v = k * step;
+    if (plotB - yAt(v) < clear) continue;
     fill(r, plotL, yAt(v), plotW, SCALE, RATIO_GRID);
     text(r, ratioText(v, step), plotL - 4 * SCALE, yAt(v) - GLYPH_H, RATIO_LABEL, SCALE, 'right');
   }
-  fill(r, plotL, yAt(0), plotW, SCALE, RATIO_AXIS);
-  text(r, ratioText(0, step), plotL - 4 * SCALE, yAt(0) - GLYPH_H, RATIO_LABEL, SCALE, 'right');
+  fill(r, plotL, plotB, plotW, SCALE, RATIO_AXIS);
+  text(r, `${bottom.toFixed(2)}X`, plotL - 4 * SCALE, plotB - GLYPH_H, RATIO_LABEL, SCALE, 'right');
 
   // Week labels, thinned on a long series, the last one always shown and
   // kept inside the right edge.
@@ -416,7 +425,9 @@ export function coverageRatioChartImage(cr) {
   }
 
   // The goal: a dashed rule, labelled in the margin past its right-hand end.
-  if (goal != null) {
+  // Where every week is above it, it is below the axis and is not drawn; the
+  // line under the chart still states it.
+  if (goal != null && goal >= bottom) {
     const gy = yAt(goal);
     const dash = 6 * SCALE;
     for (let x = plotL; x < plotR; x += dash * 2) {

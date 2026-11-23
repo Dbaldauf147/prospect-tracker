@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { LiveValue } from '../common/LiveValue';
 import { monotonePath, numberRuns } from '../../utils/monotoneCurve';
+import { ratioAxisRange } from '../../utils/weeklyReportTrends';
 import styles from './WeeklyReportCharts.module.css';
 
 // Columns, one per week. A null value is a week nobody has a record of,
@@ -55,13 +56,17 @@ function labelEvery(n) {
 
 // One or two lines over the same weeks, a dot per known reading. `series`
 // is [{ key, name, color }], each reading `point[key]`. `goal`, when set,
-// is drawn as a dashed line. The y axis starts at zero.
-export function LineTrendChart({ id, points = [], series = [], goal = null, yMax = null, fmt, breakdownFor }) {
+// is drawn as a dashed line. The y axis starts at the lowest reading and
+// ends a little above the goal, or at the highest reading where that is
+// higher (ratioAxisRange, the same axis the email's picture draws).
+export function LineTrendChart({ id, points = [], series = [], goal = null, fmt, breakdownFor }) {
   const values = points.flatMap(p => series.map(s => p[s.key])).filter(Number.isFinite);
-  const top = yMax ?? (Math.max(Number.isFinite(goal) ? goal : 0, ...values, 0) * 1.1 || 1);
+  const { min: bottom, max: top } = ratioAxisRange(values, goal);
   const n = points.length;
   const x = (i) => (n <= 1 ? 50 : (i / (n - 1)) * 100);
-  const y = (v) => 100 - (v / top) * 100;
+  const y = (v) => 100 - ((v - bottom) / (top - bottom)) * 100;
+  // A goal every reading has passed sits below the axis and is not drawn.
+  const showGoal = Number.isFinite(goal) && goal >= bottom;
   const every = labelEvery(n);
 
   // A line breaks at a missing week rather than bridging it.
@@ -91,20 +96,20 @@ export function LineTrendChart({ id, points = [], series = [], goal = null, yMax
       <div className={styles.lineBody}>
         <div className={styles.yAxis}>
           <span>{fmt(top)}</span>
-          <span>{fmt(0)}</span>
+          <span>{fmt(bottom)}</span>
         </div>
         <div className={styles.plot}>
           <svg className={styles.svg} viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <line x1="0" x2="100" y1="100" y2="100" className={styles.baseline} />
             <line x1="0" x2="100" y1="50" y2="50" className={styles.grid} />
-            {Number.isFinite(goal) && (
+            {showGoal && (
               <line x1="0" x2="100" y1={y(goal)} y2={y(goal)} className={styles.goalLine} />
             )}
             {paths.map(s => s.d && (
               <path key={s.key} d={s.d} fill="none" stroke={s.color} className={styles.line} />
             ))}
           </svg>
-          {Number.isFinite(goal) && (
+          {showGoal && (
             <span className={styles.goalLabel} style={{ top: `${y(goal)}%` }}>Goal {fmt(goal)}</span>
           )}
           {points.map((p, i) => series.map(s => (Number.isFinite(p[s.key]) ? (
