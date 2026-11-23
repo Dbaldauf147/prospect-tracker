@@ -54,6 +54,9 @@ const VIEWS = [
 ];
 const VIEW_KEY = 'contact-titles:view';
 
+// A to Z, case ignored, for the Not terms.
+const byTermAZ = (a, b) => String(a).trim().localeCompare(String(b).trim(), undefined, { sensitivity: 'base' });
+
 export function ContactTitlesView({ settings, updateSettings, prospects, onSelectProspect, cdmName, targetAccountsData }) {
   const [view, setView] = useState(() => {
     try {
@@ -298,9 +301,13 @@ function TitleSearches({ settings, updateSettings, prospects, onSelectProspect, 
     return owners ? [...owners].filter(([i]) => i !== si).map(([, name]) => name) : [];
   };
 
+  // The Not term whose box has the cursor, and its text when the cursor
+  // went in: what it is sorted by until the box is left.
+  const [editingTerm, setEditingTerm] = useState(null);
+
   async function copy(entry, group, gi) {
     const id = `${entry.key}:${gi}`;
-    const terms = group.kind === 'exclude' ? [...group.terms, ...inheritedFor(group)] : group.terms;
+    const terms = group.kind === 'exclude' ? [...group.terms, ...inheritedFor(group)].sort(byTermAZ) : group.terms;
     try {
       await navigator.clipboard?.writeText(terms.join(', '));
       setCopied(id);
@@ -400,7 +407,7 @@ function TitleSearches({ settings, updateSettings, prospects, onSelectProspect, 
                       >{copied === `${entry.key}:general` ? 'Copied' : 'Copy'}</button>
                     </div>
                     <div className={styles.terms}>
-                      {generalNot.map((t, ti) => (
+                      {[...generalNot].sort(byTermAZ).map((t, ti) => (
                         <span
                           key={ti}
                           className={[styles.termExclude, styles.termInherited, hits(t, needle) ? styles.termHit : ''].filter(Boolean).join(' ')}
@@ -441,11 +448,30 @@ function TitleSearches({ settings, updateSettings, prospects, onSelectProspect, 
                         >{copied === id ? 'Copied' : 'Copy'}</button>
                       </div>
                       <div className={styles.terms}>
-                        {group.terms.map((t, ti) => {
+                        {/* A Not group reads A to Z, its own terms and the
+                            general ones in one run. The term being typed in
+                            holds its place until the box is left, so it
+                            doesn't jump away mid-word. */}
+                        {(exclude
+                          ? [
+                            ...group.terms.map((t, ti) => ({ t, ti, sortText: editingTerm?.id === `${id}:${ti}` ? editingTerm.text : t })),
+                            ...inherited.map((t, ti) => ({ t, ti, general: true, sortText: t })),
+                          ].sort((a, b) => byTermAZ(a.sortText, b.sortText))
+                          : group.terms.map((t, ti) => ({ t, ti }))
+                        ).map(({ t, ti, general }) => {
+                          if (general) {
+                            return (
+                          <span
+                            key={`general-${ti}`}
+                            className={[styles.termExclude, styles.termInherited, hits(t, needle) ? styles.termHit : ''].filter(Boolean).join(' ')}
+                            title="From the Not list that applies to every search. Edit it in the box at the top."
+                          >{t}</span>
+                            );
+                          }
                           const others = exclude ? [] : alsoIn(t, si);
                           return (
                           <span
-                            key={ti}
+                            key={`own-${ti}`}
                             className={[
                               exclude ? styles.termEditExclude : styles.termEdit,
                               others.length ? styles.termShared : '',
@@ -460,7 +486,8 @@ function TitleSearches({ settings, updateSettings, prospects, onSelectProspect, 
                               size={inputSize(t)}
                               aria-label="Search term"
                               onChange={e => setTermAt(si, gi, ti, e.target.value)}
-                              onBlur={() => { if (!t.trim()) removeTerm(si, gi, ti); }}
+                              onFocus={() => setEditingTerm({ id: `${id}:${ti}`, text: t })}
+                              onBlur={() => { setEditingTerm(null); if (!t.trim()) removeTerm(si, gi, ti); }}
                             />
                             <button
                               type="button"
@@ -476,13 +503,6 @@ function TitleSearches({ settings, updateSettings, prospects, onSelectProspect, 
                           </span>
                           );
                         })}
-                        {inherited.map((t, ti) => (
-                          <span
-                            key={`general-${ti}`}
-                            className={[styles.termExclude, styles.termInherited, hits(t, needle) ? styles.termHit : ''].filter(Boolean).join(' ')}
-                            title="From the Not list that applies to every search. Edit it in the box at the top."
-                          >{t}</span>
-                        ))}
                         <AddTerm
                           onAdd={v => addTerm(si, gi, v)}
                           focusNow={gi === firstExclude && focusAdd === entry.key}
