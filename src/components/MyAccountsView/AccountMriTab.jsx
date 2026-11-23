@@ -1,7 +1,10 @@
 // My Accounts > Strategic Accounts > Account MRI: the strategic accounts
 // with the tracker's answer to each row of the Account MRI intake
-// template's first tab (1 Profile & Background), and the button that hands
-// the template back with those answers filled in for one company.
+// template's first tab (1 Profile & Background), how many decision makers
+// and saved sites each has, and the button that hands the template back
+// filled in for one company: tab 1 from those answers, tab 3 (Buying
+// Committee) with its decision makers, tab 5 (Sites & Utilities) with the
+// site list saved on its company popup.
 //
 // Which tracker field answers which row is Dan's own mapping, column B of
 // the template; it lives in utils/accountMri.js, where the workbook is
@@ -9,8 +12,9 @@
 // search box or any column filter), since the template holds one account.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MRI_FILLED_FIELDS, MRI_PROFILE_SHEET_PATH, accountMriProfile, fillProfileSheet, mriFileName } from '../../utils/accountMri';
+import { MRI_FILLED_FIELDS, accountMriProfile, buyingCommitteeRows, siteUtilityRows, fillAccountMriWorkbook, mriFileName } from '../../utils/accountMri';
 import { isPrimaryPoc } from '../../utils/attendeeRoles';
+import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { companyRosterContacts } from '../../utils/companyRoster';
 import { contractsSummary, dealsForCompany } from '../../utils/clientContracts';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
@@ -22,6 +26,8 @@ const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 // Account name is the Company column itself.
 const FIELD_COLUMNS = MRI_FILLED_FIELDS.filter(f => f.key !== 'accountName');
 const WIDE = new Set(['mainContact', 'competitors', 'background', 'services']);
+// The key a company's site list is saved under, as the company popup makes it.
+const siteListSlug = company => String(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
 
 export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings, onSelect }) {
   // The Deals subtab's agreements and its client-name mapping, which the
@@ -37,13 +43,18 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
     };
   }, []);
 
-  // Only the tagged contacts are ever read, so the roster rule runs over
-  // those few rather than over every contact for every account.
-  const pocContacts = useMemo(() => (hubspotContacts || []).filter(isPrimaryPoc), [hubspotContacts]);
+  // Only the tagged contacts are ever read (decision makers for tab 3, the
+  // Primary Point of Contact for tab 1), so the roster rule runs over those
+  // rather than over every contact for every account.
+  const taggedContacts = useMemo(
+    () => (hubspotContacts || []).filter(c => isPrimaryPoc(c) || isDecisionMakerContact(c)),
+    [hubspotContacts],
+  );
+  const siteLists = settings?.companySiteLists;
 
   const mriRows = useMemo(() => rows.map(r => {
     const record = r.record || { company: r.company, status: r.status, cdm: r.cdm };
-    const contacts = companyRosterContacts(pocContacts, record, {
+    const contacts = companyRosterContacts(taggedContacts, record, {
       links: settings?.companyContactLinks,
       exclusions: settings?.companyContactExclusions,
     });
@@ -52,6 +63,8 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
       id: r.id,
       company: r.company,
       record: r.record,
+      committee: buyingCommitteeRows(contacts.filter(isDecisionMakerContact)),
+      sites: siteUtilityRows((siteLists || {})[siteListSlug(record.company)]),
       profile: accountMriProfile({
         record,
         tier: r.tier,
@@ -59,7 +72,7 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
         contracts: companyDeals.length ? contractsSummary(companyDeals) : null,
       }),
     };
-  }), [rows, pocContacts, deals, settings?.companyContactLinks, settings?.companyContactExclusions]);
+  }), [rows, taggedContacts, siteLists, deals, settings?.companyContactLinks, settings?.companyContactExclusions]);
 
   const columns = useMemo(() => [
     {
@@ -94,6 +107,24 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
         return <span title={String(v)} style={{ color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{typeof v === 'number' ? v.toLocaleString() : v}</span>;
       },
     })),
+    {
+      key: 'decisionMakers', label: 'Decision Makers', defaultWidth: 150,
+      headerTitle: 'Contacts at the company tagged Decision Maker. The export lists them on tab 3, Buying Committee.',
+      getSortValue: r => r.committee.length,
+      getFilterValue: r => r.committee.map(c => c.name).join(', '),
+      exportValue: r => r.committee.map(c => c.name).join(', '),
+      render: r => (r.committee.length
+        ? <span title={r.committee.map(c => (c.title ? `${c.name}, ${c.title}` : c.name)).join('\n')} style={{ color: '#475569' }}>{r.committee.length}</span>
+        : blank),
+    },
+    {
+      key: 'siteList', label: 'Site List', defaultWidth: 120,
+      headerTitle: 'Sites still open on the site list saved on the company popup. The export lists them on tab 5, Sites & Utilities.',
+      getSortValue: r => r.sites.length,
+      getFilterValue: r => (r.sites.length ? `${r.sites.length} sites` : 'None saved'),
+      exportValue: r => r.sites.length || '',
+      render: r => (r.sites.length ? <span style={{ color: '#475569' }}>{r.sites.length.toLocaleString()}</span> : blank),
+    },
   ], [onSelect]);
 
   // What the table is showing after its own column filters: the export is
@@ -111,10 +142,7 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
       const [{ default: JSZip }, res] = await Promise.all([import('jszip'), fetch(templateUrl)]);
       if (!res.ok) throw new Error(`The template could not be loaded (${res.status}).`);
       const zip = await JSZip.loadAsync(await res.arrayBuffer());
-      const sheet = zip.file(MRI_PROFILE_SHEET_PATH);
-      if (!sheet) throw new Error('The template has no Profile & Background tab.');
-      const { xml } = fillProfileSheet(await sheet.async('string'), one.profile);
-      zip.file(MRI_PROFILE_SHEET_PATH, xml);
+      await fillAccountMriWorkbook(zip, { profile: one.profile, committee: one.committee, sites: one.sites });
       const blob = await zip.generateAsync({
         type: 'blob',
         compression: 'DEFLATE',
@@ -139,7 +167,7 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
     key: 'mri-export',
     label: busy ? 'Exporting...' : 'Export Account MRI',
     title: one
-      ? `Download the Account MRI intake template with tab 1 filled in for ${one.company}.`
+      ? `Download the Account MRI intake template filled in for ${one.company}: tab 1, its decision makers on tab 3 and its site list on tab 5.`
       : 'Filter the table to one company (the search box or any column filter) to export its Account MRI template.',
     disabled: !one || busy,
     onClick: exportOne,
@@ -149,8 +177,8 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
     <>
       <div style={{ fontSize: '0.72rem', color: one ? '#047857' : '#64748B' }}>
         {one
-          ? `Ready to export ${one.company}: Export Account MRI fills tab 1 of the intake template.`
-          : 'Tab 1 of the Account MRI intake template (Profile & Background), one column per row the tracker fills. Filter to one company to export its template.'}
+          ? `Ready to export ${one.company}: tab 1, ${one.committee.length} decision maker${one.committee.length === 1 ? '' : 's'} on tab 3 and ${one.sites.length.toLocaleString()} site${one.sites.length === 1 ? '' : 's'} on tab 5.`
+          : 'The Account MRI intake template: tab 1 (Profile & Background) one column per row the tracker fills, plus the decision makers for tab 3 and the saved site list for tab 5. Filter to one company to export its template.'}
         {error && <span style={{ color: '#B91C1C', marginLeft: 8 }}>{error}</span>}
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
