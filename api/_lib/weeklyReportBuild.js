@@ -42,7 +42,7 @@ import {
 } from '../../src/utils/weeklyReport.js';
 import { buildReviewSnapshot, headlineKpis, emailKpiCards } from '../../src/utils/weeklyReview.js';
 import {
-  emailsByWeek, newOppsByWeek, coverageByWeek,
+  emailsByWeek, newOppsByWeek, coverageByWeek, coverageRefMs,
   recentWeeks, TREND_WEEKS, COVERAGE_MONTHS,
   coverageReading, coverageRatioByWeek, withCoverageReading, weekKeyAt, COVERAGE_RATIO_WEEKS,
   COVERAGE_FILL_GRACE_MS,
@@ -274,7 +274,10 @@ export function buildReport(sources, period, { now = null, timeZone = '' } = {})
     // Hold Off (substatus or status) and Old Client accounts are left out
     // the same way.
     progressWeeks: excludeUntrackedFromWeeks(s.progressWeeks, withCoverageLeftOut(s.clientUntrackedMap, s.prospects)).weeks,
-    refMs: start,
+    // Through the week the email is sent in, not just the one it reports:
+    // Monday's email then ends on this week's point when the Progress tab
+    // has already recorded one.
+    refMs: coverageRefMs({ start, end, now: now ?? start }),
     months: COVERAGE_MONTHS,
   }));
 
