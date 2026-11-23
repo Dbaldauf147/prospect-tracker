@@ -31,7 +31,8 @@ import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage, zoomE
 import { TIERS } from '../../data/enums';
 import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
 import { ZoomExcludedCell } from './ZoomExcludedCell';
-import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, buildTitleSearchedMatcher, titlesLoggedForTag, titleKey } from '../../utils/zoomSearchLog';
+import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, buildTitleSearchedMatcher, titlesLoggedForTag, titlesNotLoggedForTag, titleKey } from '../../utils/zoomSearchLog';
+import { resolveTitleSearches } from '../../data/contactTitleSearches';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { OWN_TARGET_TIER_LABEL } from '../../utils/tierSource';
 import { companyClosedBucketReasons, serviceBucketContext } from '../../utils/bucketServices';
@@ -87,7 +88,9 @@ function TierCoverage({ coverage }) {
 // that tag's logged title searches. Ticking some cuts the tag's file by
 // those titles instead of by "any search logged": to the companies where
 // none of them has been searched yet, or to the ones where one has.
-function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearched, skipQualifying, onSkipQualifying, onPick, onClose,
+// After the logged titles come the tag's titles from Contacts > Titles that
+// no logged search has used yet, marked "not searched yet".
+export function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearched, skipQualifying, onSkipQualifying, onPick, onClose,
   showTitles, onShowTitles, titlesFor, pickedTitles, onToggleTitle, onClearTitles, titleMode, onTitleMode }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
@@ -109,7 +112,7 @@ function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearch
         </label>
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: '0.75rem', color: '#334155', marginBottom: '0.6rem', cursor: 'pointer', lineHeight: 1.35 }}>
           <input type="checkbox" checked={showTitles} onChange={e => onShowTitles(e.target.checked)} style={{ marginTop: 2 }} />
-          <span>Show the titles searched under each tag, and filter companies by them</span>
+          <span>Show the titles searched under each tag, plus the Contacts &gt; Titles ones not searched yet, and filter companies by them</span>
         </label>
         {showTitles && (
           <div style={{ fontSize: '0.72rem', color: '#475569', margin: '0 0 0.6rem 1.25rem', lineHeight: 1.5 }}>
@@ -156,12 +159,16 @@ function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearch
                     {titles.map(t => (
                       <label
                         key={t.title}
-                        title={`Typed into ${t.searches} logged search${t.searches === 1 ? '' : 'es'} covering ${t.companies} compan${t.companies === 1 ? 'y' : 'ies'}`}
+                        title={t.unlogged
+                          ? `On Contacts > Titles under ${t.bucket}, and not in any logged search for this tag yet`
+                          : `Typed into ${t.searches} logged search${t.searches === 1 ? '' : 'es'} covering ${t.companies} compan${t.companies === 1 ? 'y' : 'ies'}`}
                         style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#334155', cursor: 'pointer', lineHeight: 1.6 }}
                       >
                         <input type="checkbox" checked={picked.has(titleKey(t.title))} onChange={() => onToggleTitle(tag, t.title)} />
                         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
-                        <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{t.companies} compan{t.companies === 1 ? 'y' : 'ies'}</span>
+                        {t.unlogged
+                          ? <span style={{ color: '#B45309', fontWeight: 600 }}>not searched yet</span>
+                          : <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{t.companies} compan{t.companies === 1 ? 'y' : 'ies'}</span>}
                       </label>
                     ))}
                     {picked.size > 0 && (
@@ -384,9 +391,15 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
     }
     return out;
   }, [tags, zoomSource, zoomLog, prospectById, skipQualifying, showTitles, pickedTitles]);
+  // The Contacts > Titles searches: their titles not yet in any logged
+  // search for a tag are listed after the logged ones.
+  const titleBuckets = useMemo(() => resolveTitleSearches(settings), [settings]);
   const titlesByTag = useMemo(
-    () => new Map(tags.map(tag => [tag, titlesLoggedForTag(zoomLog.searches, tag)])),
-    [tags, zoomLog],
+    () => new Map(tags.map(tag => [tag, [
+      ...titlesLoggedForTag(zoomLog.searches, tag),
+      ...titlesNotLoggedForTag(zoomLog.searches, tag, titleBuckets, tags),
+    ]])),
+    [tags, zoomLog, titleBuckets],
   );
   const filteredByTitle = (tag) => !!zoomByTag.get(tag)?.withTitle;
   const rowsFor = (tag) => {

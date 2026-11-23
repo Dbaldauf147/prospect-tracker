@@ -275,6 +275,45 @@ export function titlesLoggedForTag(searches, tag) {
 }
 
 /**
+ * The tag a Contacts > Titles search bucket most likely stands for: the tag
+ * whose name the bucket's name starts with ("ESG reporting" is ESG), longest
+ * first so "Climate Risk" beats a shorter tag that also fits. '' when none.
+ */
+export function tagForTitleBucket(bucket, tags) {
+  const name = tagKey(bucket?.name);
+  return [...(tags || [])].sort((a, c) => tagKey(c).length - tagKey(a).length)
+    .find(t => tagKey(t) && name.startsWith(tagKey(t))) || '';
+}
+
+/**
+ * The titles on the Contacts > Titles page for `tag` that no logged title
+ * search for the tag has used yet, in the order the page lists them:
+ * [{ title, bucket, searches: 0, companies: 0, unlogged: true }]. Only a
+ * bucket's titles to search for count; its "Not" terms are not titles.
+ * Shaped like titlesLoggedForTag's entries so the two lists can be shown
+ * as one.
+ */
+export function titlesNotLoggedForTag(searches, tag, buckets, tags) {
+  const k = tagKey(tag);
+  if (!k) return [];
+  const logged = new Set(titlesLoggedForTag(searches, tag).map(t => titleKey(t.title)));
+  const out = [];
+  for (const b of (buckets || [])) {
+    if (tagKey(tagForTitleBucket(b, tags)) !== k) continue;
+    for (const g of (b.groups || [])) {
+      if (g?.kind === 'exclude') continue;
+      for (const raw of (g.terms || [])) {
+        const key = titleKey(raw);
+        if (!key || logged.has(key)) continue;
+        logged.add(key);
+        out.push({ title: String(raw).trim(), bucket: b.name || '', searches: 0, companies: 0, unlogged: true });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * (identity) => the newest date a title search for `tag` is logged against
  * that company, or '' when none is. Same identity rule as
  * titleSearchesForCompany (Zoom Company ID when both sides have one, else
