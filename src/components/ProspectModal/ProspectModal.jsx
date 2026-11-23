@@ -151,6 +151,7 @@ import {
 } from '../../utils/targetAccountCdm';
 import {
   divisionsFor,
+  splitSharedTextDivisionsPatch,
   divisionParentsFor,
   setDivisionParentPatch,
   buildDivisionTree,
@@ -5468,7 +5469,7 @@ function OppProgressPicker({ value, disabled, onChange }) {
   );
 }
 
-function DivisionsSection({ parentId, parentCompany, prospects, contacts, settings, updateSettings, onOpenContact = () => {} }) {
+function DivisionsSection({ parentId, parentCompany, prospects, contacts, contactsLoaded = true, settings, updateSettings, onOpenContact = () => {} }) {
   // The whole of the Divisions tab, so there is nothing to collapse: the
   // chart is what the tab was opened for.
   const open = true;
@@ -5484,6 +5485,20 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   const [addingParent, setAddingParent] = useState(false);
 
   const divisions = divisionsFor(settings, parentId);
+
+  // A typed division used to be identified by its name alone, so "Real
+  // Estate" under this company and "Real Estate" under another were one box
+  // and showed each other's people. New ones are scoped to their owner; this
+  // splits off this company's copy of any that are still shared, taking its
+  // own contacts with it. It waits for the contact list, because that list
+  // is how it tells whose people are whose, and it has nothing to do once
+  // the split is saved.
+  useEffect(() => {
+    if (!contactsLoaded) return;
+    const ownIds = (contacts || []).map(c => String(c.id || c.vid || '')).filter(Boolean);
+    const patch = splitSharedTextDivisionsPatch(settings, parentId, ownIds);
+    if (patch) updateSettings(patch);
+  }, [settings, parentId, contacts, contactsLoaded, updateSettings]);
 
   // Every company in the tracker, sorted, minus this one.
   const companies = useMemo(() => (prospects || [])
@@ -15771,6 +15786,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               parentCompany={fields.company}
               prospects={prospects}
               contacts={localContacts}
+              contactsLoaded={Array.isArray(hubspotContacts) && hubspotContacts.length > 0}
               settings={settings}
               updateSettings={updateSettings}
               onOpenContact={setEditingContact}
