@@ -1,7 +1,7 @@
 // Assertion tests for the Zoom Search Log's parsing and roll-up.
 //   node scripts/zoomSearchLog.test.mjs
 import {
-  splitPastedTable, parseZoomPaste, splitTitles, readLog, makeSearch, companyLog, buildProspectMatcher, cleanZoomId, titleSearchesForCompany, buildTitleSearchedMatcher, titlesLoggedForTag,
+  splitPastedTable, parseZoomPaste, splitTitles, readLog, makeSearch, companyLog, buildProspectMatcher, cleanZoomId, titleSearchesForCompany, buildTitleSearchedMatcher, titlesLoggedForTag, titlesNotLoggedForTag, tagForTitleBucket,
 } from '../src/utils/zoomSearchLog.js';
 
 let passed = 0, failed = 0;
@@ -138,6 +138,31 @@ check('company search drops tag and titles',
   check('by title: any of several titles counts', buildTitleSearchedMatcher(log, 'ESG', new Set(['head of sustainability', 'nope']))(acme), '2026-11-01');
   check('by title: no titles given is any search for the tag', buildTitleSearchedMatcher(log, 'ESG', [])(acme), '2026-11-01');
   check('by title: the tag still has to match', buildTitleSearchedMatcher(log, 'ESG', ['Energy Manager'])(acme), '');
+}
+
+// The Contacts > Titles titles a tag's logged searches have not used yet.
+{
+  const tags = ['ESG', 'Climate', 'Climate Risk', 'Utilities'];
+  const buckets = [
+    { key: 'esg', name: 'ESG reporting', groups: [
+      { label: 'Not', kind: 'exclude', terms: ['Intern'] },
+      { label: 'Include', kind: 'include', terms: ['ESG Director', 'Sustainability', 'CSO', 'sustainability'] },
+    ] },
+    { key: 'cr', name: 'Climate Risk', groups: [{ label: '', kind: 'include', terms: ['Climate Risk'] }] },
+    { key: 'pe', name: 'Private Equity', groups: [{ label: '', kind: 'include', terms: ['Partner'] }] },
+  ];
+  const log = [{ type: 'title', tag: 'ESG', date: '2026-11-01', titles: ['esg  director'], companies: [{ zoomId: '1', name: 'Acme' }] }];
+  check('bucket tag: the tag its name starts with', tagForTitleBucket(buckets[0], tags), 'ESG');
+  check('bucket tag: longest tag wins', tagForTitleBucket(buckets[1], tags), 'Climate Risk');
+  check('bucket tag: none fits', tagForTitleBucket(buckets[2], tags), '');
+  check('not logged: include titles the tag has not searched, once each, Not terms left out',
+    titlesNotLoggedForTag(log, 'ESG', buckets, tags), [
+      { title: 'Sustainability', bucket: 'ESG reporting', searches: 0, companies: 0, unlogged: true },
+      { title: 'CSO', bucket: 'ESG reporting', searches: 0, companies: 0, unlogged: true },
+    ]);
+  check('not logged: a tag with nothing logged lists its whole bucket', titlesNotLoggedForTag(log, 'Climate Risk', buckets, tags).map(t => t.title), ['Climate Risk']);
+  check('not logged: the shorter tag does not take the longer tag\'s bucket', titlesNotLoggedForTag(log, 'Climate', buckets, tags), []);
+  check('not logged: a tag with no bucket', titlesNotLoggedForTag(log, 'Utilities', buckets, tags), []);
 }
 
 console.log(`${passed} passed, ${failed} failed`);

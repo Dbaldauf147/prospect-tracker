@@ -11,11 +11,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ZOOM_SEARCH_LOG_KEY, SEARCH_TYPES, parseZoomPaste, splitTitles, readLog, makeSearch, companyLog, companyKey, buildProspectMatcher,
+  tagForTitleBucket,
 } from '../../utils/zoomSearchLog';
 import { readWorkKey, writeWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { resolveTitleSearches } from '../../data/contactTitleSearches';
 import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
-import { TAG_OPTIONS, tagKey } from '../../utils/contactTagReview';
+import { TAG_OPTIONS } from '../../utils/contactTagReview';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 
 const loadLog = () => readLog(readWorkKey(ZOOM_SEARCH_LOG_KEY));
@@ -77,11 +78,7 @@ export function ZoomSearchLogView({ prospects = [], onUpdateProspect, settings }
   // longest first so "Climate Risk" beats a shorter tag that also fits.
   const includeTerms = (b) => (b.groups || []).filter(g => g.kind !== 'exclude').flatMap(g => g.terms || []);
   const excludeTerms = (b) => (b.groups || []).filter(g => g.kind === 'exclude').flatMap(g => g.terms || []);
-  const tagForBucket = (b) => {
-    const name = tagKey(b.name);
-    return [...tags].sort((a, c) => tagKey(c).length - tagKey(a).length)
-      .find(t => tagKey(t) && name.startsWith(tagKey(t))) || '';
-  };
+  const tagForBucket = (b) => tagForTitleBucket(b, tags);
   function pullBucket(b) {
     setType('title');
     setBucketKey(b.key);
