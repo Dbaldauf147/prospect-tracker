@@ -117,17 +117,55 @@ function looksLikeMeta(line) {
 // `links` is the anchors from the clipboard's HTML, when the paste carried
 // any, as [{ text, href }]: plain text loses the URL, so a source line is
 // matched back to its link by its text.
-export function parseDigestText(text, links = []) {
-  const tokens = String(text || '')
-    .split(/[\r\n\t]+/)
-    .map((s) => s.replace(/\u00a0/g, ' ').trim())
-    .filter(Boolean);
+// The email's current layout is one table (PE Firm, Date of Sale, Company
+// Purchased, HQ of Purchased Company, Seller of that Company), which copies
+// as one tab-separated line per deal. Those rows are read first; whatever is
+// left is read the older way, so a paste from an older email still works.
+function tableRowDeal(line, linkFor) {
+  const cells = line.split('\t').map((s) => s.replace(/\u00a0/g, ' ').trim());
+  if (cells.length < 5 || !DATE_LINE.test(cells[1]) || !cells[2]) return null;
+  const [firm, date, asset, hq, seller] = cells;
+  // A row whose seller is the firm itself is that firm's sale; the buyer is
+  // not in the table, so the counterparty is left for the reader to fill in.
+  const a = firm.toLowerCase();
+  const b = seller.toLowerCase();
+  // "Apollo funds" selling for Apollo Global Management is the firm too.
+  const first = (s) => s.split(/\s+/)[0];
+  const sold = !!b && (a.includes(b) || b.includes(a) || (first(a).length >= 3 && first(a) === first(b)));
+  return {
+    kind: sold ? 'Disposition' : 'Acquisition',
+    date,
+    asset,
+    counterparty: sold ? '' : seller,
+    entity: '',
+    dealType: '',
+    sector: '',
+    value: '',
+    sites: '',
+    sourceTitle: '',
+    sourceUrl: linkFor(asset),
+    notes: hq ? `HQ: ${hq}` : '',
+  };
+}
 
+export function parseDigestText(text, links = []) {
   const linkFor = (title) => {
     const want = title.replace(ARROW, '').trim().toLowerCase();
     const hit = (links || []).find((l) => String(l?.text || '').replace(ARROW, '').trim().toLowerCase() === want);
     return hit && /^https?:\/\//i.test(String(hit.href || '')) ? String(hit.href) : '';
   };
+
+  const fromTable = [];
+  const rest = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const deal = tableRowDeal(line, linkFor);
+    if (deal) fromTable.push(deal); else rest.push(line);
+  }
+
+  const tokens = rest.join('\n')
+    .split(/[\r\n\t]+/)
+    .map((s) => s.replace(/\u00a0/g, ' ').trim())
+    .filter(Boolean);
 
   const deals = [];
   let cur = null;
@@ -170,7 +208,7 @@ export function parseDigestText(text, links = []) {
     cur.notes = cur.notes ? `${cur.notes} ${tok}` : tok;
   }
 
-  return deals
+  return fromTable.concat(deals
     .filter((d) => d.asset)
     .map((d) => ({
       kind: d.kind || 'Acquisition',
@@ -187,7 +225,7 @@ export function parseDigestText(text, links = []) {
       sourceTitle: d.sourceTitle || '',
       sourceUrl: d.sourceUrl || '',
       notes: d.notes || '',
-    }));
+    })));
 }
 
 // A pasted deal that is already on the log (same asset, same date) is not

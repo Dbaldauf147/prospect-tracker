@@ -193,7 +193,7 @@ const stubResearch = (ms, deals = () => []) => (entry, since, until, { signal } 
   ];
   const html = buildNewsEmailHtml(results, { since: 0, until: 86_400_000 });
 
-  ok(html.includes('No deals found (1)'), 'email: searched-and-empty gets its own count');
+  ok(!html.includes('Quiet Co'), 'email: a company with nothing to report is not listed');
   ok(html.includes('Search failed (1)'), 'email: a failure is not filed under "no acquisitions found"');
   ok(html.includes('Research timed out'), 'email: the failure reason is actually printed');
   ok(html.includes('Not searched this run'), 'email: unreached companies are called out');
@@ -429,7 +429,6 @@ const feedOf = (xml) => async () => ({ ok: true, status: 200, text: async () => 
   ];
   const html = buildNewsEmailHtml(results, { since: 0, until: 86_400_000 });
   ok(!html.includes('Search failed'), 'fallback: a fallback with no deals is not a failure');
-  ok(html.includes('No deals found'), 'fallback: it is filed as searched-and-empty');
   ok(html.includes('fell back to a slower web search'), 'fallback: the email still says the feeds were down');
   ok(html.includes('Fallback Co'), 'fallback: the affected company is named');
 
@@ -521,20 +520,16 @@ const feedOf = (xml) => async () => ({ ok: true, status: 200, text: async () => 
 }
 
 {
-  // Headlines the rules could not place are listed under the firm, so a
-  // company with only those still gets a section rather than being filed
-  // under "no acquisitions found".
+  // The email is the deal table and nothing else, so headlines the rules
+  // could not place are no longer printed in it.
   const results = [{
     company: 'Blackstone', isPe: true, deals: [], skipped: false, error: null,
     unsure: [{ title: 'Blackstone backs management buyout of Delta', announcedOn: '2026-09-09',
       sourceTitle: 'PE Hub', sourceUrl: 'https://ex.com/c' }],
   }];
   const html = buildNewsEmailHtml(results, { since: 0, until: 86_400_000 });
-  ok(html.includes('Also in the news'), 'email: unplaced headlines get their own block');
-  ok(html.includes('management buyout'), 'email: and the headline itself is printed');
-  ok(html.includes('https://ex.com/c'), 'email: with a link to the source');
-  ok(!html.includes('No deals found'), 'email: a firm with headlines is not filed as empty');
-  ok(html.includes('1 headline to check'), 'email: the header counts them');
+  ok(!html.includes('management buyout'), 'email: unplaced headlines are left out of the table-only email');
+  ok(!html.includes('headline to check'), 'email: and the header does not count them');
 }
 
 // ---- The firm's own newsroom ---------------------------------------------

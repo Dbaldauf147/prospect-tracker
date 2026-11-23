@@ -166,6 +166,7 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
       "counterparty": "the seller on an acquisition, the buyer on a disposition, or empty string",
       "dealType": for an acquisition one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition"; for a disposition one of "Exit", "Divestiture", "Asset sale", "Carve-out",
       "sector": "short sector label for the target, e.g. Industrial Services, or empty string",
+      "targetHq": "where the target is headquartered, as "City, ST" for the United States or "City, Country" elsewhere, when the headline says or you are confident; else empty string",
       "sites": "site/facility count or footprint if the headline reports one, else empty string",
       "value": "reported deal value if disclosed, e.g. \\"$450M\\", else empty string",
       "summary": "one sentence, max 220 characters, on what was bought or sold and why"
@@ -408,6 +409,7 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
       "counterparty": "the seller on an acquisition, the buyer on a disposition, or empty string",
       "dealType": for an acquisition one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition"; for a disposition one of "Exit", "Divestiture", "Asset sale", "Carve-out",
       "sector": "short sector label for the target",
+      "targetHq": "where the target is headquartered, as "City, ST" or "City, Country", or empty string if not established",
       "sites": "site/facility count or footprint if reported, else empty string",
       "value": "reported deal value if disclosed, else empty string",
       "summary": "one sentence, max 220 characters",
@@ -508,6 +510,7 @@ function baseDeal(d) {
     counterparty: str(d.counterparty, 200),
     dealType: DEAL_TYPES[kind].includes(dealType) ? dealType : (kind === 'Disposition' ? 'Divestiture' : 'Acquisition'),
     sector: str(d.sector, 80),
+    targetHq: str(d.targetHq, 120),
     sites: str(d.sites, 60),
     value: str(d.value, 40),
     summary: str(d.summary, 220),
@@ -720,98 +723,134 @@ function escapeHtml(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    // The quote characters are written as escapes so a bare quote in a regex
+    // does not read as the start of a string to scripts/noEmDash.test.mjs.
+    .replace(/\x22/g, '&quot;')
+    .replace(/\x27/g, '&#39;');
 }
 
-function dealRow(deal) {
-  const sold = deal.kind === 'Disposition';
-  const meta = [deal.dealType, deal.sector, deal.value, deal.sites ? `${deal.sites} sites` : '']
-    .map((s) => String(s || '').trim())
-    .filter(Boolean)
-    .map(escapeHtml)
-    .join(' · ');
-
-  return `
-    <tr>
-      <td style="padding:10px 12px;border-top:1px solid #E2E8F0;vertical-align:top;white-space:nowrap;color:#64748B;font-size:12px">
-        ${escapeHtml(deal.announcedOn)}
-      </td>
-      <td style="padding:10px 12px;border-top:1px solid #E2E8F0;vertical-align:top">
-        <div style="font-weight:700;color:#0F172A;font-size:14px">
-          <span style="display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700;vertical-align:middle;margin-right:6px;${sold ? 'background:#FEF3C7;color:#92400E' : 'background:#DCFCE7;color:#166534'}">${sold ? 'SOLD' : 'BOUGHT'}</span>${escapeHtml(deal.target)}
-        </div>
-        ${meta ? `<div style="color:#475569;font-size:12px;margin-top:2px">${meta}</div>` : ''}
-        ${sold
-          ? `${deal.buyer ? `<div style="color:#64748B;font-size:12px;margin-top:2px">Seller: ${escapeHtml(deal.buyer)}</div>` : ''}${deal.counterparty ? `<div style="color:#64748B;font-size:12px;margin-top:2px">Sold to: ${escapeHtml(deal.counterparty)}</div>` : ''}`
-          : `${deal.buyer ? `<div style="color:#64748B;font-size:12px;margin-top:2px">Buyer: ${escapeHtml(deal.buyer)}</div>` : ''}${deal.counterparty ? `<div style="color:#64748B;font-size:12px;margin-top:2px">Bought from: ${escapeHtml(deal.counterparty)}</div>` : ''}`}
-        ${deal.summary ? `<div style="color:#334155;font-size:13px;margin-top:6px;line-height:1.45">${escapeHtml(deal.summary)}</div>` : ''}
-        <div style="margin-top:6px">
-          <a href="${escapeHtml(deal.sourceUrl)}" style="color:#009530;font-size:12px;text-decoration:none">${escapeHtml(deal.sourceTitle)} →</a>
-        </div>
-      </td>
-    </tr>`;
-}
-
-function companySection(result) {
-  const badge = result.isPe
-    ? '<span style="display:inline-block;padding:1px 7px;border-radius:999px;background:#F3E8FF;color:#7C3AED;font-size:10px;font-weight:700;vertical-align:middle;margin-left:8px">PE</span>'
-    : '';
-
-  const body = result.deals.length
-    ? `<table style="width:100%;border-collapse:collapse;margin-top:6px">
-         <tbody>${result.deals.map(dealRow).join('')}</tbody>
-       </table>`
-    : `<div style="color:#94A3B8;font-size:13px;padding:6px 0">
-         ${result.skipped
-           ? (result.halted
-               ? 'Not searched - the run stopped before reaching it.'
-               : 'Not searched this run - the digest ran out of time before reaching it. It moves to the front of the queue next run.')
-           : result.error
-             ? `Couldn't be researched: ${escapeHtml(result.error)}`
-             : 'No acquisitions or dispositions announced in this window.'}
-       </div>`;
-
-  return `
-    <div style="margin:0 0 22px">
-      <div style="font-size:15px;font-weight:700;color:#0F172A;border-bottom:2px solid #009530;padding-bottom:5px">
-        ${escapeHtml(result.company)}${badge}
-        ${result.deals.length ? `<span style="float:right;color:#009530;font-size:12px;font-weight:700">${result.deals.length} deal${result.deals.length === 1 ? '' : 's'}</span>` : ''}
-      </div>
-      ${body}
-      ${unsureBlock(result.unsure)}
-    </div>`;
-}
-
-// Headlines the rules could not place, listed rather than dropped.
+// ---- The email: one table ---------------------------------------------------
 //
-// This is the honest half of a rules-based reader. It will miss shapes a
-// model would catch - "backs the management buyout of", "agrees terms
-// with" — and the failure mode that matters is not missing one, it is
-// missing one silently. A line and a link lets the reader decide in two
-// seconds, and keeps the digest's promise that what the feed found, the
-// reader sees.
-function unsureBlock(unsure) {
-  if (!Array.isArray(unsure) || unsure.length === 0) return '';
-  const rows = unsure.map((u) => `
-    <div style="padding:4px 0;font-size:12px;line-height:1.45">
-      <span style="color:#94A3B8">${escapeHtml(u.announcedOn)}</span>
-      <a href="${escapeHtml(u.sourceUrl)}" style="color:#475569;text-decoration:none">${escapeHtml(u.title)}</a>
-      <span style="color:#94A3B8">· ${escapeHtml(u.sourceTitle)}</span>
-    </div>`).join('');
+// One row per deal, five columns, nothing else in the body: who the tracked
+// firm is, when the deal was announced, the company that changed hands,
+// where that company is based, and who sold it. On an acquisition the
+// seller is the other side of the deal; on a disposition it is the tracked
+// firm (or the vehicle of its that sold).
+
+const TH = 'padding:8px 10px;border-bottom:2px solid #009530;text-align:left;color:#0F172A;font-size:12px;font-weight:700;white-space:nowrap';
+const TD = 'padding:8px 10px;border-bottom:1px solid #E2E8F0;vertical-align:top;color:#334155;font-size:13px';
+
+export const NEWS_TABLE_COLUMNS = ['PE Firm', 'Date of Sale', 'Company Purchased', 'HQ of Purchased Company', 'Seller of that Company'];
+
+// The deals of every result as table rows, newest first.
+export function dealTableRows(results) {
+  const rows = [];
+  for (const r of results || []) {
+    for (const d of r.deals || []) {
+      rows.push({
+        firm: r.company,
+        date: d.announcedOn,
+        company: d.target,
+        hq: d.targetHq || '',
+        seller: d.kind === 'Disposition' ? (d.buyer || r.company) : (d.counterparty || ''),
+        sourceUrl: d.sourceUrl || '',
+      });
+    }
+  }
+  rows.sort((a, b) => String(b.date).localeCompare(String(a.date)) || a.firm.localeCompare(b.firm));
+  return rows;
+}
+
+function dealTable(results) {
+  const rows = dealTableRows(results);
+  // The company's name is the link to the article the deal was read from.
+  const nameCell = (row) => {
+    const name = escapeHtml(row.company);
+    if (!/^https?:\/\//i.test(row.sourceUrl)) return name;
+    return '<a href="' + escapeHtml(row.sourceUrl) + '" style="color:#0F172A;text-decoration:underline">' + name + '</a>';
+  };
+  const body = rows.map((row) => `
+        <tr>
+          <td style="${TD}">${escapeHtml(row.firm)}</td>
+          <td style="${TD};white-space:nowrap">${escapeHtml(row.date)}</td>
+          <td style="${TD};font-weight:700;color:#0F172A">${nameCell(row)}</td>
+          <td style="${TD}">${escapeHtml(row.hq)}</td>
+          <td style="${TD}">${escapeHtml(row.seller)}</td>
+        </tr>`).join('');
   return `
-    <div style="margin-top:8px;padding-top:7px;border-top:1px dashed #E2E8F0">
-      <div style="color:#64748B;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em">
-        Also in the news - worth a look
-      </div>
-      ${rows}
-    </div>`;
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr>${NEWS_TABLE_COLUMNS.map((c) => `<th style="${TH}">${c}</th>`).join('')}</tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+}
+
+// ---- Where each purchased company is based ----------------------------------
+//
+// A headline says who bought whom, almost never where the target is. So the
+// HQ column is looked up: one question to Claude for every deal in the run
+// that has no HQ yet, answered from what it knows, blank where it is not
+// sure. Strictly best effort: no key, an error, a slow answer or a bad reply
+// all leave the column blank and the digest otherwise untouched.
+const HQ_SYSTEM_PROMPT = `You are given a numbered list of companies that were recently bought or sold, each with the buyer or seller named for context. For each one give the location of its headquarters as "City, ST" for the United States or "City, Country" elsewhere.
+
+Answer only where you are confident which company is meant and where it is based. Otherwise answer with an empty string. Never guess, and never give the buyer's or seller's location in place of the company's.
+
+Return ONLY a JSON object (no prose, no markdown fences) of this exact shape, with one entry per number given:
+{"hq": {"0": "Dallas, TX", "1": ""}}`;
+
+const HQ_MAX_DEALS = 60;
+
+export async function fillTargetHqs(results, { timeoutMs = 25_000, fetchImpl = fetch } = {}) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return 0;
+  const wanted = [];
+  for (const r of results || []) {
+    for (const d of r.deals || []) {
+      if (!d.targetHq && d.target && wanted.length < HQ_MAX_DEALS) wanted.push({ deal: d, firm: r.company });
+    }
+  }
+  if (!wanted.length) return 0;
+
+  const list = wanted.map(({ deal, firm }, i) => {
+    const context = [
+      deal.kind === 'Disposition' ? `sold by ${deal.buyer || firm}` : `bought by ${deal.buyer || firm}`,
+      deal.sector,
+    ].filter(Boolean).join(', ');
+    return `${i}. ${deal.target} (${context})`;
+  }).join('\n');
+
+  try {
+    const resp = await fetchImpl('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-opus-5',
+        max_tokens: 8000,
+        output_config: { effort: 'low' },
+        system: HQ_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: `Companies:\n${list}\n\nReturn the JSON object as specified.` }],
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!resp.ok) return 0;
+    const data = await resp.json();
+    const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+    const match = text.match(/\{[\s\S]*\}/);
+    const hq = match ? JSON.parse(match[0])?.hq : null;
+    if (!hq || typeof hq !== 'object') return 0;
+    let filled = 0;
+    wanted.forEach(({ deal }, i) => {
+      const v = str(hq[i], 120);
+      if (v) { deal.targetHq = v; filled += 1; }
+    });
+    return filled;
+  } catch {
+    return 0;
+  }
 }
 
 export function buildNewsEmailHtml(results, { since, until, message, newsletters, logged } = {}) {
-  const hasContent = (r) => r.deals.length > 0 || (r.unsure || []).length > 0;
-  const withDeals = results.filter(hasContent);
-  const withoutDeals = results.filter((r) => !hasContent(r));
+  const withoutDeals = results.filter((r) => r.deals.length === 0);
   const totalDeals = results.reduce((n, r) => n + r.deals.length, 0);
   const totalSold = results.reduce((n, r) => n + r.deals.filter((d) => d.kind === 'Disposition').length, 0);
   const totalBought = totalDeals - totalSold;
@@ -820,7 +859,6 @@ export function buildNewsEmailHtml(results, { since, until, message, newsletters
     totalSold ? `${totalSold} disposition${totalSold === 1 ? '' : 's'}` : '',
   ].filter(Boolean).join(', ');
   const dealFirms = results.filter((r) => r.deals.length > 0).length;
-  const totalUnsure = results.reduce((n, r) => n + (r.unsure || []).length, 0);
   const searchedCount = results.filter((r) => !r.skipped).length;
 
   const intro = message
@@ -843,13 +881,11 @@ export function buildNewsEmailHtml(results, { since, until, message, newsletters
        </div>`
     : '');
 
-  const searchedEmpty = withoutDeals.filter((r) => !r.skipped && !r.error);
   const failed = withoutDeals.filter((r) => !r.skipped && r.error);
   const notSearched = withoutDeals.filter((r) => r.skipped && !r.halted);
   const blocked = withoutDeals.filter((r) => r.halted);
 
   const quietList = [
-    quiet('No deals found', searchedEmpty),
     quiet('Search failed', failed, (r) => ` - ${escapeHtml(String(r.error).slice(0, 160))}`),
     quiet('Not searched this run - first in line next run', notSearched),
     quiet('Not searched - the run stopped before reaching them', blocked),
@@ -878,12 +914,12 @@ export function buildNewsEmailHtml(results, { since, until, message, newsletters
         ${escapeHtml(formatWindow(since, until))} ·
         ${totalDeals
           ? `${dealCount} at ${dealFirms} of ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`
-          : `no deals · ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`}${searchedCount < results.length ? ` (${results.length} tracked)` : ''}${totalUnsure ? ` · ${totalUnsure} headline${totalUnsure === 1 ? '' : 's'} to check` : ''}
+          : `no deals · ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`}${searchedCount < results.length ? ` (${results.length} tracked)` : ''}
       </div>
       ${haltBanner}
       ${intro}
-      ${withDeals.length
-        ? withDeals.map(companySection).join('')
+      ${totalDeals
+        ? dealTable(results)
         : `<div style="color:#94A3B8;font-size:14px;padding:12px 0">No acquisitions or dispositions were found in this window${searchedCount < results.length ? ` among the ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} this run reached` : ''}.</div>`}
       ${quietList}
       ${fellBack.length
@@ -903,7 +939,7 @@ export function buildNewsEmailHtml(results, { since, until, message, newsletters
             : ''}
         ${logged ? `<div style="margin-bottom:6px">${logged} new deal${logged === 1 ? ' was' : 's were'} added to ${logged === 1 ? 'its company’s' : 'the companies’'} Acquisitions &amp; Dispositions log on the Portfolio tab.</div>` : ''}
         Companies are tracked by ticking “Track acquisition news” on the company popup in Prospect Tracker.
-        Deals are read from public news feed headlines and can be incomplete - always confirm against the linked source before acting.
+        Each company name links to the article the deal was read from. Deals come from public news feed headlines and can be incomplete, and the HQ is looked up rather than read from the article (blank when not known) - always confirm against the source before acting.
       </div>
     </div>`;
 }
@@ -1078,6 +1114,9 @@ export async function buildDigest(db, uid, email, {
   });
   const deals = results.reduce((n, r) => n + r.deals.length, 0);
   const nextStartIndex = nextCursor(startIndex, results);
+  // The HQ column. Skipped on a halted run: the same account-wide failure
+  // would stop this call too.
+  if (deals > 0 && !results.some((r) => r.halted)) await fillTargetHqs(results);
 
   // Onto the company records before anything else can return early: a deal
   // found is worth keeping whether or not this run ends up sending.
