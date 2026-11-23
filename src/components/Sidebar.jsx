@@ -303,7 +303,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
 
       <nav className={styles.nav}>
         <button
-          className={(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' || view === 'pe') ? styles.navItemActive : styles.navItem}
+          className={(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'strategicAccounts' || view === 'hubspotMapping' || view === 'nameMatcher' || view === 'missingHistory' || view === 'pe') ? styles.navItemActive : styles.navItem}
           onClick={() => setView('accounts')}
         >
           <span className={styles.navIcon}>&#9733;</span>
