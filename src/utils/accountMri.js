@@ -1,7 +1,10 @@
-// The Account MRI intake template (src/assets/account-mri-intake-template.xlsx),
-// tab 1 "Profile & Background": which tracker field answers each row, the
-// values for one company, and writing them into the template's "Your entry"
-// column.
+// The Account MRI intake template (src/assets/account-mri-intake-template.xlsx):
+// what the tracker knows for one company, and writing it into the template.
+//
+//   tab 1 "Profile & Background"  the tracker field behind each row, into
+//                                 the "Your entry" column
+//   tab 3 "Buying Committee"      the company's decision makers, one a row
+//   tab 5 "Sites & Utilities"     the site list saved on the company popup
 //
 // The workbook is filled by editing the sheet's XML in place rather than by
 // reading and re-writing it through a spreadsheet library: the template's
@@ -12,6 +15,7 @@
 // Imported with extensions so this loads under plain Node for the tests.
 import { isPrimaryPoc } from './attendeeRoles.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
+import { isActiveSiteStatus, pickSiteStatusColumn } from './siteStatus.js';
 
 // The service the template's UBM row reads.
 export const UBM_SERVICE = 'Bill payment';
@@ -183,12 +187,24 @@ const xmlEscape = s => String(s)
   .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// `xml` (a whole sheet, or one row of it) with cell `ref` holding `value`,
+// keeping the cell's own style. Throws when the cell is not there, which
+// means the template was replaced by one laid out differently.
+function setCell(xml, ref, value, asNumber = false) {
+  const cell = new RegExp(`<c r="${ref}"((?:\\s[^>]*?)?)(?:/>|>[\\s\\S]*?</c>)`);
+  const hit = xml.match(cell);
+  if (!hit) throw new Error(`The Account MRI template has no cell ${ref}.`);
+  const style = (hit[1].match(/\ss="\d+"/) || [''])[0];
+  const next = asNumber && Number.isFinite(Number(value))
+    ? `<c r="${ref}"${style}><v>${Number(value)}</v></c>`
+    : `<c r="${ref}"${style} t="inlineStr"><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`;
+  return xml.replace(cell, () => next);
+}
+
 /**
  * `sheetXml` with the "Your entry" cell of each row in `profile` written.
  * A value of '' / null / undefined leaves the template's cell as it is.
- * Returns { xml, written } where `written` is the cells changed. Throws
- * when a cell the template should have is missing, which means the
- * template was replaced by one laid out differently.
+ * Returns { xml, written } where `written` is the cells changed.
  */
 export function fillProfileSheet(sheetXml, profile, { column = 'C' } = {}) {
   let xml = sheetXml;
@@ -197,18 +213,197 @@ export function fillProfileSheet(sheetXml, profile, { column = 'C' } = {}) {
     const value = profile?.[f.key];
     if (value == null || value === '') continue;
     const ref = `${column}${f.row}`;
-    const cell = new RegExp(`<c r="${ref}"((?:\\s[^>]*?)?)(?:/>|>[\\s\\S]*?</c>)`);
-    const hit = xml.match(cell);
-    if (!hit) throw new Error(`The Account MRI template has no cell ${ref}.`);
-    const style = (hit[1].match(/\ss="\d+"/) || [''])[0];
-    const asNumber = f.kind === 'number' && Number.isFinite(Number(value));
-    const next = asNumber
-      ? `<c r="${ref}"${style}><v>${Number(value)}</v></c>`
-      : `<c r="${ref}"${style} t="inlineStr"><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`;
-    xml = xml.replace(cell, () => next);
+    xml = setCell(xml, ref, value, f.kind === 'number');
     written.push(ref);
   }
   return { xml, written };
+}
+
+// The template's two list tabs: where the entry rows sit and which column
+// takes which value. Row 5 of tab 3 and row 2 of tab 5 are the template's
+// grey example rows, which stay; tab 5's totals are written to skip its.
+export const MRI_COMMITTEE_TABLE = {
+  path: 'xl/worksheets/sheet3.xml',
+  startRow: 6,
+  endRow: 30,
+  columns: [{ col: 'A', key: 'name' }, { col: 'B', key: 'title' }, { col: 'C', key: 'email' }, { col: 'D', key: 'phone' }],
+};
+export const MRI_SITES_TABLE = {
+  path: 'xl/worksheets/sheet5.xml',
+  startRow: 3,
+  endRow: 202,
+  columns: [
+    { col: 'A', key: 'name' }, { col: 'B', key: 'country' }, { col: 'C', key: 'location' }, { col: 'D', key: 'function' },
+    { col: 'E', key: 'elec', number: true }, { col: 'F', key: 'elecUnits' },
+    { col: 'G', key: 'fuel', number: true }, { col: 'H', key: 'fuelUnits' },
+  ],
+};
+
+const ROW_RE = /<row r="(\d+)"([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g;
+const renumberRow = (attrs, body, from, to) => (body == null
+  ? `<row r="${to}"${attrs}/>`
+  : `<row r="${to}"${attrs}>${body.replace(new RegExp(`(<c r="[A-Z]+)${from}"`, 'g'), `$1${to}"`)}</row>`);
+
+// `count` more entry rows after `endRow`, each a blank copy of it (same
+// styles). Rows below move down, and every range on the sheet that stopped
+// at `endRow` (the totals' formulas, the dropdowns) now stops at the new
+// last entry row.
+function addEntryRows(sheetXml, endRow, count) {
+  let template = null;
+  let xml = sheetXml.replace(ROW_RE, (m, r, attrs, body) => {
+    const n = Number(r);
+    if (n === endRow) template = { attrs, body: (body || '').replace(/<c r="([A-Z]+)\d+"((?:\s[^>]*?)?)(?:\/>|>[\s\S]*?<\/c>)/g, (c, col, a) => `<c r="${col}${endRow}"${(a.match(/\ss="\d+"/) || [''])[0]}/>`) };
+    return n > endRow ? renumberRow(attrs, body, n, n + count) : m;
+  });
+  if (!template) throw new Error(`The Account MRI template has no row ${endRow}.`);
+  let added = '';
+  for (let i = 1; i <= count; i++) added += renumberRow(template.attrs, template.body, endRow, endRow + i);
+  const close = new RegExp(`(<row r="${endRow}"[^>]*?(?:\\/>|>[\\s\\S]*?<\\/row>))`);
+  xml = xml.replace(close, (m) => m + added);
+  const stretch = (t) => t.replace(new RegExp(`(:\\$?[A-Z]+\\$?)${endRow}(?!\\d)`, 'g'), `$1${endRow + count}`);
+  xml = xml.replace(/<f>([^<]*)<\/f>/g, (m, f) => `<f>${stretch(f)}</f>`);
+  xml = xml.replace(/<xm:sqref>([^<]*)<\/xm:sqref>/g, (m, f) => `<xm:sqref>${stretch(f)}</xm:sqref>`);
+  xml = xml.replace(/<dimension ref="([A-Z]+\d+:[A-Z]+)(\d+)"/, (m, a, last) => `<dimension ref="${a}${Number(last) + count}"`);
+  return xml;
+}
+
+/**
+ * `sheetXml` with `rows` (objects keyed as `table.columns`) written one per
+ * entry row from `table.startRow`. A list longer than the template's entry
+ * rows gets more rows added rather than being cut off. Blank values leave
+ * their cells alone. Returns { xml, written, added }: rows written, and
+ * rows added to make room.
+ */
+export function fillTableSheet(sheetXml, table, rows) {
+  const list = rows || [];
+  if (!list.length) return { xml: sheetXml, written: 0, added: 0 };
+  const capacity = table.endRow - table.startRow + 1;
+  const added = Math.max(0, list.length - capacity);
+  let xml = added ? addEntryRows(sheetXml, table.endRow, added) : sheetXml;
+  let written = 0;
+  xml = xml.replace(ROW_RE, (m, r) => {
+    const item = list[Number(r) - table.startRow];
+    if (!item || Number(r) < table.startRow) return m;
+    let row = m;
+    for (const c of table.columns) {
+      const value = item[c.key];
+      if (value == null || value === '') continue;
+      row = setCell(row, `${c.col}${r}`, value, !!c.number);
+    }
+    written += 1;
+    return row;
+  });
+  if (written !== list.length) throw new Error('The Account MRI template is missing entry rows.');
+  return { xml, written, added };
+}
+
+/** The decision makers as tab 3 rows, A to Z: name, title, email, phone. */
+export function buyingCommitteeRows(contacts) {
+  const out = [];
+  for (const c of contacts || []) {
+    const email = text(c?.email);
+    const name = contactName(c) || email;
+    if (!name) continue;
+    out.push({ name, title: text(c.jobtitle), email, phone: text(c.phone || c.mobilephone) });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function findHeader(headers, patterns, skip = null) {
+  for (const pattern of patterns) {
+    const hit = headers.find(h => pattern.test(h) && !(skip && skip.test(h)));
+    if (hit) return hit;
+  }
+  return '';
+}
+// A consumption cell as a number: "182,000", "182000 kWh". No digits, no answer.
+function quantity(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const m = String(value ?? '').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+const UNIT_NAMES = [[/\bmwh\b/i, 'MWh'], [/\bkwh\b/i, 'kWh'], [/\bgwh\b/i, 'GWh'], [/\bmmbtu\b/i, 'MMBtu'], [/\bdth\b|dekatherm/i, 'Dth'], [/\btherms?\b/i, 'therms'], [/\bmcf\b/i, 'Mcf'], [/\bccf\b/i, 'Ccf']];
+const unitIn = (s) => (UNIT_NAMES.find(([re]) => re.test(String(s || ''))) || [null, ''])[1];
+// A column that prices or rates energy is not a consumption column.
+const NOT_CONSUMPTION = /rate|cost|spend|price|\$|supplier|utility|market|uom|unit/i;
+
+/**
+ * The site list saved on the company popup (settings.companySiteLists) as
+ * tab 5 rows: one per site still open, in the list's own order.
+ *
+ * A saved list keeps whatever columns its source had, so the columns are
+ * found by name, the ones the Utility Lookup save writes first. A unit comes
+ * from the consumption column's own name ("Annual Electric (kWh)"), else
+ * from a units column beside it.
+ */
+export function siteUtilityRows(entry) {
+  const headers = (entry?.headers || []).filter(h => typeof h === 'string');
+  const listed = (entry?.rows || []).filter(r => r && typeof r === 'object');
+  const statusCol = pickSiteStatusColumn(headers);
+  const rows = statusCol ? listed.filter(r => isActiveSiteStatus(r[statusCol])) : listed;
+  if (!rows.length) return [];
+
+  const nameCol = findHeader(headers, [/^site\s*name$/i, /^site$/i, /^facility(\s*name)?$/i, /^property\s*name$/i, /^building\s*name$/i, /^name$/i, /site\s*name|facility|property\s*name|building\s*name/i]);
+  const addressCol = findHeader(headers, [/^address$/i, /^street(\s*address)?$/i, /address/i]);
+  const cityCol = findHeader(headers, [/^city\s*\(analysis/i, /^city$/i, /\bcity\b/i, /^town$/i, /municipality/i]);
+  const stateCol = findHeader(headers, [/^st\s*\/\s*prov/i, /^state\s*\(analysis/i, /^state$/i, /^province$/i, /state\s*\/\s*prov/i, /\bstate\b/i, /\bprovince\b/i]);
+  const countryCol = findHeader(headers, [/^country\s*\(analysis/i, /^country$/i, /\bcountry\b/i]);
+  const typeCol = findHeader(headers, [/^property\s*type\s*\(analysis\)$/i, /^property\s*type$/i, /property\s*type/i, /building\s*type/i, /asset\s*type/i, /^function$/i]);
+  const elecCol = findHeader(headers, [/^annual\s*electric\s*\(kwh\)/i, /electric(ity)?.*(consumption|usage)/i, /\b[kmg]wh\b/i], NOT_CONSUMPTION);
+  const fuelCol = findHeader(headers, [/^annual\s*gas\s*\(dth\)/i, /(gas|fuel).*(consumption|usage)/i, /\bdth\b|\btherms?\b|\bmmbtu\b/i], NOT_CONSUMPTION);
+  const elecUnitCol = findHeader(headers, [/electric.*(uom|units?)\b/i]);
+  const fuelUnitCol = findHeader(headers, [/(gas|fuel).*(uom|units?)\b/i]);
+
+  const cell = (row, col) => (col ? text(row[col]) : '');
+  return rows.map((row, i) => {
+    const location = [cell(row, cityCol), cell(row, stateCol)].filter(Boolean).join(', ');
+    const elec = elecCol ? quantity(row[elecCol]) : null;
+    const fuel = fuelCol ? quantity(row[fuelCol]) : null;
+    return {
+      // Never blank: the tab counts its sites by this column.
+      name: cell(row, nameCol) || cell(row, addressCol) || location || `Site ${i + 1}`,
+      country: cell(row, countryCol),
+      location,
+      function: cell(row, typeCol),
+      elec,
+      elecUnits: elec == null ? '' : (unitIn(elecCol) || unitIn(cell(row, elecUnitCol)) || cell(row, elecUnitCol)),
+      fuel,
+      fuelUnits: fuel == null ? '' : (unitIn(fuelCol) || unitIn(cell(row, fuelUnitCol)) || cell(row, fuelUnitCol)),
+    };
+  });
+}
+
+/**
+ * The template (a JSZip of it) filled for one company: tab 1 from
+ * `profile`, tab 3 from `committee`, tab 5 from `sites`. Edits `zip` in
+ * place and returns what was written. The workbook is marked to recalculate
+ * when opened, so tab 5's totals read the sites just written.
+ */
+export async function fillAccountMriWorkbook(zip, { profile = {}, committee = [], sites = [] } = {}) {
+  const edit = async (path, fn) => {
+    const file = zip.file(path);
+    if (!file) throw new Error(`The Account MRI template has no ${path}.`);
+    const result = fn(await file.async('string'));
+    zip.file(path, result.xml);
+    return result;
+  };
+  const p = await edit(MRI_PROFILE_SHEET_PATH, xml => fillProfileSheet(xml, profile));
+  const c = await edit(MRI_COMMITTEE_TABLE.path, xml => fillTableSheet(xml, MRI_COMMITTEE_TABLE, committee));
+  const s = await edit(MRI_SITES_TABLE.path, xml => {
+    const filled = fillTableSheet(xml, MRI_SITES_TABLE, sites);
+    // The totals' stored results, for anything that reads the file without
+    // recalculating it (a preview, an import).
+    const sum = key => sites.reduce((t, r) => t + (Number.isFinite(Number(r[key])) ? Number(r[key]) : 0), 0);
+    const stored = { 'SUM\\(E': sum('elec'), 'SUM\\(G': sum('fuel'), 'COUNTA\\(A': sites.length };
+    for (const [fn, value] of Object.entries(stored)) {
+      filled.xml = filled.xml.replace(new RegExp(`(<f>${fn}[^<]*</f>)<v>[^<]*</v>`), `$1<v>${value}</v>`);
+    }
+    return filled;
+  });
+  await edit('xl/workbook.xml', xml => ({
+    xml: /fullCalcOnLoad/.test(xml) ? xml : xml.replace(/<calcPr\b/, '<calcPr fullCalcOnLoad="1"'),
+  }));
+  return { profileCells: p.written.length, committeeRows: c.written, siteRows: s.written };
 }
 
 // The tab's own part of the workbook.
