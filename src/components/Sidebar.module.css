@@ -56,11 +56,19 @@
   background: rgba(255, 255, 255, 0.14);
 }
 
+/* Grows past the sidebar's right edge to fit its longest result, so a
+   company name or an email address reads in full instead of ending in an
+   ellipsis at the panel's width. Never narrower than the search box, and
+   capped so one very long name can't run across the page; past the cap a
+   row still ends in an ellipsis. */
 .searchDropdown {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  right: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 2rem));
+  box-sizing: border-box;
   z-index: 200;
   max-height: 320px;
   overflow-y: auto;
