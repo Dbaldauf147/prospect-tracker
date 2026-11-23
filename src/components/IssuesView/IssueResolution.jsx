@@ -122,7 +122,7 @@ export function IssueResolutionModal({ spec, saving, error, onSave, onClose }) {
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
         style={{
-          width: spec.table ? 680 : 480, maxWidth: '92vw', maxHeight: '88vh',
+          width: spec.table?.rows.length ? 680 : 480, maxWidth: '92vw', maxHeight: '88vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
@@ -137,7 +137,7 @@ export function IssueResolutionModal({ spec, saving, error, onSave, onClose }) {
           {spec.table && (
             <div>
               {spec.table.caption && <div style={{ fontSize: '0.74rem', color: '#475569', marginBottom: 6 }}>{spec.table.caption}</div>}
-              <div style={{ border: '1px solid #E2E8F0', borderRadius: 4, maxHeight: 220, overflow: 'auto' }}>
+              {spec.table.rows.length > 0 && <div style={{ border: '1px solid #E2E8F0', borderRadius: 4, maxHeight: 220, overflow: 'auto' }}>
                 <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', color: '#1E293B' }}>
                   <thead>
                     <tr>
@@ -156,7 +156,7 @@ export function IssueResolutionModal({ spec, saving, error, onSave, onClose }) {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </div>}
             </div>
           )}
           {spec.fields.map((f, i) => <div key={f.key}>{renderInput(f, i === 0)}</div>)}
