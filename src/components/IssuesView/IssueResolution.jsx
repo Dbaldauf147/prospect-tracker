@@ -122,7 +122,7 @@ export function IssueResolutionModal({ spec, saving, error, onSave, onClose }) {
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
         style={{
-          width: 480, maxWidth: '92vw', maxHeight: '88vh',
+          width: spec.table ? 680 : 480, maxWidth: '92vw', maxHeight: '88vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
@@ -134,6 +134,31 @@ export function IssueResolutionModal({ spec, saving, error, onSave, onClose }) {
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflowY: 'auto' }}>
           {spec.note && <div style={{ fontSize: '0.74rem', color: '#475569' }}>{spec.note}</div>}
+          {spec.table && (
+            <div>
+              {spec.table.caption && <div style={{ fontSize: '0.74rem', color: '#475569', marginBottom: 6 }}>{spec.table.caption}</div>}
+              <div style={{ border: '1px solid #E2E8F0', borderRadius: 4, maxHeight: 220, overflow: 'auto' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem', color: '#1E293B' }}>
+                  <thead>
+                    <tr>
+                      {spec.table.columns.map(c => (
+                        <th key={c.key} style={{ position: 'sticky', top: 0, background: '#F8FAFC', textAlign: c.align || 'left', padding: '4px 8px', borderBottom: '1px solid #E2E8F0', color: '#64748B', fontWeight: 600, whiteSpace: 'nowrap' }}>{c.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {spec.table.rows.map(row => (
+                      <tr key={row.key}>
+                        {spec.table.columns.map(c => (
+                          <td key={c.key} title={c.wide ? row[c.key] : undefined} style={{ textAlign: c.align || 'left', padding: '4px 8px', borderBottom: '1px solid #F1F5F9', whiteSpace: c.wide ? 'normal' : 'nowrap', verticalAlign: 'top' }}>{row[c.key]}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           {spec.fields.map((f, i) => <div key={f.key}>{renderInput(f, i === 0)}</div>)}
           {error && <div style={{ fontSize: '0.72rem', color: '#B91C1C' }}>{error}</div>}
         </div>

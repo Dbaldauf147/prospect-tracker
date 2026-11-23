@@ -290,7 +290,7 @@ function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
         prospectId: f.id,
         daysUntil: null,
         expirationDate: null,
-        resolve: { kind: 'accountStatus', status: live ? (live.status || '') : (f.status || ''), suggestedStatus: f.suggestedStatus || '' },
+        resolve: { kind: 'accountStatus', status: live ? (live.status || '') : (f.status || ''), suggestedStatus: f.suggestedStatus || '', oppsAccount: f.oppsAccount || '' },
         detail: `Status "${liveStatus}" doesn't match Opps-suggested status "${f.suggestedStatus || '-'}"`,
       });
     } else if (f.kind === 'hqRegion') {
