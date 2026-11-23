@@ -7,7 +7,7 @@
 // comes back more than once; what matters here is that it lands on the log
 // once, that nothing typed by hand is lost, and that one bad record does
 // not stop the rest.
-import { dealToTransaction, mergeDealsIntoLog, logDealsToRecords, buildNewsEmailHtml, checkCompanyNow, classifyByRules, dealsFromHeadlines } from '../api/_lib/companyNews.js';
+import { dealToTransaction, mergeDealsIntoLog, logDealsToRecords, buildNewsEmailHtml, checkCompanyNow, classifyByRules, dealsFromHeadlines, dealTableRows, NEWS_TABLE_COLUMNS, fillTargetHqs } from '../api/_lib/companyNews.js';
 import { parseDigestText } from '../src/utils/portfolioTransactions.js';
 
 let passed = 0, failed = 0;
@@ -140,8 +140,18 @@ const deal = {
 
   const html = buildNewsEmailHtml([{ ...entry, deals, unsure: [] }], { since: 0, until: 1 });
   eq(html.includes('1 acquisition, 1 disposition'), true, 'email: the header counts each kind');
-  eq(html.includes('>SOLD</span>Gamma Logistics'), true, 'email: a sale is tagged SOLD');
-  eq(html.includes('Sold to: KKR'), true, 'email: with who bought it');
+  // The email is one table: firm, date, company, its HQ, its seller.
+  eq(NEWS_TABLE_COLUMNS, ['PE Firm', 'Date of Sale', 'Company Purchased', 'HQ of Purchased Company', 'Seller of that Company'], 'email: the five columns');
+  eq(NEWS_TABLE_COLUMNS.every(c => html.includes(`>${c}</th>`)), true, 'email: each is a column heading');
+  eq((html.match(/<table/g) || []).length, 1, 'email: one table');
+  const withSeller = deals.map(d => (d.kind === 'Acquisition' ? { ...d, counterparty: 'Founders', targetHq: 'Dallas, TX' } : d));
+  const tableRows = dealTableRows([{ ...entry, deals: withSeller }]);
+  eq(tableRows.map(r => [r.firm, r.date, r.company, r.hq, r.seller]), [
+    ['Apollo Global Management', '2026-09-21', 'Acme Services', 'Dallas, TX', 'Founders'],
+    ['Apollo Global Management', '2026-09-20', 'Gamma Logistics', '', 'Apollo'],
+  ], 'email: newest first; a purchase names who sold it, a sale names the firm as seller');
+  eq(html.includes('href="https://example.com/2026-09-21"'), true, 'email: the company name links to its article');
+  eq(html.includes('Apollo agrees to sell'), false, 'email: no summary sentence, just the table');
 
   const { rows } = mergeDealsIntoLog([], deals, entry.company);
   const sold = rows.find(r => r.kind === 'Disposition');
@@ -149,7 +159,19 @@ const deal = {
   eq(mergeDealsIntoLog([{ asset: 'Gamma Logistics', date: '2026-09-20', kind: 'Acquisition' }], [byKind.Disposition], entry.company).added, 1,
     'log: an earlier purchase of the same company does not block its sale');
 
-  // Pasting the email back in keeps each deal's kind.
+  // Pasting rows of the email's table: a purchase keeps its seller, and a
+  // row whose seller is the firm itself is that firm's sale.
+  const table = [
+    'PE Firm\tDate of Sale\tCompany Purchased\tHQ of Purchased Company\tSeller of that Company',
+    'Apollo Global Management\t2026-09-21\tAcme Services\tDallas, TX\tFounders',
+    'Apollo Global Management\t2026-09-20\tGamma Logistics\t\tApollo funds',
+  ].join('\n');
+  eq(parseDigestText(table, [{ text: 'Acme Services', href: 'https://example.com/a' }]).map(d => [d.kind, d.date, d.asset, d.counterparty, d.sourceUrl, d.notes]), [
+    ['Acquisition', '2026-09-21', 'Acme Services', 'Founders', 'https://example.com/a', 'HQ: Dallas, TX'],
+    ['Disposition', '2026-09-20', 'Gamma Logistics', '', '', ''],
+  ], 'paste: table rows read into deals');
+
+  // Pasting an older email, in its previous layout, still works.
   const text = [
     '2026-09-20', 'SOLDGamma Logistics', 'Exit · $2B', 'Seller: Apollo', 'Sold to: KKR', 'Apollo agrees to sell Gamma.', 'Reuters →',
     '2026-09-21', 'BOUGHT Acme Services', 'Platform', 'Buyer: Apollo', 'Bought from: Founders', 'Reuters →',
@@ -164,6 +186,23 @@ const deal = {
   const items = [{ title: 'Apollo sells Gamma', publishedAt: Date.parse('2026-09-20'), link: 'https://x', source: 'S' }];
   const [d] = dealsFromHeadlines([{ index: 0, kind: 'Disposition', target: 'Gamma', buyer: 'Apollo', counterparty: 'KKR', dealType: 'Platform' }], items);
   eq([d.kind, d.counterparty, d.dealType], ['Disposition', 'KKR', 'Divestiture'], 'ai: kind kept, an acquisition-only type replaced');
+}
+
+// The HQ lookup: fills what it is told, leaves the rest blank, and never throws.
+{
+  const key = process.env.ANTHROPIC_API_KEY;
+  const results = [{ company: 'Apollo', deals: [{ target: 'Acme', kind: 'Acquisition' }, { target: 'Obscure Co', kind: 'Acquisition' }, { target: 'Known', kind: 'Acquisition', targetHq: 'Paris, France' }] }];
+  delete process.env.ANTHROPIC_API_KEY;
+  eq(await fillTargetHqs(results, { fetchImpl: () => { throw new Error('should not be called'); } }), 0, 'hq: no key, no call');
+  process.env.ANTHROPIC_API_KEY = 'test';
+  let asked = '';
+  const reply = (body) => async (_url, init) => { asked = JSON.parse(init.body).messages[0].content; return { ok: true, json: async () => body }; };
+  eq(await fillTargetHqs(results, { fetchImpl: reply({ content: [{ type: 'text', text: '{"hq": {"0": "Dallas, TX", "1": ""}}' }] }) }), 1, 'hq: one answer filled');
+  eq(results[0].deals.map(d => d.targetHq || ''), ['Dallas, TX', '', 'Paris, France'], 'hq: an unsure answer stays blank, a known HQ is kept');
+  eq(asked.includes('Known'), false, 'hq: a deal that already has an HQ is not asked about');
+  eq(await fillTargetHqs(results, { fetchImpl: async () => { throw new Error('network'); } }), 0, 'hq: a failed call leaves the digest alone');
+  eq(await fillTargetHqs(results, { fetchImpl: reply({ content: [{ type: 'text', text: 'not json' }] }) }), 0, 'hq: a bad reply fills nothing');
+  if (key) process.env.ANTHROPIC_API_KEY = key; else delete process.env.ANTHROPIC_API_KEY;
 }
 
 console.log(`${failed ? 'FAIL' : 'PASS'}  companyNewsAutoLog: ${passed} passed, ${failed} failed`);

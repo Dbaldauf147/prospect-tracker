@@ -88,7 +88,7 @@ function PasteDigestPanel({ existingKeys, onAdd, onClose }) {
     <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 8, padding: '0.6rem', marginBottom: '0.6rem', background: '#F8FAFC' }}>
       <div style={{ fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.35rem' }}>Paste from the weekly news digest</div>
       <p style={{ fontSize: '0.7rem', color: '#64748B', margin: '0 0 0.4rem' }}>
-        Select this company&apos;s deals in the Company Acquisition News email, copy, and paste them here. Each deal is read off its date line; anything already on the log is skipped.
+        Select this company&apos;s deals in the Company Acquisition News email, copy, and paste them here. Each row of the email&apos;s table is read as one deal (older emails are read off their date lines); anything already on the log is skipped.
       </p>
       <textarea
         value={text}
