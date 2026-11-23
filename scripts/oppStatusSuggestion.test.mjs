@@ -44,7 +44,7 @@ ok(spec.table.rows[1].quoted === '-', 'a blank cell shows a hyphen');
 ok(/under the Opps account "Nuveen"/.test(spec.table.caption), 'caption names the Opps account when it differs from the company');
 ok(spec.table.columns.some(c => c.key === 'reason'), 'Reason Not Sold column for a Lost suggestion');
 const none = suggestionOppsTable(row.resolve, prospects[0], [], new Map());
-ok(none.rows.length === 0 && /has not loaded/.test(none.caption), 'no opps loaded: no rows, and the caption says so');
+ok(none.rows.length === 0 && /still loading/.test(none.caption), 'no opps loaded: no rows, and the caption says so');
 
 // A flag raised before oppsAccount existed, on a company whose Opps account
 // is spelled differently: found by the same fuzzy match My Accounts uses.

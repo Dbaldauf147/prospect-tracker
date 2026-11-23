@@ -664,7 +664,9 @@ function SnoozeMenu({ anchor, snoozed, until, onPick, onUnsnooze, onClose }) {
 export function IssuesView({ prospects = [], cdmName, settings, updateSettings, updateProspect, addProspect = null, onSelectProspect }) {
   // useIssues handles loading the source data + listening for cross-tab
   // refreshes, and tags each row with a `snoozed` flag.
-  const { issues, openCount, knownServices, ignoredScopeServices, ignoredSiteListWarnings, oppsRecords } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
+  // Before useIssues: it reads the Opps records for this user.
+  const { user } = useAuth();
+  const { issues, openCount, knownServices, ignoredScopeServices, ignoredSiteListWarnings, oppsRecords } = useIssues({ prospects, cdmName, user, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
 
   // Client Manager is owned by the Clients tab; mirror it here (read-only)
   // and re-read when it changes there so the column stays in sync.
@@ -695,7 +697,6 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
   // Reason Not Sold / Competition, so the pair that drives the BFO
   // close-out mapping can be fixed here instead of on Opps. Options come
   // from the Dropdowns page, same as the close-out popup on Opps 2.
-  const { user } = useAuth();
   const [editingRow, setEditingRow] = useState(null);
   const [savingFix, setSavingFix] = useState(false);
   const [fixError, setFixError] = useState('');
@@ -838,8 +839,11 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
   const resolvingSpec = useMemo(
     () => (resolvingRow ? buildResolution(resolvingRow, { ...resolutionCtx, prospect: prospectById.get(resolvingRow.prospectId) }) : null),
     // Built once per opened row: the popup holds its own edits from there.
+    // And once more if the Opps records land while it is open, so a popup
+    // opened a moment too early fills in its opps rather than going on
+    // saying they have not loaded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [resolvingRow],
+    [resolvingRow, (oppsRecords || []).length > 0],
   );
   function openResolution(row) {
     setFixError('');

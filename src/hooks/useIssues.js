@@ -11,6 +11,7 @@ import { dbGet } from '../utils/db';
 import { getHubspotContacts } from '../utils/hubspotContactsCache';
 import { getEffectiveDropdownLists } from '../utils/dropdownListsStore';
 import { useOpps2Data } from './useOpps2Data';
+import { useAuth } from '../contexts/AuthContext';
 import { computeIssues, computeServiceCoverageGaps } from '../utils/clientIssues';
 import { loadPipelineDashboard, coverageServicesOf, PIPELINE_DASHBOARD_EVENT } from '../utils/pipelineDashboardStore';
 // BFO Activity rows are pasted on the BFO Activity tab and persisted in that
@@ -90,7 +91,15 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   // The Opps 2 records, off the reader the other App-level hooks share, so
   // a focus or an Opps save is one IndexedDB read rather than one per hook,
   // and an unchanged record doesn't re-run computeIssues.
-  const oppsData = useOpps2Data(user?.uid);
+  //
+  // The uid comes from the signed-in user when the caller didn't pass one.
+  // The Issues page didn't, so it started the shared reader for "no user":
+  // the reader took that as a change of account, dropped the records it was
+  // holding and read for nobody. That left the page with no opps (the
+  // status-mismatch popup said the Opps data had not loaded) and blanked
+  // them for every other reader of the same store until a reload.
+  const auth = useAuth();
+  const oppsData = useOpps2Data(user?.uid ?? auth?.user?.uid);
   const oppsCache = useMemo(() => (oppsData ? {
     headers: Array.isArray(oppsData.headers) ? oppsData.headers : [],
     records: Array.isArray(oppsData.records) ? oppsData.records : [],
