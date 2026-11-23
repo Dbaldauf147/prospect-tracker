@@ -189,7 +189,8 @@ export function buildResolution(row, ctx) {
         title: 'Resolve status mismatch',
         subtitle,
         note: `Opps suggests "${r.suggestedStatus}" for this account.`,
-        table: suggestionOppsTable(r, prospect, ctx.oppsRecords, ctx.oppNumbers),
+        table: suggestionOppsTable(r, prospect, ctx.oppsRecords, ctx.oppNumbers,
+          (settings?.divisionsMap?.[prospect.id] || []).map(d => d?.company)),
         fields: [
           field('status', 'Status', 'select', prospect.status || r.status, { options: STATUSES, start: r.suggestedStatus || prospect.status, compare: true }),
           field('dismiss', 'Keep the current status and dismiss the suggestion', 'checkbox', false),
