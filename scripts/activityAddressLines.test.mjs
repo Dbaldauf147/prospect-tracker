@@ -6,7 +6,7 @@
 // wrong the prompt still looks complete — it just logs the wrong touch,
 // and the meeting quietly disappears behind the follow-up email sent
 // after it. That is the bug these pin.
-import { buildActivityAddressLines } from '../src/utils/activityAddressLines.js';
+import { buildActivityAddressLines, ACTIVITY_PROMPT_LIMIT } from '../src/utils/activityAddressLines.js';
 import { resolveOppForRow, detectBfoUrl } from '../src/utils/closeNotSoldOpps.js';
 
 let passed = 0, failed = 0;
@@ -142,6 +142,20 @@ eq(buildActivityAddressLines({ emails: [{ bfoUrl: URL_A, nextStepsType: 'called'
   eq(resolveOppForRow(index, '', null), null, 'nothing matched resolves to nothing');
   eq(resolveOppForRow(index, 'Nobody Knows This', null), null, 'an unknown name resolves to nothing');
   eq(resolveOppForRow(undefined, '', withUrl), withUrl, 'a missing index still returns the match');
+}
+
+// --- the limit ----------------------------------------------------------------
+{
+  const row = (n) => ({ bfoUrl: `https://bfo.example/${n}` });
+  const emails = Array.from({ length: 30 }, (_, i) => ({ ...row(`e${i}`), nextStepsType: 'email' }));
+  const input = { meetings: [row('m')], calls: [row('c')], emails };
+  eq(buildActivityAddressLines(input).length, 33, 'limit: off, every address is listed');
+  const capped = buildActivityAddressLines({ ...input, limit: ACTIVITY_PROMPT_LIMIT });
+  eq(ACTIVITY_PROMPT_LIMIT, 25, 'limit: the cap is 25');
+  eq(capped.length, 26, 'limit: the header plus 25 addresses');
+  eq(capped.slice(0, 3), ['BFO Address', 'https://bfo.example/m: Type meeting', 'https://bfo.example/c: Type called'],
+    'limit: the meeting and the call are kept ahead of the emails');
+  eq(buildActivityAddressLines({ meetings: [row('m')], limit: 25 }).length, 2, 'limit: fewer than the cap is left alone');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

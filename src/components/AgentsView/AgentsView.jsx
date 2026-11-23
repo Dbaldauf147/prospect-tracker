@@ -16,7 +16,7 @@ import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoO
 import { computeAppDescriptionOpps } from '../../utils/appDescriptionOpps';
 import { computeCloseNotSoldOpps, hasBfoOppNameIndex, detectBfoUrl, resolveOppForRow } from '../../utils/closeNotSoldOpps';
 import { BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, BFO_ACTIVITY_EVENT } from '../../utils/bfoActivityStore';
-import { buildActivityAddressLines } from '../../utils/activityAddressLines';
+import { buildActivityAddressLines, ACTIVITY_PROMPT_LIMIT } from '../../utils/activityAddressLines';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { findRecoverableLinks, applyRecoveredLinks, ledgerRows, LEAD_LINK_LEDGER_KEY } from '../../utils/leadLinks';
 import { listBackups } from '../../utils/settingsBackup';
@@ -54,6 +54,8 @@ const OVERRIDE_STORAGE_KEY = 'agents-bfo-overrides';
 const IGNORED_EMAILS_STORAGE_KEY = 'agents-ignored-emails';
 const IGNORED_MEETINGS_STORAGE_KEY = 'agents-ignored-meetings';
 const HIDE_ACTIVITY_ON_DATE_STORAGE_KEY = 'agents-hide-activity-on-date';
+// "Limit prompt activity to 25": caps the addresses the Activity prompt carries.
+const LIMIT_PROMPT_ACTIVITY_STORAGE_KEY = 'agents-limit-prompt-activity';
 // External recipient addresses the user has chosen to permanently
 // exclude from the Sent emails table. Unlike IGNORED_EMAILS (one
 // message at a time), this hides every current and future email sent
@@ -329,6 +331,14 @@ function readHideActivityOnDate() {
 
 function writeHideActivityOnDate(on) {
   try { writeWorkKey(HIDE_ACTIVITY_ON_DATE_STORAGE_KEY, on ? '1' : '0'); } catch {}
+}
+
+function readLimitPromptActivity() {
+  try { return userLsGet(LIMIT_PROMPT_ACTIVITY_STORAGE_KEY) === '1'; } catch { return false; }
+}
+
+function writeLimitPromptActivity(on) {
+  try { writeWorkKey(LIMIT_PROMPT_ACTIVITY_STORAGE_KEY, on ? '1' : '0'); } catch { /* storage unavailable: the tick still holds for this visit */ }
 }
 
 // Which sub-tab of the Agents page is showing: 'automations' (the default
@@ -1910,6 +1920,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   // When on, the Called / Sent tables hide rows whose Last Activity date
   // is the same calendar day as the selected Activity date up top.
   const [hideActivityOnDate, setHideActivityOnDate] = useState(readHideActivityOnDate);
+  const [limitPromptActivity, setLimitPromptActivity] = useState(readLimitPromptActivity);
   // Which Activity-table columns are hidden, plus the column-menu open state.
   // Saved to the account as well, so they follow the user to another machine.
   const [hiddenActivityCols, setHiddenActivityCols] = useSyncedTablePref({
@@ -3595,6 +3606,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       markedMeetings: markedMeetingOpps,
       calls: calledOpps,
       emails: todaysOutbound,
+      limit: limitPromptActivity ? ACTIVITY_PROMPT_LIMIT : null,
     });
     const activityBlock = activityLines.join('\n');
 
@@ -3684,7 +3696,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     const suffixSection = `===== Update BFO Activity =====\n${bfoSuffix}`;
     return base ? `${base}\n\n${suffixSection}` : suffixSection;
   }, [
-    aiPrompt, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
+    aiPrompt, limitPromptActivity, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
     stageChangePrompt, appDescriptionPrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
     bfoPrepPrompt, todaysOutbound, calledOpps, allTodaysMeetings, markedMeetingOpps, newBfoOpps, closeDateOpps,
     amountUpdateOpps, stageChangeOpps, appDescriptionReady, closeNotSoldOpps, bfoPrepOpps,
@@ -3786,6 +3798,21 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                 }}
               />
               Hide rows last active in the past 2 business days
+            </label>
+            <label
+              className={styles.hideActivityField}
+              title={`Send at most ${ACTIVITY_PROMPT_LIMIT} activity addresses in the Activity prompt (its own Copy button and Copy all prompts). Meetings are kept first, then calls, then emails. The tables on this page still show everything.`}
+            >
+              <input
+                type="checkbox"
+                checked={limitPromptActivity}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setLimitPromptActivity(on);
+                  writeLimitPromptActivity(on);
+                }}
+              />
+              Limit prompt activity to {ACTIVITY_PROMPT_LIMIT}
             </label>
             <button
               type="button"
@@ -4582,12 +4609,18 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       </section>
 
       {(() => {
-        const addressBlock = buildActivityAddressLines({
+        const allAddressLines = buildActivityAddressLines({
           meetings: allTodaysMeetings,
           markedMeetings: markedMeetingOpps,
           calls: calledOpps,
           emails: todaysOutbound,
-        }).join('\n');
+        });
+        // "Limit prompt activity to 25": the first 25 in the block's own
+        // order (meetings, then calls, then emails), the rest left for the
+        // next run.
+        const addressLines = limitPromptActivity ? allAddressLines.slice(0, ACTIVITY_PROMPT_LIMIT + 1) : allAddressLines;
+        const heldBack = allAddressLines.length - addressLines.length;
+        const addressBlock = addressLines.join('\n');
         const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
         const onCopy = async () => {
           try {
@@ -4604,6 +4637,11 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
             <p className={styles.subnote}>
               The past 2 business days&rsquo; BFO addresses (sent emails, calls, and meetings marked on the Opps tab) are appended automatically. When an email&rsquo;s external recipient matches a Marketing Lead (Contacts tab), that lead&rsquo;s Salesforce Link is appended too so the touch is logged on the lead as well. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
             </p>
+            {heldBack > 0 && (
+              <p className={styles.subnote}>
+                Limited to {ACTIVITY_PROMPT_LIMIT}: this prompt carries the first {ACTIVITY_PROMPT_LIMIT} of {allAddressLines.length - 1} addresses, and {heldBack} {heldBack === 1 ? 'is' : 'are'} left out. Untick &ldquo;Limit prompt activity to {ACTIVITY_PROMPT_LIMIT}&rdquo; at the top of the page to send them all.
+              </p>
+            )}
             {revealedPrompts.activity && (
               <textarea
                 className={styles.aiPromptInput}
