@@ -32,8 +32,103 @@ export function isTextDivision(id) {
 // the same id: React keys stay stable across renders and a name can't end
 // up mapped twice under two ids. A later rename keeps the id it was given
 // — anything nested under it is keyed by that id.
-export function textDivisionId(name) {
-  return TEXT_ID_PREFIX + nameKey(name);
+//
+// A typed DIVISION is scoped to the box it sits under (`ownerId`). The id
+// used to be the name alone, which made "Real Estate" typed under Blackstone
+// and "Real Estate" typed under Nuveen the same box: one list of contacts,
+// one set of sub-divisions, showing on both companies. A typed PARENT stays
+// unscoped (no ownerId), because one parent holding several companies is
+// exactly what it is for.
+const SCOPE_SEP = '::';
+
+export function textDivisionId(name, ownerId = '') {
+  const owner = String(ownerId || '').trim();
+  return TEXT_ID_PREFIX + (owner ? owner + SCOPE_SEP : '') + nameKey(name);
+}
+
+// Every box under `rootId` (the root included), following divisionsMap down.
+function boxesUnder(settings, rootId) {
+  const map = settings?.divisionsMap || {};
+  const seen = new Set();
+  const walk = (id) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    for (const d of map[id] || []) walk(d.id);
+  };
+  walk(rootId);
+  return seen;
+}
+
+/**
+ * Repair for typed divisions made before ids were scoped: give this
+ * company's copy of a typed division that is ALSO listed under some other
+ * box an id of its own, and bring this company's people across with it.
+ *
+ *   rootId         the company whose chart is being shown
+ *   ownContactIds  ids of that company's own contacts (strings)
+ *
+ * What moves to the new box: the contacts on the shared box whose id is one
+ * of `ownContactIds`, and a copy of its layout. What stays on the old box,
+ * and so with the other company: everybody else, names typed in by hand,
+ * and any sub-divisions, since nothing says whose those are.
+ *
+ * When every box listing the shared division is inside this one chart, the
+ * first keeps the old id so nothing left on it drops out of sight.
+ *
+ * Returns the settings patch, or null when nothing is shared.
+ */
+export function splitSharedTextDivisionsPatch(settings, rootId, ownContactIds) {
+  const map = settings?.divisionsMap || {};
+  if (!rootId) return null;
+  const mine = boxesUnder(settings, rootId);
+  const own = new Set([...(ownContactIds || [])].map(String).filter(Boolean));
+
+  // How many boxes list each typed division, anywhere.
+  const owners = new Map();
+  for (const [ownerId, list] of Object.entries(map)) {
+    for (const d of list || []) {
+      if (!isTextDivision(d?.id)) continue;
+      if (!owners.has(d.id)) owners.set(d.id, []);
+      owners.get(d.id).push(ownerId);
+    }
+  }
+
+  let nextMap = null;
+  let contacts = null;
+  let layout = null;
+  for (const [sharedId, listedUnder] of owners) {
+    if (listedUnder.length < 2) continue;
+    const inside = listedUnder.filter(o => mine.has(o));
+    if (!inside.length) continue;
+    // All of them in this chart: the first one keeps the old id.
+    const toMove = inside.length === listedUnder.length ? inside.slice(1) : inside;
+    toMove.forEach((ownerId, n) => {
+      nextMap = nextMap || { ...map };
+      const entry = nextMap[ownerId].find(d => d.id === sharedId);
+      const newId = textDivisionId(entry.company, ownerId);
+      if (newId === sharedId || nextMap[ownerId].some(d => d.id === newId)) return;
+      nextMap[ownerId] = nextMap[ownerId].map(d => (d.id === sharedId ? { ...d, id: newId } : d));
+
+      const fromLayout = (settings?.divisionLayout || {})[sharedId];
+      if (fromLayout) layout = { ...(layout || settings.divisionLayout), [newId]: fromLayout };
+
+      // This company's people go with the first box split off.
+      if (n > 0) return;
+      const all = (contacts || settings?.divisionContacts || {})[sharedId] || [];
+      const moving = all.filter(c => c?.id && own.has(String(c.id)));
+      if (!moving.length) return;
+      contacts = { ...(contacts || settings?.divisionContacts || {}) };
+      const staying = all.filter(c => !moving.includes(c));
+      if (staying.length) contacts[sharedId] = staying; else delete contacts[sharedId];
+      contacts[newId] = [...(contacts[newId] || []), ...moving];
+    });
+  }
+  if (!nextMap) return null;
+  return {
+    divisionsMap: nextMap,
+    ...(contacts ? { divisionContacts: contacts } : {}),
+    ...(layout ? { divisionLayout: layout } : {}),
+  };
 }
 
 export function divisionsFor(settings, parentId) {
@@ -246,7 +341,7 @@ export function addNamedDivisionPatch(settings, parentId, name, companies) {
 
   const child = match
     ? { id: match.id, company: match.company }
-    : { id: textDivisionId(typed), company: typed };
+    : { id: textDivisionId(typed, parentId), company: typed };
   return addDivisionsPatch(settings, parentId, [child]);
 }
 
@@ -288,7 +383,7 @@ export function renameDivisionPatch(settings, ownerId, childId, newName) {
     return { divisionsMap: map };
   }
 
-  const newId = textDivisionId(name);
+  const newId = textDivisionId(name, ownerId);
   next[idx] = { id: newId, company: name };
   map[ownerId] = next;
   const carried = map[childId];
