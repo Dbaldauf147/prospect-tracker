@@ -114,7 +114,7 @@ export function suggestionOppsTable(r, prospect, oppsRecords, oppNumbers, divisi
   if (opps.length === 0) {
     return {
       caption: (oppsRecords || []).length === 0
-        ? 'The Opps data has not loaded here yet, so the opps behind this cannot be listed. Open the Opps tab once, then reopen this.'
+        ? 'The Opps data is still loading here, so the opps behind this are not listed yet. They appear in a few seconds. If they do not, open the Opps tab once and reopen this.'
         : account
           ? `The opps under the Opps account "${account}" no longer point to this status. Open My Accounts to refresh the suggestion.`
           : 'No opps on the Opps tab match this company by name any more. Open My Accounts to refresh the suggestion.',
