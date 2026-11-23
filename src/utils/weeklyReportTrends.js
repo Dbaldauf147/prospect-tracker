@@ -329,3 +329,19 @@ function coverageRatioNote(known) {
   if (d === 0) return `Flat at ${last.value.toFixed(2)}× since ${base.label}.`;
   return `${d > 0 ? 'Up' : 'Down'} ${Math.abs(d).toFixed(2)}× since ${base.label}, from ${base.value.toFixed(2)}× to ${last.value.toFixed(2)}×.`;
 }
+
+// The y axis both drawings of the coverage ratio share (the tab's chart and
+// the email's picture). It starts at the lowest reading rather than zero, so
+// the weeks fill the plot instead of sitting in a band across the top, and
+// it ends a little above the goal, or at the best week where that is higher.
+// A series with a single value gets a little room above it so there is still
+// a scale to draw.
+export function ratioAxisRange(values, goal) {
+  const nums = (Array.isArray(values) ? values : []).filter(Number.isFinite);
+  if (!nums.length) return { min: 0, max: 1 };
+  const min = Math.min(...nums);
+  const overGoal = Number.isFinite(goal) && goal > 0 ? goal * 1.05 : -Infinity;
+  let max = Math.max(...nums, overGoal);
+  if (max - min < 1e-9) max = min + Math.max(0.1, Math.abs(min) * 0.1);
+  return { min, max };
+}
