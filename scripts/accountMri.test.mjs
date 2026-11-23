@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs';
 import {
   MRI_PROFILE_FIELDS, MRI_PROFILE_SHEET_PATH, accountMriProfile, fillProfileSheet,
   fillTableSheet, fillAccountMriWorkbook, buyingCommitteeRows, siteUtilityRows, MRI_COMMITTEE_TABLE, MRI_SITES_TABLE,
-  revenueInBillions, mriTier, mriStage, plainMentions, servicesInScope, mainContactText, mriFileName,
+  revenueInBillions, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, mainContactText, mriFileName,
 } from '../src/utils/accountMri.js';
 
 let passed = 0, failed = 0;
@@ -32,8 +32,13 @@ eq(mriStage('Qualifying'), 'Qualify', 'qualifying stage');
 eq(mriStage('Hold Off'), 'Hold Off', 'other statuses go across as they are');
 
 eq(plainMentions('@![Engie] on @[Bill payment]\nand Enel X'), 'Engie on Bill payment; and Enel X', 'mention chips read as names');
-eq(servicesInScope({ 'Bill payment': 'Sold', IDM: 'In Progress', 'API/ETL': 'N/A', X: '-', A: 'Sold' }), 'Sold: A, Bill payment. In progress: IDM', 'sold then in progress');
-eq(servicesInScope({ IDM: 'Proposal' }), 'In progress: IDM', 'in progress only');
+const board = { 'Bill payment': 'Sold', IDM: 'Qualifying', 'API/ETL': 'N/A', X: '-', A: 'Sold', RECs: 'Not Sold', Audits: 'Exploring' };
+eq(servicesInScope(board), 'Sold: A, Bill payment\nNot Sold: RECs', 'sold and not sold, a line each, A to Z');
+eq(servicesInScope({ RECs: 'Not Sold' }), 'Sold: None\nNot Sold: RECs', 'an empty bucket says None');
+eq(servicesInScope({ IDM: 'Qualifying', 'API/ETL': 'N/A', X: '-' }), '', 'nothing sold or lost');
+eq(upsellOpportunities(board, 'Dana Reyes'), 'Qualifying: Audits, IDM\nResponsible: Dana Reyes', 'services in flight, then the salesperson');
+eq(upsellOpportunities(board), 'Qualifying: Audits, IDM', 'no salesperson, no responsible line');
+eq(upsellOpportunities({ A: 'Sold', RECs: 'Not Sold' }, 'Dana Reyes'), '', 'nothing being qualified');
 eq(servicesInScope({}), '', 'no services');
 eq(
   mainContactText([
@@ -50,7 +55,7 @@ const profile = accountMriProfile({
     company: 'Northwind & Sons <Data>', vertical: 'Cloud', cdm: 'Alex Morgan', status: 'Client', hqRegion: 'North America',
     revenue: '$4.2B', numberOfSites: '1,038', notes: 'Line one\nLine two', competitorsNotes: '@![Engie]',
     competitorConsultants: [{ firm: 'Enel X' }, { firm: 'engie' }],
-    servicesExplored: { 'Bill payment': 'Sold' },
+    servicesExplored: { 'Bill payment': 'Sold', IDM: 'Qualifying' },
   },
   tier: 'Tier 2',
   contacts: [{ firstname: 'Jamie', lastname: 'Lee', dans_tags: 'Primary Point of Contact' }],
@@ -63,6 +68,8 @@ eq(profile.competitors, 'Engie; Enel X', 'competitors, firm not repeated');
 eq(profile.fee, '$450,000 / yr', 'fee');
 eq(profile.setup, '$60,000 one-time', 'setup');
 eq(profile.ubm, 'Sold', 'ubm');
+eq(profile.services, 'Sold: Bill payment\nNot Sold: None', 'services in scope');
+eq(profile.upsell, 'Qualifying: IDM\nResponsible: Alex Morgan', 'upsell names the salesperson');
 eq(profile.contractTerm, 'Expires Mar 31, 2027', 'contract term');
 eq(accountMriProfile({ record: { company: 'X' } }).existingClient, '', 'no status, no client answer');
 eq(accountMriProfile({ record: { company: 'X', status: 'Qualifying' } }).existingClient, 'No', 'not a client');
@@ -140,7 +147,7 @@ const bigCommittee = many(28, i => ({ name: `Person ${String(i).padStart(2, '0')
 const bigSites = many(205, i => ({ name: `Site ${i}`, country: 'USA', location: 'Austin, TX', function: 'Office', elec: 1000, elecUnits: 'kWh', fuel: i === 0 ? null : 10, fuelUnits: i === 0 ? '' : 'Dth' }));
 const zip2 = await JSZip.loadAsync(buf);
 const result = await fillAccountMriWorkbook(zip2, { profile, committee: bigCommittee, sites: bigSites });
-eq(result, { profileCells: 18, committeeRows: 28, siteRows: 205 }, 'workbook fill result');
+eq(result, { profileCells: 19, committeeRows: 28, siteRows: 205 }, 'workbook fill result');
 const sheet3 = await zip2.file(MRI_COMMITTEE_TABLE.path).async('string');
 eq(sheet3.includes('<xm:sqref>E6:E33</xm:sqref>'), true, 'dropdowns stretched over the added rows');
 const sheet5 = await zip2.file(MRI_SITES_TABLE.path).async('string');

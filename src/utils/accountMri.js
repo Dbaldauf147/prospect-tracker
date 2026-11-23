@@ -49,7 +49,7 @@ export const MRI_PROFILE_FIELDS = [
   { row: 28, key: 'ubm', label: 'UBM', source: 'Bill payment (service)' },
   { row: 29, key: 'contractTerm', label: 'Contract term', source: 'Soonest Expiration' },
   { row: 30, key: 'earlyOut', label: 'Early out', source: '' },
-  { row: 31, key: 'upsell', label: 'Potential upsell opportunities', source: '' },
+  { row: 31, key: 'upsell', label: 'Potential upsell opportunities', source: 'Services (Qualifying) and CDM' },
 ];
 
 // The rows the tool fills: those with a tracker field behind them.
@@ -117,20 +117,43 @@ export function mainContactText(contacts) {
   return out.join('; ');
 }
 
-/** The services board as one cell: what is sold, then what is in progress. */
-export function servicesInScope(servicesExplored) {
-  const sold = [];
-  const open = [];
+// A service's bucket on the template: Sold and Not Sold go in the "Services
+// in scope" cell, and every status still in flight (Exploring, Qualifying,
+// Quoting, Quoted, Verbal ...) is an open opportunity, which goes in the
+// "Potential upsell opportunities" cell. N/A and never-explored services
+// are in neither. Each list is A to Z.
+function serviceBuckets(servicesExplored) {
+  const names = { sold: [], inProgress: [], notSold: [] };
   for (const [name, status] of Object.entries(servicesExplored || {})) {
-    const bucket = serviceStatusBucket(status);
-    if (bucket === 'sold') sold.push(name);
-    else if (bucket === 'inProgress') open.push(name);
+    const list = names[serviceStatusBucket(status)];
+    if (list && text(name)) list.push(text(name));
   }
-  sold.sort((a, b) => a.localeCompare(b));
-  open.sort((a, b) => a.localeCompare(b));
-  if (sold.length && open.length) return `Sold: ${sold.join(', ')}. In progress: ${open.join(', ')}`;
-  if (open.length) return `In progress: ${open.join(', ')}`;
-  return sold.join(', ');
+  for (const list of Object.values(names)) list.sort((x, y) => x.localeCompare(y));
+  return names;
+}
+
+/**
+ * The "Services in scope" cell: a "Sold:" line and a "Not Sold:" line, each
+ * listing its services ("None" when it has none). '' when no service is
+ * either.
+ */
+export function servicesInScope(servicesExplored) {
+  const { sold, notSold } = serviceBuckets(servicesExplored);
+  if (!sold.length && !notSold.length) return '';
+  return `Sold: ${sold.join(', ') || 'None'}\nNot Sold: ${notSold.join(', ') || 'None'}`;
+}
+
+/**
+ * The "Potential upsell opportunities & who is responsible" cell: the
+ * services being qualified, then the account's salesperson as the one
+ * responsible (the tracker keeps no owner per service). '' when nothing is
+ * being qualified.
+ */
+export function upsellOpportunities(servicesExplored, responsible = '') {
+  const { inProgress } = serviceBuckets(servicesExplored);
+  if (!inProgress.length) return '';
+  const who = text(responsible);
+  return `Qualifying: ${inProgress.join(', ')}${who ? `\nResponsible: ${who}` : ''}`;
 }
 
 const money = n => (n == null || !Number.isFinite(Number(n)) ? '' : `$${Math.round(Number(n)).toLocaleString('en-US')}`);
@@ -178,6 +201,7 @@ export function accountMriProfile({ record, tier = '', contacts = [], contracts 
     setup: setup ? `${setup} one-time` : '',
     ubm: text((p.servicesExplored || {})[UBM_SERVICE]).replace(/^-$/, ''),
     contractTerm: contracts?.soonestEnd ? `Expires ${dateText(contracts.soonestEnd)}` : '',
+    upsell: upsellOpportunities(p.servicesExplored, p.cdm),
   };
 }
 
@@ -214,9 +238,27 @@ export function fillProfileSheet(sheetXml, profile, { column = 'C' } = {}) {
     if (value == null || value === '') continue;
     const ref = `${column}${f.row}`;
     xml = setCell(xml, ref, value, f.kind === 'number');
+    if (f.kind !== 'number') xml = fitRowHeight(xml, f.row, value);
     written.push(ref);
   }
   return { xml, written };
+}
+
+// The "Your entry" column is 48 wide, which is about this many characters
+// of its font to a line, each line about this many points tall.
+const ENTRY_CHARS_PER_LINE = 50;
+const ENTRY_LINE_POINTS = 15;
+
+// A row the template gives a fixed height does not grow to its text when
+// the file is opened, so one holding more lines than fit is made taller
+// here. Rows with no fixed height size themselves and are left alone.
+function fitRowHeight(xml, row, value) {
+  const lines = String(value).split('\n')
+    .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / ENTRY_CHARS_PER_LINE)), 0);
+  const need = lines * ENTRY_LINE_POINTS + 4;
+  return xml.replace(new RegExp(`(<row r="${row}"[^>]*?\\sht=")([\\d.]+)(")`), (m, a, ht, z) => (
+    Number(ht) >= need ? m : `${a}${need}${z}`
+  ));
 }
 
 // The template's two list tabs: where the entry rows sit and which column

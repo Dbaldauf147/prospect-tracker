@@ -25,7 +25,7 @@ import templateUrl from '../../assets/account-mri-intake-template.xlsx?url';
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 // Account name is the Company column itself.
 const FIELD_COLUMNS = MRI_FILLED_FIELDS.filter(f => f.key !== 'accountName');
-const WIDE = new Set(['mainContact', 'competitors', 'background', 'services']);
+const WIDE = new Set(['mainContact', 'competitors', 'background', 'services', 'upsell']);
 // The key a company's site list is saved under, as the company popup makes it.
 const siteListSlug = company => String(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
 
