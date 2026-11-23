@@ -33,5 +33,8 @@ check('the notice reason comes along', map.get('noticed@x.com').reason, 'Mailbox
 check('nothing to read', failedEmailMap(null, null).size, 0);
 check('hover text names the reason', /failed.*Q3 Outreach.*Reason: Mailbox not found/.test(failedEmailTitle(map.get('noticed@x.com'))), true);
 
+check('hover text says a forwarded notice flagged it', /Flagged from a failure notice you forwarded/.test(failedEmailTitle(map.get('noticed@x.com'))), true);
+check('hover text says the campaign flagged it', /Flagged by the campaign/.test(failedEmailTitle(map.get('bounced@x.com'))), true);
+
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

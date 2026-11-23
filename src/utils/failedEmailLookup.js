@@ -5,7 +5,7 @@
 // address is red here exactly when that tab still lists it as a bad email:
 // a bounce the campaign lookup caught, or a forwarded failure notice that
 // has not been marked fixed.
-import { failedCampaignEmailRows, FAILED_STATE } from './failedCampaignEmails.js';
+import { failedCampaignEmailRows, FAILED_STATE, FAILED_SOURCE } from './failedCampaignEmails.js';
 
 /**
  * Map of lowercased email -> { failedAt, reason, campaign, source } for every
@@ -28,5 +28,16 @@ export function failedEmailTitle(info) {
   const when = Number.isFinite(ms) ? ` on ${new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : '';
   const where = info.campaign ? ` (${info.campaign})` : '';
   const why = info.reason ? ` Reason: ${String(info.reason).replace(/\.+$/, '')}.` : '';
-  return `Email to this address failed${when}${where}.${why} See Email Campaigns, Failed Emails.`;
+  // Where the flag came from, since the two are fixed in different places: a
+  // forwarded notice is cleared with Mark fixed, a campaign match is the
+  // campaign's own reading of an incoming bounce and goes when a refresh no
+  // longer finds one.
+  const how = info.source === FAILED_SOURCE.CAMPAIGN
+    ? ' Flagged by the campaign: a delivery-failure notice came back from this address\'s mail domain.'
+    : info.source === FAILED_SOURCE.NOTICE
+      ? ' Flagged from a failure notice you forwarded.'
+      : info.source === FAILED_SOURCE.BOTH
+        ? ' Flagged by the campaign and by a failure notice you forwarded.'
+        : '';
+  return `Email to this address failed${when}${where}.${why}${how} See Email Campaigns, Failed Emails.`;
 }

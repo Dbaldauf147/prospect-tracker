@@ -3005,8 +3005,13 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                 const hiddenTag = !!raw && contactIsHidden(raw);
                 const statusTitle = selfDup
                   ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)'
-                  : failed ? failedEmailTitle(failed)
-                    : sentDate ? `Already sent this email${sentLabel ? ` on ${sentLabel}` : ''} (per the Activity tab or the Email Campaigns tracker)` : '';
+                  // Sent and failed are both said: a send that bounced is
+                  // still a send, and "where is my Sent mark" is the first
+                  // question a red pill raises.
+                  : [
+                    sentDate ? `Already sent this email${sentLabel ? ` on ${sentLabel}` : ''} (per the Activity tab or the Email Campaigns tracker)` : '',
+                    failed ? failedEmailTitle(failed) : '',
+                  ].filter(Boolean).join('\n\n');
                 return (
                   <span
                     key={c.id}
@@ -3033,6 +3038,11 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                       {hiddenTag && (
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 6px', borderRadius: 999, background: '#64748B', color: '#fff', fontSize: '0.6rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
                           ⊘ Hidden
+                        </span>
+                      )}
+                      {sentDate && failed && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 6px', borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: '0.6rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
+                          ✓ Sent{sentLabel ? ` ${sentLabel}` : ''}
                         </span>
                       )}
                       {failed && (
