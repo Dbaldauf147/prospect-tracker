@@ -867,6 +867,9 @@ function BucketServicePicker({ bucket, options, onPick }) {
 // to sell them, then the portfolio side - the site list and the holdings,
 // which is the least often opened.
 //
+// Divisions has a page of its own, next to Contacts: it used to sit under the
+// roster, where a company with sixty contacts pushed the chart off the screen.
+//
 // Out here rather than inside the component so the list is one thing to read
 // and the render doesn't rebuild it on every keystroke.
 const PROSPECT_TABS = [
@@ -878,7 +881,12 @@ const PROSPECT_TABS = [
   {
     key: 'contacts',
     label: 'Contacts',
-    title: 'Everybody we know at this company, as a table or as an org chart, and the divisions they sit in',
+    title: 'Everybody we know at this company, as a table or as an org chart',
+  },
+  {
+    key: 'divisions',
+    label: 'Divisions',
+    title: "How the company is divided up: its subsidiaries, operating brands and regional entities, and any parent company it sits under",
   },
   {
     key: 'services',
@@ -5461,10 +5469,9 @@ function OppProgressPicker({ value, disabled, onChange }) {
 }
 
 function DivisionsSection({ parentId, parentCompany, prospects, contacts, settings, updateSettings, onOpenContact = () => {} }) {
-  // Open on arrival, like every other section on the card: the Contacts tab
-  // is where somebody goes to see this, so it is already showing when they
-  // get there.
-  const [open, setOpen] = useState(true);
+  // The whole of the Divisions tab, so there is nothing to collapse: the
+  // chart is what the tab was opened for.
+  const open = true;
   const [draft, setDraft] = useState('');
   // Which box is being renamed, and which box is having one added under
   // it. Only one of each at a time, so a stray click can't leave two
@@ -5720,13 +5727,9 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   }), [settings, companies, updateSettings, parentId, parentCompany, onOpenContact]);
 
   return (
-    <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
-      <div
-        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
-        onClick={() => setOpen(o => !o)}
-      >
-        <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>Divisions</label>
-        <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <label className={styles.label} style={{ margin: 0 }}>Divisions</label>
         {divisions.length > 0 && (
           <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
             {divisions.length} {divisions.length === 1 ? 'division' : 'divisions'}
@@ -8003,6 +8006,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return {
       company: '',
       contacts: n(companyContacts.length),
+      divisions: n(prospect?.id ? divisionsFor(settings, prospect.id).length : 0),
       services: servicesExploredCount.total
         ? `${servicesExploredCount.explored}/${servicesExploredCount.total}`
         : '',
@@ -8022,7 +8026,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       portfolio: n((fields.portfolioCompanies || []).length),
     };
   }, [companyContacts.length, servicesExploredCount, companyOppsSummary.total,
-    accountPotentialReading, fields.portfolioCompanies, activeContractCount, fields.bfoHistory, fields.climateTargets]);
+    accountPotentialReading, fields.portfolioCompanies, activeContractCount, fields.bfoHistory, fields.climateTargets,
+    settings, prospect?.id]);
 
   // What the Potential tab prices: the catalogue minus the services retired
   // on the Services tab.
@@ -15760,7 +15765,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </table>
             </div>
           )}
-          {!isNew && activeTab === 'contacts' && prospect?.id && (
+          {!isNew && activeTab === 'divisions' && prospect?.id && (
             <DivisionsSection
               parentId={prospect.id}
               parentCompany={fields.company}
