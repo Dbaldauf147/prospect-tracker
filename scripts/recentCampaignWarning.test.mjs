@@ -42,3 +42,32 @@ console.log('PASS  recent campaign warning');
   assert.equal(sentThisCampaign(campaigns, 'Group send').has('lee@y.com'), true, 'group sends split');
   assert.equal(sentThisCampaign(campaigns, '').size, 0);
 }
+
+// The same sends, read off the Activity tab's feed, so a To pill turns green
+// as soon as the Activity tab lists the send rather than when the campaign
+// is next refreshed.
+{
+  const { sentPerActivity, mergeSent } = await import('../src/utils/recentCampaignWarning.js');
+  const at = (d) => new Date(Date.parse('2026-11-23T15:47:00Z') - d * 864e5).toISOString();
+  const feed = { emails: [
+    { hs_email_subject: 'Capital Planning Webinar Invite', hs_email_from_email: 'daniel.baldauf@se.com', hs_email_to_email: 'JimDietz@lennar.com', hs_timestamp: at(0) },
+    { hs_email_subject: 'Capital Planning Webinar Invite', hs_email_from_email: 'daniel.baldauf@se.com', hs_email_to_email: 'jimdietz@lennar.com', hs_timestamp: at(3) },
+    { hs_email_subject: 'RE: Capital Planning Webinar Invite', hs_email_from_email: 'jimdietz@lennar.com', hs_email_to_email: 'daniel.baldauf@se.com; other@lennar.com', hs_timestamp: at(0) },
+    { hs_email_subject: 'Capital Planning Webinar Invite', hs_email_from_email: '', hs_email_direction: 'EMAIL', hs_email_to_email: 'kim@y.com, lee@y.com; boss@se.com', hs_timestamp: at(1) },
+    { hs_email_subject: 'Capital Planning Webinar Invite', hs_email_from_email: '', hs_email_direction: 'INCOMING_EMAIL', hs_email_to_email: 'in@y.com', hs_timestamp: at(1) },
+    { hs_email_subject: 'Something else', hs_email_from_email: 'daniel.baldauf@se.com', hs_email_to_email: 'amy@x.com', hs_timestamp: at(1) },
+    { hs_email_subject: 'Capital Planning Webinar Invite', hs_email_from_email: 'daniel.baldauf@se.com', hs_email_to_email: 'nodate@x.com', hs_timestamp: '' },
+    { hs_email_subject: 'Savings for Lennar this quarter', hs_email_from_email: 'daniel.baldauf@se.com', hs_email_to_email: 'var@lennar.com', hs_timestamp: at(2) },
+  ] };
+  const s = sentPerActivity(feed, 'capital planning webinar invite');
+  assert.deepEqual([...s.keys()].sort(), ['jimdietz@lennar.com', 'kim@y.com', 'lee@y.com'],
+    'outbound sends under the subject, every external address, no incoming mail and no @se.com');
+  assert.equal(s.get('jimdietz@lennar.com'), at(0), 'the latest send wins');
+  assert.equal(sentPerActivity(feed, '').size, 0, 'no subject, nobody');
+  assert.equal(sentPerActivity(null, 'Capital Planning Webinar Invite').size, 0, 'no feed, nobody');
+  assert.equal(sentPerActivity(feed, 'Savings for {company} this quarter').has('var@lennar.com'), true, 'a variable matches whatever the send filled in');
+  assert.equal(sentPerActivity(feed, '{company}').size, 0, 'a subject that is only a variable matches nothing');
+
+  const merged = mergeSent(new Map([['a@x.com', at(5)], ['b@x.com', at(1)]]), new Map([['a@x.com', at(2)], ['c@x.com', at(0)]]));
+  assert.deepEqual([merged.get('a@x.com'), merged.get('b@x.com'), merged.get('c@x.com')], [at(2), at(1), at(0)], 'merged: the later send per address');
+}
