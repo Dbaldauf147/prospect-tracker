@@ -2170,9 +2170,18 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     return contactStatusLabel(c);
   }
 
+  // Tagged Hide: a contact set aside on purpose. Their address greys out
+  // and the row says Hidden, the same mark the Draft Emails To line uses,
+  // so they are easy to spot before an email goes to them anyway.
+  function isHiddenAddress(addr) {
+    const hit = hubspotByEmail.get(String(addr || '').trim().toLowerCase());
+    return !!hit && contactIsHidden(hit);
+  }
+
   function renderContactCell(key, c, i, isDup) {
     switch (key) {
-      case 'email':
+      case 'email': {
+        const anyHidden = String(c.email || '').split(';').some(isHiddenAddress);
         return (
           <>
             <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
@@ -2185,14 +2194,16 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); openContactByEmail(addr, companyFor(c).name); }}
-                      title={`Open the contact popup for ${addr}`}
-                      style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: 'inherit', cursor: 'pointer', textAlign: 'left' }}
+                      title={isHiddenAddress(addr) ? `Tagged Hide: this contact is hidden on the contact lists.\nOpen the contact popup for ${addr}` : `Open the contact popup for ${addr}`}
+                      data-hidden-contact={isHiddenAddress(addr) || undefined}
+                      style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: isHiddenAddress(addr) ? '#64748B' : 'inherit', fontStyle: isHiddenAddress(addr) ? 'italic' : 'normal', cursor: 'pointer', textAlign: 'left' }}
                       onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-accent)'; e.currentTarget.style.textDecoration = 'underline'; }}
-                      onMouseLeave={e => { e.currentTarget.style.color = 'inherit'; e.currentTarget.style.textDecoration = 'none'; }}
+                      onMouseLeave={e => { e.currentTarget.style.color = isHiddenAddress(addr) ? '#64748B' : 'inherit'; e.currentTarget.style.textDecoration = 'none'; }}
                     >{addr}</button>
                   </span>
                 ))}
               </span>
+              {anyHidden && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#64748B', color: '#fff', flexShrink: 0, whiteSpace: 'nowrap' }} title="Tagged Hide: this contact is hidden on the contact lists">⊘ Hidden</span>}
               {isDup && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FDE68A', color: '#92400E', flexShrink: 0 }} title="This contact appears more than once in this campaign">Duplicate</span>}
               {/* A delivery-failure notice for this address is in the Outlook
                   inbox (utils/badEmails.js). */}
@@ -2205,6 +2216,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
             {c.recipientCount > 1 && <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{c.recipientCount} recipients</div>}
           </>
         );
+      }
       case 'company': {
         const { name, source } = companyFor(c);
         if (!name) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
@@ -3372,11 +3384,16 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                     // blue bar down the left edge, so the rows at the top
                     // read as the ones still to send.
                     const notSent = !c.sentDate;
+                    // Tagged Hide: a grey tint and a grey bar, taking the
+                    // place of the blue "still to send" look, since a hidden
+                    // contact is not somebody waiting on an email.
+                    const hiddenRow = String(c.email || '').split(';').some(isHiddenAddress);
                     const rowBg = isDup ? '#FFFBEB'
                       : blocked === 'avoid' ? 'var(--color-surface-alt)'
                         : blocked === 'hold' ? 'rgba(251, 191, 36, 0.07)'
-                          : notSent ? '#EFF6FF'
-                            : undefined;
+                          : hiddenRow ? '#F1F5F9'
+                            : notSent ? '#EFF6FF'
+                              : undefined;
                     return (
                     <tr
                       key={i}
@@ -3392,8 +3409,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                       }}
                     >
                       <td
+                        data-hidden-row={hiddenRow ? 'true' : undefined}
                         data-not-sent={notSent ? 'true' : undefined}
-                        style={{ padding: '0.4rem 0.3rem', textAlign: 'center', boxShadow: notSent && blocked === 'open' ? 'inset 3px 0 0 #2563EB' : undefined }}
+                        style={{ padding: '0.4rem 0.3rem', textAlign: 'center', boxShadow: hiddenRow ? 'inset 3px 0 0 #94A3B8' : notSent && blocked === 'open' ? 'inset 3px 0 0 #2563EB' : undefined }}
                       >
                         <button
                           onClick={() => removeContact(i)}
