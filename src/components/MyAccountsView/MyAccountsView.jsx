@@ -55,6 +55,7 @@ import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
 import { dmTagReading, recordDmTagDay } from '../../utils/dmTagHistory';
 import { targetAccountRows } from '../../utils/targetAccountMatch';
 import { cardsToClear, FIX_KEY as CDM_BLANK_FIX_KEY } from '../../utils/clearCdmBlankTargets';
+import { oppStageBucket, suggestedStatusFromCounts } from '../../utils/oppStatusSuggestion';
 import styles from './MyAccountsView.module.css';
 import { buildZoomExclusionExplainer, buildZoomExcludedMatcher, normZoomCompany } from '../../utils/zoomExportExclude';
 
@@ -1720,14 +1721,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // Track stage breakdown for status suggestion
       if (!stagesByAccount[account]) stagesByAccount[account] = { sold: 0, notSold: 0, active: 0 };
       const invalidStages = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
-      const stageLower = stage.toLowerCase();
-      if (stageLower === 'sold' || stageLower === 'won' || stageLower === 'closed won' || stageLower === 'sold - won') {
-        stagesByAccount[account].sold++;
-      } else if (stageLower === 'not sold' || stageLower === 'lost' || stageLower === 'closed lost' || stageLower === 'lost - not sold') {
-        stagesByAccount[account].notSold++;
-      } else if (stage && !closedStages.has(stage) && !invalidStages.has(stage)) {
-        stagesByAccount[account].active++;
-      }
+      const bucket = oppStageBucket(stage);
+      if (bucket) stagesByAccount[account][bucket]++;
 
       // Track PE Partner-sourced opps so we can nudge the account's
       // Type toward 'Portfolio Company' when it isn't already.
@@ -1753,13 +1748,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     // Sold deals always take priority → Client
     const suggested = {};
     for (const [account, stages] of Object.entries(stagesByAccount)) {
-      if (stages.sold > 0) {
-        suggested[account] = 'Client';
-      } else if (stages.active > 0) {
-        suggested[account] = 'Qualifying';
-      } else if (stages.notSold > 0) {
-        suggested[account] = 'Lost - Not Sold';
-      }
+      const status = suggestedStatusFromCounts(stages);
+      if (status) suggested[account] = status;
     }
 
     // Debug: log all accounts containing pnc — gated behind
@@ -2544,12 +2534,15 @@ Fix that now?
       // Only suggest when we actually find opps for this company — no match
       // means no data to base a suggestion on, so we stay silent.
       let suggestedStatus = '';
+      // The Opps Account the suggestion came from, so the Issues tab can
+      // show the opps behind it.
+      let suggestedStatusAccount = '';
       for (const name of allCompanyNames) {
-        if (suggestedStatusByAccount[name]) { suggestedStatus = suggestedStatusByAccount[name]; break; }
+        if (suggestedStatusByAccount[name]) { suggestedStatus = suggestedStatusByAccount[name]; suggestedStatusAccount = name; break; }
         let found = false;
         for (const oppsCompany of findMatchesInIndex(suggestedStatusIndex, name)) {
           const status = suggestedStatusByAccount[oppsCompany];
-          if (status) { suggestedStatus = status; found = true; break; }
+          if (status) { suggestedStatus = status; suggestedStatusAccount = oppsCompany; found = true; break; }
         }
         if (found) break;
       }
@@ -2589,7 +2582,7 @@ Fix that now?
       // tierLabel is what the Tier cells show: Strategic Target for a "Not on
       // tier list, but Dan target" company without a Tier 1 or 2. myTier
       // stays the tier it counts under (Tier 3 for those).
-      const entry = { ...p, myTier: tier, tierLabel: ownTargetTierLabel(p, tier), activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, mslSiteCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
+      const entry = { ...p, myTier: tier, tierLabel: ownTargetTierLabel(p, tier), activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, mslSiteCount, _contactDebug, suggestedStatus, suggestedStatusAccount, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       // Counted as reported: a Client with a substatus is Hold Off here.
@@ -2903,7 +2896,7 @@ Fix that now?
       for (const a of allAccounts) {
         if (!a.id || String(a.id).startsWith('opps-only:')) continue;
         if (a.tierMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'tier', myTier: a.myTier || '', targetTier: a.targetTier || '' });
-        if (a.statusMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'status', status: a.status || '', suggestedStatus: a.suggestedStatus || '' });
+        if (a.statusMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'status', status: a.status || '', suggestedStatus: a.suggestedStatus || '', oppsAccount: a.suggestedStatusAccount || '' });
         if (!a.hqRegion && !isInactive(a)) flags.push({ id: a.id, company: a.company || '', kind: 'hqRegion', status: a.status || '' });
         // Nothing on the company popup's Targets tab: the Issues tab's
         // "No targets" rows for My Accounts (utils/clientNoTargets).

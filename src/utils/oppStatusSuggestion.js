@@ -1,0 +1,115 @@
+// The account Status that Opps suggests, and the opps behind it.
+//
+// My Accounts raises a "status mismatch" flag when an account's Status
+// disagrees with what its opps imply. The rule lives here so the Issues
+// tab's Resolution popup can show the very opps that produced the
+// suggestion, classified the same way My Accounts classified them.
+
+const SOLD_STAGES = new Set(['sold', 'won', 'closed won', 'sold - won']);
+const NOT_SOLD_STAGES = new Set(['not sold', 'lost', 'closed lost', 'lost - not sold']);
+// Case-sensitive on purpose: this is the list My Accounts has always used.
+const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
+const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
+
+/** 'sold' | 'notSold' | 'active' for an opp's Stage, or null when it counts for nothing. */
+export function oppStageBucket(stage) {
+  const s = String(stage || '').trim();
+  const lower = s.toLowerCase();
+  if (SOLD_STAGES.has(lower)) return 'sold';
+  if (NOT_SOLD_STAGES.has(lower)) return 'notSold';
+  if (s && !CLOSED_STAGES.has(s) && !INVALID_STAGES.has(s)) return 'active';
+  return null;
+}
+
+/** Sold wins, then anything still open, then Not Sold. '' when there is nothing to go on. */
+export function suggestedStatusFromCounts({ sold = 0, notSold = 0, active = 0 } = {}) {
+  if (sold > 0) return 'Client';
+  if (active > 0) return 'Qualifying';
+  if (notSold > 0) return 'Lost - Not Sold';
+  return '';
+}
+
+const BUCKET_FOR_STATUS = { Client: 'sold', Qualifying: 'active', 'Lost - Not Sold': 'notSold' };
+const plural = (n) => `${n} opp${n === 1 ? '' : 's'}`;
+
+/**
+ * The opps behind a suggested status. `accountKeys` are the Opps Account
+ * names to look under (any case); the first that has opps is used, which
+ * is how My Accounts picks its match.
+ *
+ * Returns { account, opps, otherCount, reason }: `opps` are the records
+ * that produce the suggestion (the sold ones for Client, the open ones for
+ * Qualifying, the Not Sold ones for Lost - Not Sold) and `otherCount` the
+ * account's remaining counted opps.
+ */
+export function oppsBehindSuggestion(records, accountKeys, suggestedStatus) {
+  const want = BUCKET_FOR_STATUS[suggestedStatus];
+  const empty = { account: '', opps: [], otherCount: 0, reason: '' };
+  if (!want) return empty;
+  for (const key of accountKeys || []) {
+    const k = String(key || '').trim().toLowerCase();
+    if (!k) continue;
+    const mine = [];
+    let account = '';
+    let counted = 0;
+    for (const r of records || []) {
+      const raw = String(r?.Account || '').trim();
+      if (raw.toLowerCase() !== k) continue;
+      const bucket = oppStageBucket(r.Stage);
+      if (!bucket) continue;
+      if (!account) account = raw;
+      counted++;
+      if (bucket === want) mine.push(r);
+    }
+    if (mine.length === 0) continue;
+    const n = mine.length;
+    const reason = want === 'sold'
+      ? `${plural(n)} on Opps ${n === 1 ? 'is' : 'are'} Sold, and a sold opp makes the account a Client.`
+      : want === 'active'
+        ? `${plural(n)} on Opps ${n === 1 ? 'is' : 'are'} still open and none are Sold.`
+        : `${n === 1 ? 'The only opp' : `All ${n} opps`} on Opps for this account ${n === 1 ? 'is' : 'are'} Not Sold. None are Sold or still open.`;
+    return { account, opps: mine, otherCount: counted - n, reason };
+  }
+  return empty;
+}
+
+// The opps that make Opps suggest a status, as the Issues tab's Resolution
+// popup table (`r` is the issue row's resolve payload): the
+// account's Sold opps for Client, its open ones for Qualifying, its Not
+// Sold ones for Lost - Not Sold. Null when none can be found (the Opps
+// data hasn't loaded, or the opps have changed since the flag was raised).
+export function suggestionOppsTable(r, prospect, oppsRecords, oppNumbers) {
+  const { account, opps, otherCount, reason } = oppsBehindSuggestion(
+    oppsRecords, [r.oppsAccount, prospect?.company], r.suggestedStatus,
+  );
+  if (opps.length === 0) return null;
+  const cell = (v) => { const s = String(v ?? '').trim(); return s || '-'; };
+  const lost = r.suggestedStatus === 'Lost - Not Sold';
+  const notes = [reason];
+  if (account && account.toLowerCase() !== String(prospect?.company || '').trim().toLowerCase()) {
+    notes.push(`They are under the Opps account "${account}".`);
+  }
+  if (otherCount > 0) notes.push(`${otherCount} other opp${otherCount === 1 ? '' : 's'} on the account ${otherCount === 1 ? 'is' : 'are'} not shown.`);
+  return {
+    caption: notes.join(' '),
+    columns: [
+      { key: 'number', label: 'Opp #' },
+      { key: 'scope', label: 'Scope', wide: true },
+      { key: 'stage', label: 'Stage' },
+      { key: 'quoted', label: 'Quoted', align: 'right' },
+      { key: 'closeDate', label: 'Close Date' },
+      ...(lost ? [{ key: 'reason', label: 'Reason Not Sold', wide: true }] : []),
+      { key: 'source', label: 'Source' },
+    ],
+    rows: opps.map((o, i) => ({
+      key: o._id ?? i,
+      number: oppNumbers?.get(o._id) != null ? `#${oppNumbers.get(o._id)}` : '-',
+      scope: cell(o.Scope),
+      stage: cell(o.Stage),
+      quoted: cell(o['Quoted Amount']),
+      closeDate: cell(o['Close Date']),
+      reason: cell(o['Reason Not Sold']),
+      source: cell(o.Source),
+    })),
+  };
+}

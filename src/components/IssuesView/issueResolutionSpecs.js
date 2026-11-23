@@ -11,6 +11,7 @@ import { cleanLinkedinUrl, markNoLinkedinUpdate } from '../../utils/keyContactLi
 import { apiFetch } from '../../utils/apiFetch';
 import { updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { noTargetRow, normalizeTargets } from '../../utils/companyTargets';
+import { suggestionOppsTable } from '../../utils/oppStatusSuggestion';
 
 // A Key Contact's LinkedIn URL, written to HubSpot (update-contact) and
 // patched into the contacts cache so the issue clears without a re-sync.
@@ -117,7 +118,9 @@ function oppChoices(records, account, oppNumbers) {
  * from here. ctx: { prospect, settings, updateSettings, updateProspect,
  * dropdownLists, oppsRecords, oppNumbers, uid }.
  *
- * Returns { title, subtitle, note, fields, save(values) }.
+ * Returns { title, subtitle, note, table, fields, save(values) }. `table`
+ * ({ caption, columns, rows }) is optional read-only context drawn under
+ * the note.
  */
 export function buildResolution(row, ctx) {
   const r = row?.resolve;
@@ -186,6 +189,7 @@ export function buildResolution(row, ctx) {
         title: 'Resolve status mismatch',
         subtitle,
         note: `Opps suggests "${r.suggestedStatus}" for this account.`,
+        table: suggestionOppsTable(r, prospect, ctx.oppsRecords, ctx.oppNumbers),
         fields: [
           field('status', 'Status', 'select', prospect.status || r.status, { options: STATUSES, start: r.suggestedStatus || prospect.status, compare: true }),
           field('dismiss', 'Keep the current status and dismiss the suggestion', 'checkbox', false),
