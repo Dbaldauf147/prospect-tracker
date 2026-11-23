@@ -1,6 +1,6 @@
 // Bad email addresses from bounce notices (utils/badEmails).
 // Run: node scripts/badEmails.test.mjs
-import { badEmailInfo, withBounces, badEmailsUpdate, clearBadEmailUpdate, badEmailTitle, contactFailedEmails, recordFailedEmailUpdate, removeFailedEmailUpdate, failedEmailChipTitle, contactMovedOffEmail } from '../src/utils/badEmails.js';
+import { badEmailInfo, withBounces, badEmailsUpdate, clearBadEmailUpdate, badEmailTitle, contactFailedEmails, recordFailedEmailUpdate, removeFailedEmailUpdate, failedEmailChipTitle, contactMovedOffEmail, contactBouncedEmails } from '../src/utils/badEmails.js';
 
 let passed = 0, failed = 0;
 function ok(c, n) { if (c) { passed++; console.log(`PASS  ${n}`); } else { failed++; console.log(`FAIL  ${n}`); } }
@@ -33,6 +33,26 @@ ok(!('101' in removeFailedEmailUpdate('101', 'harveyw@nationwide.com')(f3).conta
 ok(removeFailedEmailUpdate('101', 'nobody@x.com')(f3) === null, 'removing one not there changes nothing');
 ok(recordFailedEmailUpdate('', 'a@b.com', info)({}) === null, 'no contact id, no save');
 ok(failedEmailChipTitle(contactFailedEmails(f1.contactFailedEmails, '101')[0]).startsWith('Bounced on '), 'chip tooltip');
+
+// Every bounced address of a contact, for the popup's Failed emails line.
+{
+  const map = {
+    'now@x.com': { at: '2026-11-22T00:00:00Z', reason: 'No such user' },
+    'old1@x.com': { at: '2026-11-10T00:00:00Z', reason: 'Gone' },
+    'fixed@x.com': { at: '2026-11-01T00:00:00Z', clearedAt: '2026-11-02T00:00:00Z' },
+  };
+  const stored = [
+    { email: 'moved@x.com', at: '2026-11-05T00:00:00Z', reason: 'r', replacedAt: '2026-11-06T00:00:00Z' },
+    { email: 'old1@x.com', at: '2026-11-10T00:00:00Z', reason: 'Gone', replacedAt: '2026-11-11T00:00:00Z' },
+  ];
+  const all = contactBouncedEmails(stored, map, { current: 'Now@X.com', oldEmails: 'old1@x.com; fixed@x.com, never@x.com' });
+  ok(all.map(x => x.email).join() === 'now@x.com,old1@x.com,moved@x.com', `current first, then newest bounce, one per address (${all.map(x => x.email).join()})`);
+  ok(all[0].current && !all[0].recorded && all[1].recorded, 'the current one is marked, stored ones can be removed');
+  ok(contactBouncedEmails([], map, { current: 'ok@x.com', oldEmails: 'old1@x.com' }).map(x => x.email).join() === 'old1@x.com', 'a bounced Old Emails address is listed without being stored');
+  ok(contactBouncedEmails(stored, map, { current: 'fixed@x.com' }).length === 2, 'a current address marked fixed is not listed');
+  ok(contactBouncedEmails(null, null).length === 0, 'nothing known, nothing listed');
+  ok(/address on the contact now/.test(failedEmailChipTitle(all[0])), 'tooltip says which is the current address');
+}
 
 // Opening a contact by an address they have moved off.
 const people = [{ id: 55, email: 'x@y.com' }, { id: '101', email: 'harvey.w@nationwide.com' }];

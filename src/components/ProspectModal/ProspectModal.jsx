@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense, Fragment, isValidElement, cloneElement } from 'react';
 import { useBadEmails } from '../../hooks/useBadEmails';
-import { badEmailInfo, badEmailTitle, getPublishedBadEmails, contactFailedEmails, failedEmailChipTitle, normEmail } from '../../utils/badEmails';
+import { badEmailInfo, badEmailTitle, getPublishedBadEmails, contactFailedEmails, contactBouncedEmails, failedEmailChipTitle, normEmail } from '../../utils/badEmails';
 import { BfoHistoryTab } from './BfoHistoryTab';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { lsHas, settingsHaveLoaded } from '../../utils/tablePrefsSync';
@@ -1354,8 +1354,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // a bounced one can file the old address under this contact's Failed
   // Emails (see handleSave) instead of the flag vanishing with it.
   const lastSavedEmailRef = useRef(contact.email || '');
-  const failedEmails = contactFailedEmails(badEmailsStore.failedByContact, contact.id || contact.vid)
-    .filter(x => normEmail(x.email) !== normEmail(f.email));
+  // Every address of this contact that bounced: the one it has now, the
+  // ones it moved off, and any in Old Emails a bounce notice names.
+  const failedEmails = contactBouncedEmails(
+    contactFailedEmails(badEmailsStore.failedByContact, contact.id || contact.vid),
+    badEmailsStore.map, { current: f.email, oldEmails: f.oldEmails },
+  );
   // Clicking the "Bad email" badge lists the other addresses to try, by the
   // company's Email Domains tiers (utils/emailSuggestions).
   const [badEmailOpen, setBadEmailOpen] = useState(false);
@@ -3176,7 +3180,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0 6px', borderRadius: 999, background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B', fontSize: '0.66rem', lineHeight: 1.7 }}
                   >
                     <span style={{ textDecoration: 'line-through' }}>{x.email}</span>
-                    {badEmailsStore.removeFailed && (
+                    {x.current && <span style={{ fontWeight: 700 }}>current</span>}
+                    {x.recorded && badEmailsStore.removeFailed && (
                       <button
                         type="button"
                         aria-label={`Remove ${x.email} from failed emails`}
