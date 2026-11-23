@@ -3993,6 +3993,7 @@ Fix that now?
           prospects={prospects}
           cdmName={cdmName}
           keep={keep}
+          hubspotContacts={hubspotCache?.contacts}
           settings={settings}
           updateSettings={updateSettings}
           onSelect={onSelect}

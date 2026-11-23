@@ -4,6 +4,10 @@
 //
 // A company is "on the list" by the same rule as the red strip at the top
 // of the company popup (utils/strategicAccounts.js), so the two agree.
+//
+// Two views of that one set of accounts: the list itself, and Account MRI
+// (AccountMriTab), the same accounts laid out as the Account MRI intake
+// template with an export that fills it in.
 
 import { useEffect, useMemo, useState } from 'react';
 import { TIERS } from '../../data/enums.js';
@@ -12,6 +16,19 @@ import { readListField } from '../../utils/listAccountMapping';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { STRATEGIC_STORAGE_KEY, ON_STRATEGIC_LIST, strategicLookup, strategicAccountRows } from '../../utils/strategicAccounts';
 import { DataTable } from '../common/DataTable';
+import { AccountMriTab } from './AccountMriTab';
+
+const VIEWS = [
+  { key: 'accounts', label: 'Accounts', title: 'The strategic accounts and why each one is here' },
+  { key: 'mri', label: 'Account MRI', title: 'The same accounts as the Account MRI intake template, with an export that fills it in' },
+];
+const VIEW_KEY = 'my-accounts-strategic-view';
+function readSavedView() {
+  try {
+    const v = window.localStorage.getItem(VIEW_KEY);
+    return VIEWS.some(x => x.key === v) ? v : 'accounts';
+  } catch { return 'accounts'; }
+}
 
 // The Tier pill's colours, the same ones the Deal Size subtab uses.
 const TIER_TINTS = {
@@ -25,7 +42,13 @@ const pill = (text, tint) => (
   <span key={text} style={{ fontSize: '0.68rem', fontWeight: 700, color: tint.ink, background: tint.bg, border: `1px solid ${tint.border}`, padding: '0 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{text}</span>
 );
 
-export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, settings, updateSettings, onSelect, filterBar }) {
+export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, settings, updateSettings, onSelect, filterBar, hubspotContacts }) {
+  // Which of the two views is open; remembered on this machine.
+  const [view, setView] = useState(readSavedView);
+  const pickView = (key) => {
+    setView(key);
+    try { window.localStorage.setItem(VIEW_KEY, key); } catch { /* private window: the choice just isn't remembered */ }
+  };
   // The uploaded list lives in IndexedDB; null until it has been read.
   const [listRows, setListRows] = useState(null);
   useEffect(() => {
@@ -124,6 +147,18 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-flex', border: '1px solid #CBD5E1', borderRadius: 6, overflow: 'hidden' }}>
+          {VIEWS.map(v => (
+            <button
+              key={v.key}
+              type="button"
+              title={v.title}
+              aria-pressed={view === v.key}
+              onClick={() => pickView(v.key)}
+              style={{ padding: '0.25rem 0.7rem', border: 'none', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', background: view === v.key ? '#1D4ED8' : '#FFFFFF', color: view === v.key ? '#FFFFFF' : '#475569' }}
+            >{v.label}</button>
+          ))}
+        </span>
         {filterBar}
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
           {rows.length} account{rows.length === 1 ? '' : 's'} · {count('Tier 1')} Tier 1 · {count('Tier 2')} Tier 2 · {count(ON_STRATEGIC_LIST)} on the Strategic Accounts list
@@ -132,20 +167,30 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
       {listRows && listRows.length === 0 && (
         <div style={{ fontSize: '0.75rem', color: '#B45309' }}>No Strategic Accounts list is uploaded yet (Lists, Strategic Accounts), so only the Tier 1 and Tier 2 accounts show.</div>
       )}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
-        <DataTable
-          tableId="my-accounts-strategic-accounts"
-          exportFileName="My Accounts Strategic Accounts"
-          columns={columns}
+      {view === 'mri' ? (
+        <AccountMriTab
           rows={rows}
-          defaultSort={{ key: 'company', direction: 'asc' }}
-          fitWidth
-          alwaysVisible={['company']}
-          emptyMessage="No accounts match"
+          hubspotContacts={hubspotContacts}
           settings={settings}
           updateSettings={updateSettings}
+          onSelect={onSelect}
         />
-      </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+          <DataTable
+            tableId="my-accounts-strategic-accounts"
+            exportFileName="My Accounts Strategic Accounts"
+            columns={columns}
+            rows={rows}
+            defaultSort={{ key: 'company', direction: 'asc' }}
+            fitWidth
+            alwaysVisible={['company']}
+            emptyMessage="No accounts match"
+            settings={settings}
+            updateSettings={updateSettings}
+          />
+        </div>
+      )}
     </div>
   );
 }
