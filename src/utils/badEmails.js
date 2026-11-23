@@ -75,6 +75,40 @@ export function contactFailedEmails(map, contactId) {
 }
 
 /**
+ * Every address of a contact that has bounced, for the popup's Failed
+ * emails line: the address it has now (while its bad-email flag stands),
+ * the ones it moved off (`failed`, from contactFailedEmails), and any in
+ * its Old Emails box that a bounce notice names. One entry per address,
+ * the current one first, then newest bounce first:
+ * [{ email, at, reason, replacedAt?, current?, recorded? }]. `recorded`
+ * marks the entries stored on the contact, which are the ones that can be
+ * taken off it; the rest are flags on the address itself (Mark fixed).
+ */
+export function contactBouncedEmails(failed, map, { current = '', oldEmails = '' } = {}) {
+  const out = [];
+  const seen = new Set();
+  const add = (email, entry) => {
+    const key = normEmail(email);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({ ...entry, email: key });
+  };
+  const cur = badEmailInfo(map, current);
+  if (cur) add(current, { at: cur.at, reason: cur.reason || '', current: true });
+  const rest = [];
+  for (const x of failed || []) if (x?.email) rest.push({ ...x, recorded: true });
+  for (const e of String(oldEmails || '').split(/[\s,;]+/)) {
+    const info = e.includes('@') ? badEmailInfo(map, e) : null;
+    if (info) rest.push({ email: e, at: info.at, reason: info.reason || '' });
+  }
+  const time = (x) => Date.parse(x.at) || 0;
+  // Stable sort, so a stored entry wins over the same address in Old Emails.
+  rest.sort((a, b) => time(b) - time(a));
+  for (const x of rest) add(x.email, x);
+  return out;
+}
+
+/**
  * updateSettings() function filing `email` as a failed address of the
  * contact. `info` is its bad-email entry (for the bounce date and reason).
  */
@@ -128,7 +162,8 @@ export function failedEmailChipTitle(entry) {
   const day = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); };
   const bounced = day(entry.at);
   const replaced = day(entry.replacedAt);
-  return `Bounced${bounced ? ` on ${bounced}` : ''}${entry.reason ? `: ${entry.reason}` : ''}.${replaced ? ` Replaced on ${replaced}.` : ''}`;
+  const where = entry.current ? ' This is the address on the contact now.' : replaced ? ` Replaced on ${replaced}.` : '';
+  return `Bounced${bounced ? ` on ${bounced}` : ''}${entry.reason ? `: ${entry.reason}` : ''}.${where}`;
 }
 
 /** The tooltip line for a flagged address. */
