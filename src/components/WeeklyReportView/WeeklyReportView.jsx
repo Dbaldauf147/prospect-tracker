@@ -55,7 +55,7 @@ import { COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCover
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks } from '../../utils/progressUntracked';
 import { withCoverageLeftOut } from '../../utils/reportingStatus';
-import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory } from '../../utils/missingHistory';
+import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory, HIDDEN_DAYS_SETTING } from '../../utils/missingHistory';
 import { missingStepsTrend, withMissingStepsImage } from '../../utils/missingStepsTrend';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
@@ -683,9 +683,11 @@ export function WeeklyReportView({ prospects = [], settings, updateSettings, cdm
   // My Accounts > All Missing History, up to the end of the period, drawn
   // the way the scheduled send draws it.
   const missingRaw = useSyncExternalStore(subscribeMissingHistory, missingHistorySnapshot);
+  // Days hidden on that subtab stay out of this chart too.
+  const missingHiddenDays = settings?.[HIDDEN_DAYS_SETTING];
   const missingStepsSeries = useMemo(() => withMissingStepsImage(missingStepsTrend(
-    parseMissingHistory(missingRaw), { endMs: bounds.end },
-  )), [missingRaw, bounds]);
+    parseMissingHistory(missingRaw), { endMs: bounds.end, hidden: missingHiddenDays },
+  )), [missingRaw, bounds, missingHiddenDays]);
 
   // ---- Click-through breakdowns -----------------------------------------
   // Every figure the email carries is on this tab too, and a click on any

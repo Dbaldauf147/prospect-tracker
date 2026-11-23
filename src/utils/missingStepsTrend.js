@@ -46,18 +46,23 @@ function dayOf(ms, timeZone = '') {
  *   history   the stored history ({ 'YYYY-MM-DD': row })
  *   endMs     the end of the reported period: days after it are left out
  *   days      how far back from it the chart reaches
+ *   hidden    days hidden on the subtab (settings.missingHistoryHiddenDays).
+ *             They leave the line and the headline exactly as they do
+ *             there; the frozen baseline always shows.
  *
  * Returns { points: [{ key, label, value }], latest, companies, since,
  * delta, sinceBaseline }. `since` is the day the headline measures from:
  * the frozen baseline when one is set, as the subtab does, else the first
  * day on record (which may be older than the chart's window).
  */
-export function missingStepsTrend(history, { endMs = Date.now(), days = MISSING_TREND_DAYS, timeZone = '' } = {}) {
+export function missingStepsTrend(history, { endMs = Date.now(), days = MISSING_TREND_DAYS, timeZone = '', hidden = [] } = {}) {
   const h = history && typeof history === 'object' && !Array.isArray(history) ? history : {};
   const last = dayOf(endMs - 1, timeZone);
   const first = dayOf(endMs - 1 - days * 24 * 60 * 60 * 1000, timeZone);
+  const hiddenDays = new Set(Array.isArray(hidden) ? hidden : []);
   const all = Object.keys(h).sort()
-    .filter(k => k <= last && isStepsDay(h[k]) && Number.isFinite(Number(h[k]?.total)));
+    .filter(k => k <= last && isStepsDay(h[k]) && Number.isFinite(Number(h[k]?.total)))
+    .filter(k => h[k]?.baseline || !hiddenDays.has(k));
   const shown = all.filter(k => k > first);
   if (!shown.length) return null;
   const points = shown.map(k => ({ key: k, label: missingDayLabel(k), value: Math.max(0, Math.round(Number(h[k].total))) }));
@@ -114,9 +119,11 @@ export function missingStepsChartImage(trend) {
   const plotR = W - (textWidth(lastText, size) + 22 * SCALE);
   const plotT = 10 * SCALE;
   const plotB = H - 26 * SCALE;
+  // The axis ends just above the highest day rather than on the next round
+  // step, which could leave the top quarter of the plot empty.
   const peak = Math.max(...points.map(p => p.value), 1);
-  const step = niceStep(peak * 1.05);
-  const top = Math.ceil((peak * 1.05) / step) * step;
+  const top = peak * 1.05;
+  const step = niceStep(top);
   const n = points.length;
   const xAt = (i) => (n === 1 ? (plotL + plotR) / 2 : plotL + ((plotR - plotL) * i) / (n - 1));
   const yAt = (v) => plotB - ((plotB - plotT) * v) / top;

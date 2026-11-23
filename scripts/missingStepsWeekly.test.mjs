@@ -44,6 +44,14 @@ const history = {
   const one = missingStepsTrend({ '2026-10-16': { total: 5, companies: 1, basis: 'steps' } }, { endMs: END });
   check('one day alone has no move to report', [one.points.length, one.delta, one.sinceLabel], [1, null, '']);
   check('day label', missingDayLabel('2026-01-05'), 'Jan 5');
+
+  // Days hidden on the subtab leave the email's line the same way.
+  const hid = missingStepsTrend(history, { endMs: END, hidden: ['2026-10-16', '2026-08-01'] });
+  check('a hidden day is not charted', hid.points.map(p => p.key), ['2026-10-13', '2026-10-14']);
+  check('and the headline reads off the days still showing', [hid.latest, hid.sinceLabel, hid.delta], [3684, 'Oct 13', -16]);
+  const hidBase = missingStepsTrend({ ...history, '2026-10-14': { ...history['2026-10-14'], baseline: true } }, { endMs: END, hidden: ['2026-10-14'] });
+  check('the frozen baseline shows even when hidden', hidBase.points.map(p => p.key).includes('2026-10-14'), true);
+  check('a hidden list that is not a list hides nothing', missingStepsTrend(history, { endMs: END, hidden: 'nope' }).points.length, 3);
 }
 
 {
@@ -73,6 +81,8 @@ const history = {
   const payload = buildReportPayload({ missingHistory: history }, period);
   check('the scheduled build reads the mirrored history', payload.missingSteps?.points?.length, 3);
   check('and counts it as something to send', payloadHasFigures({ missingSteps: payload.missingSteps }), true);
+  const hiddenPayload = buildReportPayload({ missingHistory: history, settings: { missingHistoryHiddenDays: ['2026-10-16'] } }, period);
+  check('the scheduled build leaves out the days hidden in settings', hiddenPayload.missingSteps?.points?.map(p => p.key), ['2026-10-13', '2026-10-14']);
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');
