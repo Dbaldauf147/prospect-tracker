@@ -44,6 +44,7 @@ import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 import { responseRateOf } from '../../utils/campaignContactHold';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { recipientHoverTitle } from '../../utils/recipientHoverTitle';
+import { contactIsHidden } from '../ProspectModal/contactTags.js';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
 import { companyGoesByGaps } from '../../utils/companyGoesByGaps';
 import { makeCompanyByEmailDomain } from '../../utils/companyByEmailDomain';
@@ -2975,6 +2976,10 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                   company: c.company || raw?.company,
                   email: c.email,
                 });
+                // Tagged Hide: somebody set aside on purpose, so the chip greys
+                // out with a dashed edge and says so, where it is easy to
+                // spot before the email goes to them anyway.
+                const hiddenTag = !!raw && contactIsHidden(raw);
                 const statusTitle = selfDup
                   ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)'
                   : failed ? failedEmailTitle(failed)
@@ -2983,9 +2988,11 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                   <span
                     key={c.id}
                     className={styles.contactTag}
-                    title={[whoTitle, statusTitle].filter(Boolean).join('\n\n')}
+                    title={[whoTitle, hiddenTag ? 'Tagged Hide: this contact is hidden on the contact lists' : '', statusTitle].filter(Boolean).join('\n\n')}
+                    data-hidden-contact={hiddenTag || undefined}
                     style={{
                       ...(hasExtras ? { flexDirection: 'column', alignItems: 'flex-start', whiteSpace: 'normal', gap: '0.2rem' } : {}),
+                      ...(hiddenTag ? { background: '#F1F5F9', borderColor: '#94A3B8', borderStyle: 'dashed', color: '#64748B' } : {}),
                       ...(sentDate ? { background: '#DCFCE7', borderColor: '#4ADE80', color: '#166534' } : {}),
                       ...(failed ? { background: '#FEE2E2', borderColor: '#F87171', color: '#991B1B' } : {}),
                       ...(selfDup ? { background: '#FEE2E2', borderColor: '#FCA5A5', color: '#991B1B' } : {}),
@@ -2999,7 +3006,12 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openContact(c); } }}
                         title={`${whoTitle}\n\nClick to open ${c.name}`}
                         style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                      >{c.name}</span> <span className={styles.contactEmail} style={failed ? { color: '#B91C1C', textDecoration: 'line-through' } : sentDate ? { color: '#15803D' } : undefined}>({c.email})</span>
+                      >{c.name}</span> <span className={styles.contactEmail} style={failed ? { color: '#B91C1C', textDecoration: 'line-through' } : sentDate ? { color: '#15803D' } : hiddenTag ? { color: '#64748B' } : undefined}>({c.email})</span>
+                      {hiddenTag && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 6px', borderRadius: 999, background: '#64748B', color: '#fff', fontSize: '0.6rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
+                          ⊘ Hidden
+                        </span>
+                      )}
                       {failed && (
                         <span data-failed-email style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 6px', borderRadius: 999, background: '#DC2626', color: '#fff', fontSize: '0.6rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
                           ✕ Failed
