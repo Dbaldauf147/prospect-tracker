@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
@@ -6,6 +6,9 @@ import { tagReviewScore } from '../../utils/contactTagReview';
 import { useRelationshipData } from '../../hooks/useRelationshipStrength';
 import { scoreAccount, RELATIONSHIP_CONFIG, daysLabel } from '../../utils/relationshipStrength';
 import { RelationshipBadge, ScorePill, TrendArrow } from '../Relationship/RelationshipBadge';
+import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
+import { campaignsByAddress } from '../../utils/contactCampaigns';
+import { normLookupEmail } from '../../utils/campaignContactLookup';
 
 // The company card's contact roster.
 //
@@ -141,6 +144,13 @@ function RosterTable({
   ), [tableVisibleRows, contacts]);
   const allSelected = selectableIds.length > 0 && selectableIds.every(id => bulkSelected.has(id));
   const someSelected = selectableIds.some(id => bulkSelected.has(id));
+
+  // Email Campaign column: every saved campaign (Draft Emails > Email
+  // Campaigns) each contact's address is on, newest first. A live read, so
+  // "Add to Campaign" above the roster shows up in the column straight away.
+  const { campaigns: savedCampaigns } = useSavedCampaigns();
+  const campaignsByEmail = useMemo(() => campaignsByAddress(savedCampaigns), [savedCampaigns]);
+  const campaignsFor = useCallback((c) => campaignsByEmail.get(normLookupEmail(c?.email)) || null, [campaignsByEmail]);
 
   const columns = useMemo(() => [
     selectable && {
@@ -499,6 +509,34 @@ function RosterTable({
       },
     },
     {
+      key: 'emailCampaign',
+      label: 'Email Campaign',
+      defaultWidth: 180,
+      title: 'The saved email campaigns this contact is on (Draft Emails > Email Campaigns), newest first.',
+      // Every campaign's name, so a search or a pick finds somebody by any
+      // campaign they are on, not just the newest.
+      getFilterValue: (c) => (campaignsFor(c) || []).map(e => e.name).join(', '),
+      exportValue: (c) => (campaignsFor(c) || []).map(e => e.name).join(', '),
+      getSortValue: (c) => campaignsFor(c)?.[0]?.name?.toLowerCase() || '',
+      render: (c) => {
+        const list = campaignsFor(c);
+        if (!list) return dash;
+        const [latest, ...rest] = list;
+        const line = (e) => `${e.name}${e.tsMs ? ` (${e.sent ? 'sent' : 'added'} ${new Date(e.tsMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })})` : ''}${e.replied ? ', replied' : ''}`;
+        const title = list.length > 1 ? `On ${list.length} campaigns:\n${list.map(line).join('\n')}` : line(latest);
+        return (
+          // `display: flex` inline for the same reason the LinkedIn Search
+          // cell sets it: the table's cell rule would make this inline-block.
+          <span title={title} style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, color: '#475569' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{latest.name}</span>
+            {rest.length > 0 && (
+              <span style={{ flexShrink: 0, padding: '0 5px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#F1F5F9', color: '#64748B' }}>+{rest.length}</span>
+            )}
+          </span>
+        );
+      },
+    },
+    {
       key: 'notes',
       label: 'Notes',
       defaultWidth: 200,
@@ -573,7 +611,7 @@ function RosterTable({
     },
   ].filter(Boolean), [selectable, actionable, competitorContactIds, settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
     onHideContact, hidingContact, onDeleteContact, deletingContact, emailCountsFor, sourceOf, company,
-    allSelected, someSelected, selectableIds, companyOf, relationshipOf]);
+    allSelected, someSelected, selectableIds, companyOf, relationshipOf, campaignsFor]);
 
   // The row's own tints, which say two things at a glance and have to
   // survive every sort: a decision maker is the row you came for, and a
