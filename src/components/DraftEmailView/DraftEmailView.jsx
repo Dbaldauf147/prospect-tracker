@@ -44,6 +44,7 @@ import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 import { responseRateOf } from '../../utils/campaignContactHold';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { recipientHoverTitle } from '../../utils/recipientHoverTitle';
+import { loadSentEmailLog, SENT_EMAIL_LOG_EVENT } from '../../utils/sentEmailLog';
 import { contactIsHidden } from '../ProspectModal/contactTags.js';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
 import { companyGoesByGaps } from '../../utils/companyGoesByGaps';
@@ -2317,19 +2318,37 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // tab's own feed, which has the send as soon as that tab has pulled it.
   // Without the second, a send the Activity tab already listed left its
   // pill white until somebody refreshed the campaign.
+  //
+  // The feed is read from two places and both are searched: localStorage,
+  // where the Activity tab saves it when it fits, and the compact log in
+  // IndexedDB (utils/sentEmailLog), which is what a feed too big for
+  // localStorage leaves behind. A ten-thousand-email feed never fits, so
+  // without the log the pills had nothing to read.
   const [activityFeed, setActivityFeed] = useState(readActivityFeed);
+  const [sentLog, setSentLog] = useState(null);
   useEffect(() => {
-    const refresh = () => setActivityFeed(readActivityFeed());
+    let cancelled = false;
+    const refresh = () => {
+      setActivityFeed(readActivityFeed());
+      loadSentEmailLog().then(log => { if (!cancelled) setSentLog(log); });
+    };
+    refresh();
     window.addEventListener('hubspot-activity-cache-updated', refresh);
+    window.addEventListener(SENT_EMAIL_LOG_EVENT, refresh);
     window.addEventListener('storage', refresh);
     return () => {
+      cancelled = true;
       window.removeEventListener('hubspot-activity-cache-updated', refresh);
+      window.removeEventListener(SENT_EMAIL_LOG_EVENT, refresh);
       window.removeEventListener('storage', refresh);
     };
-  }, []);
+  }, [user?.uid]);
   const sentHere = useMemo(
-    () => mergeSent(sentThisCampaign(allCampaigns, subject), sentPerActivity(activityFeed, subject, settings?.workEmail)),
-    [allCampaigns, subject, activityFeed, settings?.workEmail],
+    () => mergeSent(
+      sentThisCampaign(allCampaigns, subject),
+      mergeSent(sentPerActivity(activityFeed, subject, settings?.workEmail), sentPerActivity(sentLog, subject, settings?.workEmail)),
+    ),
+    [allCampaigns, subject, activityFeed, sentLog, settings?.workEmail],
   );
   // Addresses an email has failed to reach (a bounce on any campaign, or a
   // forwarded failure notice not yet marked fixed): red on the To line and

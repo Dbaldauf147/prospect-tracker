@@ -29,6 +29,7 @@ import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { buildUnansweredIndex } from '../../utils/unansweredOutreach';
 import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
 import { saveTouchIndexFromFeed, saveMeetingTouches, saveCalendarMeetings, calendarBackfilled } from '../../utils/relationshipLog';
+import { saveSentEmailLog } from '../../utils/sentEmailLog';
 import styles from './ActivityView.module.css';
 
 const CACHE_KEY = 'hubspot-activity-cache';
@@ -147,6 +148,9 @@ function saveCache(data, workEmail) {
   try {
     userLsSet(OUTREACH_INDEX_KEY, JSON.stringify(buildOutreachIndex(data, workEmail)));
   } catch (err) { console.warn('ActivityView outreach-index write skipped:', err?.message || err); }
+  // The emails, cut down, into IndexedDB: what Draft Emails' Sent pills
+  // read, since the full feed above usually does not fit.
+  saveSentEmailLog(data);
   // Notify in-tab consumers (e.g. the Last Outreach column on
   // KeyContactsView) since the `storage` event only fires across tabs.
   window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
