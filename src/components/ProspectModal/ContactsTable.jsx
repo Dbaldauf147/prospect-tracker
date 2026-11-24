@@ -1,3 +1,4 @@
+import { contactNameKey, duplicateNameCounts, duplicateNameGroups } from '../../utils/duplicateContactNames';
 import { useCallback, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { sentimentFor, sentimentMark } from '../../utils/contactSentiment';
@@ -73,6 +74,7 @@ function sourceChip(source) {
   );
 }
 
+const NO_DUPLICATES = new Map();
 const fullNameOf = (c) => `${c.firstname || ''} ${c.lastname || ''}`.trim();
 const leadSourceOf = (c, settings) => String((settings?.contactLeadSource || {})[c.id || c.vid] || '').trim();
 const notesOf = (c, settings) => (settings?.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '';
@@ -152,6 +154,14 @@ function RosterTable({
   const campaignsByEmail = useMemo(() => campaignsByAddress(savedCampaigns), [savedCampaigns]);
   const campaignsFor = useCallback((c) => campaignsByEmail.get(normLookupEmail(c?.email)) || null, [campaignsByEmail]);
 
+  // Names two or more people on this roster share, for the chip beside
+  // each. Not on the owned-companies table: that one lists several
+  // companies, and the same name at two of them is two people.
+  const duplicateNames = useMemo(
+    () => (companyOf ? NO_DUPLICATES : duplicateNameCounts(contacts)),
+    [companyOf, contacts],
+  );
+
   const columns = useMemo(() => [
     selectable && {
       key: '__select__',
@@ -216,9 +226,17 @@ function RosterTable({
         const standing = sentimentMark(sentimentFor(settings?.contactSentiment, c.id || c.vid));
         const isDM = contactHasTag(c, 'decision maker');
         const isCompetitor = !!competitorContactIds?.has(String(c.id || c.vid || ''));
+        const sameName = duplicateNames.get(contactNameKey(c)) || 0;
         return (
           <span style={{ display: 'inline-block', fontWeight: 600, color: '#1E293B' }}>
             {name || '-'}
+            {sameName > 1 && (
+              <span
+                data-duplicate-name-badge
+                title={`${sameName} contacts here are named ${name}. If they are the same person, open one and use "Merge another contact INTO this one".`}
+                style={{ marginLeft: '0.3rem', fontSize: '0.55rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 999, padding: '0 5px', textTransform: 'uppercase', letterSpacing: '0.03em', whiteSpace: 'nowrap' }}
+              >Dup</span>
+            )}
             {isCompetitor && (
               <span
                 data-competitor-badge
@@ -611,7 +629,7 @@ function RosterTable({
     },
   ].filter(Boolean), [selectable, actionable, competitorContactIds, settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
     onHideContact, hidingContact, onDeleteContact, deletingContact, emailCountsFor, sourceOf, company,
-    allSelected, someSelected, selectableIds, companyOf, relationshipOf, campaignsFor]);
+    allSelected, someSelected, selectableIds, companyOf, relationshipOf, campaignsFor, duplicateNames]);
 
   // The row's own tints, which say two things at a glance and have to
   // survive every sort: a decision maker is the row you came for, and a
@@ -684,6 +702,51 @@ const sectionNoteStyle = { fontWeight: 500, textTransform: 'none', letterSpacing
 
 // The account's Relationship Strength over the roster: its best contact's
 // score plus the breadth bonus, and what the bonus was made of.
+// The amber strip above the roster when two or more contacts on it have
+// exactly the same name (utils/duplicateContactNames.js). Each name is a
+// button that opens the first of them, whose card has the merge.
+function DuplicateNamesWarning({ contacts, onEditContact }) {
+  const groups = useMemo(() => duplicateNameGroups(contacts), [contacts]);
+  if (groups.length === 0) return null;
+  const one = groups.length === 1;
+  return (
+    <div
+      data-duplicate-names-warning
+      role="status"
+      style={{
+        marginBottom: '0.5rem', padding: '0.4rem 0.8rem', background: '#FFFBEB', border: '1px solid #FDE68A',
+        borderRadius: 6, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.35rem 0.7rem',
+      }}
+    >
+      <span aria-hidden="true" style={{ fontSize: '0.95rem', lineHeight: 1 }}>⚠️</span>
+      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+        {one ? 'Possible duplicate contact' : 'Possible duplicate contacts'}
+      </span>
+      <span style={{ fontSize: '0.75rem', color: '#78350F', minWidth: 0 }}>
+        {one
+          ? 'Two or more contacts here have exactly the same name. If they are the same person, open one and merge the other into it.'
+          : `${groups.length} names here are each on more than one contact. If they are the same person, open one and merge the other into it.`}
+      </span>
+      <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '0.3rem', marginLeft: 'auto' }}>
+        {groups.map(g => (
+          <button
+            key={g.key}
+            type="button"
+            onClick={onEditContact ? () => onEditContact(g.contacts[0]) : undefined}
+            disabled={!onEditContact}
+            title={`${g.contacts.length} contacts named ${g.name}: ${g.contacts.map(c => c.email || c.jobtitle || 'no email').join(' / ')}`}
+            style={{
+              padding: '0.1rem 0.5rem', background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 999,
+              fontSize: '0.7rem', fontWeight: 700, color: '#78350F', cursor: onEditContact ? 'pointer' : 'default',
+              fontFamily: 'inherit', whiteSpace: 'nowrap',
+            }}
+          >{g.name} <span style={{ fontWeight: 600, color: '#92400E' }}>x{g.contacts.length}</span></button>
+        ))}
+      </span>
+    </div>
+  );
+}
+
 function AccountRelationshipLine({ account }) {
   if (!account) return null;
   const roles = account.rolesCovered.length;
@@ -733,7 +796,12 @@ export function ContactsTable({
     () => scoreAccount(contacts.filter(c => !contactHasTag(c, 'left')).map(c => ({ contact: c, result: relationshipOf(c) }))),
     [contacts, relationshipOf],
   );
-  const accountLine = <AccountRelationshipLine account={account} />;
+  const accountLine = (
+    <>
+      <DuplicateNamesWarning contacts={contacts} onEditContact={rest.onEditContact} />
+      <AccountRelationshipLine account={account} />
+    </>
+  );
   if (ownerContacts.length === 0) {
     return (
       <>
