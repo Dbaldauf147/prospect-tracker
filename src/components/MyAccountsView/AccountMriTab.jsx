@@ -17,7 +17,7 @@
 // answers in this table and in the export.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
+import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, isPortfolioCompanyContact, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
 import { companiesMatch } from '../../utils/listFlags';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
@@ -125,7 +125,11 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, ta
         company: record.company,
       }),
     });
-    const trackerCommittee = buyingCommitteeRows(contacts.filter(isDecisionMakerContact));
+    // People at the account's portfolio companies sit on their own company's
+    // committee, not this one (the roster's fuzzy name match can bring them in).
+    const trackerCommittee = buyingCommitteeRows(
+      contacts.filter(c => isDecisionMakerContact(c) && !isPortfolioCompanyContact(c, record)),
+    );
     const form = (savedForms || {})[mriSlug(r.company)] || null;
     const profile = mergeProfile(trackerProfile, form?.profile).values;
     const sites = siteUtilityRows((siteLists || {})[siteListSlug(record.company)]);
