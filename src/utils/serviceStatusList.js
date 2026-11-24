@@ -54,3 +54,29 @@ export function serviceStatusesPatch(settings, list) {
 // The value a status <select> uses for its "Edit statuses..." entry. Not a
 // status anybody can save: onChange catches it and opens the editor instead.
 export const EDIT_SERVICE_STATUSES = '__edit-service-statuses__';
+
+// ── The live list, for pages that do not hold settings ───────────────────
+// App publishes the list whenever settings change; a dropdown deep in a page
+// reads it through hooks/useServiceStatuses.js instead of having settings
+// passed down to it. Before the first publish it is the built-in list.
+let current = cleanServiceStatusList(SERVICE_STATUSES);
+const listeners = new Set();
+
+/** Make `settings`' service statuses the live list (no-op when unchanged). */
+export function publishServiceStatuses(settings) {
+  const next = serviceStatusOptions(settings);
+  if (next.length === current.length && next.every((s, i) => s === current[i])) return;
+  current = next;
+  for (const fn of listeners) fn();
+}
+
+/** The live list. The same array until it changes. */
+export function currentServiceStatuses() {
+  return current;
+}
+
+/** Call `fn` whenever the live list changes; returns the unsubscribe. */
+export function subscribeServiceStatuses(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}

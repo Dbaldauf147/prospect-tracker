@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
+import { publishServiceStatuses } from './utils/serviceStatusList';
 import { lazyView } from './utils/lazyView';
 import { getHubspotContacts, getHubspotCacheShared } from './utils/hubspotContactsCache';
 import { useAuth } from './contexts/AuthContext';
@@ -220,6 +221,10 @@ function App() {
   // sync watermark is in there, and syncing without it re-walks the whole
   // back-fill window.
   useGranolaAutoSync(user, settings, updateSettings, prospects, settingsLoaded);
+  // The editable list of service statuses (Dropdowns > Service statuses, or
+  // "Edit statuses..." on the company popup), live for every page's dropdowns.
+  const savedServiceStatuses = settings?.dropdownLists?.serviceStatuses;
+  useEffect(() => { publishServiceStatuses({ dropdownLists: { serviceStatuses: savedServiceStatuses } }); }, [savedServiceStatuses]);
   // Make the yearly email campaigns whose day has come (Email Campaigns >
   // Yearly schedules). App-level for the same reason: that tab is lazily
   // mounted.
