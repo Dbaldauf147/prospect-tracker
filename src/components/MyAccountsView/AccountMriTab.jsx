@@ -29,7 +29,7 @@ import { mappedTargetNames } from '../../utils/targetAccountMatch';
 import { isPrimaryPoc } from '../../utils/attendeeRoles';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { companyRosterContacts } from '../../utils/companyRoster';
-import { contractsSummary, dealsForCompany } from '../../utils/clientContracts';
+import { dealsForCompany } from '../../utils/clientContracts';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import { DataTable } from '../common/DataTable';
@@ -119,7 +119,8 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, ta
       tier: r.tier,
       contacts,
       serviceStatuses,
-      contracts: companyDeals.length ? contractsSummary(companyDeals) : null,
+      deals: companyDeals,
+      dealsKnown: deals.list.length > 0,
       entryDate: entryDateFor(entryDates, {
         targetNames: r.targetNames?.length ? r.targetNames : mappedTargetNames({ targetMap }, r.record?.id),
         company: record.company,

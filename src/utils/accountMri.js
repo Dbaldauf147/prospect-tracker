@@ -15,6 +15,7 @@
 // Imported with extensions so this loads under plain Node for the tests.
 import { isPrimaryPoc } from './attendeeRoles.js';
 import { isActiveSiteStatus, pickSiteStatusColumn } from './siteStatus.js';
+import { asDate, asNumber, isInactiveAgreement } from './dealsFormat.js';
 import { scopeServiceStatuses } from './scopeServiceStatus.js';
 import { companiesMatch } from './listFlags.js';
 import { exactCompanyKey } from './companyRoster.js';
@@ -217,6 +218,83 @@ const dateText = d => (d instanceof Date && !Number.isNaN(d.getTime())
   ? d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
   : '');
 
+// What the UBM row reads: "In scope" once Bill payment is Sold, else the
+// service's status as the Services board has it (Qualifying, Not Sold ...).
+export function ubmScope(servicesExplored) {
+  const status = text((servicesExplored || {})[UBM_SERVICE]).replace(/^-$/, '');
+  return status.toLowerCase() === 'sold' ? 'In scope' : status;
+}
+
+// A deal date as a day. An Excel serial or a bare "2026-12-31" parses as
+// UTC midnight, which local time reads as the day before anywhere west of
+// Greenwich, so those are read back in UTC; a "12/31/2026" parses as local
+// midnight and is read back locally.
+function dealDayText(raw) {
+  const d = asDate(raw);
+  if (!d) return '';
+  const utc = typeof raw === 'number' || /^\d{4}-\d{2}-\d{2}$/.test(String(raw).trim());
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', ...(utc ? { timeZone: 'UTC' } : {}) });
+}
+
+const agreementName = d => text(d?.['Agreement Name']) || 'Unnamed agreement';
+
+// One money column (Recurring Revenue, Setup) over the active agreements:
+// the total, then a line per agreement when more than one carries an
+// amount, so the cell shows what the total is made of. '' when none does.
+function moneySummary(active, key, suffix) {
+  const parts = [];
+  let total = 0;
+  for (const d of active) {
+    const n = asNumber(d[key]);
+    if (n == null) continue;
+    total += n;
+    parts.push(`${agreementName(d)}: ${money(n)}`);
+  }
+  if (!parts.length) return '';
+  const head = `${money(total)}${suffix}`;
+  return parts.length > 1 ? `${head} (${parts.length} active contracts)\n${parts.join('\n')}` : head;
+}
+
+/**
+ * Contract term, Fee and Set-up from the company's agreements on the
+ * Deals subtab (dealsForCompany()). Only active agreements count, the way
+ * the Contracts tab and Clients tab read them.
+ *
+ *   contractTerm  the active agreement that ends soonest: its current
+ *                 term ("Jan 1, 2025 – Mar 31, 2027") and name; "No
+ *                 contract" when the company has no active agreement
+ *   fee / setup   Recurring Revenue / Setup summed, with a line for each
+ *                 agreement when there are several
+ *
+ * `known` says the Deals list is loaded at all: with nothing loaded every
+ * company would read "No contract", so the term is left blank instead.
+ */
+export function contractFields(deals, { known = true } = {}) {
+  const active = (deals || []).filter(d => !isInactiveAgreement(d));
+  if (!active.length) return { contractTerm: known ? 'No contract' : '', fee: '', setup: '' };
+  let soonest = null;
+  let soonestEnd = null;
+  for (const d of active) {
+    const e = asDate(d['End Date']);
+    if (e && (!soonestEnd || e < soonestEnd)) { soonest = d; soonestEnd = e; }
+  }
+  let contractTerm;
+  if (soonest) {
+    const end = dealDayText(soonest['End Date']);
+    const start = dealDayText(soonest['Current Term Start Date']) || dealDayText(soonest['Original Contract Start']);
+    // The en dash marks a range, as elsewhere on the site.
+    const term = start ? `${start} – ${end}` : `Expires ${end}`;
+    contractTerm = `${term} (${agreementName(soonest)})`;
+  } else {
+    contractTerm = active.length === 1 ? 'Active, no end date on file' : `${active.length} active contracts, no end dates on file`;
+  }
+  return {
+    contractTerm,
+    fee: moneySummary(active, 'Recurring Revenue', ' / yr'),
+    setup: moneySummary(active, 'Setup', ' one-time'),
+  };
+}
+
 /**
  * One company's tab 1 values, keyed as MRI_PROFILE_FIELDS. '' (null for a
  * number) means the tracker has nothing, and the export then leaves the
@@ -225,12 +303,16 @@ const dateText = d => (d instanceof Date && !Number.isNaN(d.getTime())
  *   record     the tracker record (or just { company } when there is none)
  *   tier       the Tier the Strategic Accounts subtab shows for it
  *   contacts   the company's contacts (only the tagged ones are read)
- *   contracts  contractsSummary() of the company's agreements, or null
+ *   deals      the company's agreements (dealsForCompany()), read by
+ *              contractFields(); `dealsKnown` false when the Deals list
+ *              isn't loaded
+ *   contracts  contractsSummary() of them, the older input: used only when
+ *              `deals` isn't given
  *   serviceStatuses  service -> status as the Services board shows it
  *              (accountServiceStatuses); the record's own manual statuses
  *              when not given
  */
-export function accountMriProfile({ record, tier = '', contacts = [], contracts = null, entryDate = '', serviceStatuses = null } = {}) {
+export function accountMriProfile({ record, tier = '', contacts = [], deals = null, dealsKnown = true, contracts = null, entryDate = '', serviceStatuses = null } = {}) {
   const p = record || {};
   const services = serviceStatuses || p.servicesExplored || {};
   const status = text(p.status);
@@ -240,8 +322,17 @@ export function accountMriProfile({ record, tier = '', contacts = [], contracts 
     const firm = text(c?.firm);
     if (firm && !competitors.some(x => x.toLowerCase().includes(firm.toLowerCase()))) competitors.push(firm);
   }
-  const recurring = money(contracts?.recurring);
-  const setup = money(contracts?.setup);
+  let contract;
+  if (deals) contract = contractFields(deals, { known: dealsKnown });
+  else {
+    const recurring = money(contracts?.recurring);
+    const setup = money(contracts?.setup);
+    contract = {
+      fee: recurring ? `${recurring} / yr` : '',
+      setup: setup ? `${setup} one-time` : '',
+      contractTerm: contracts?.soonestEnd ? `Expires ${dateText(contracts.soonestEnd)}` : '',
+    };
+  }
   return {
     accountName: text(p.company),
     vertical: text(p.vertical),
@@ -262,10 +353,10 @@ export function accountMriProfile({ record, tier = '', contacts = [], contracts 
     competitors: competitors.filter(Boolean).join('; '),
     background: text(p.notes),
     services: servicesInScope(services),
-    fee: recurring ? `${recurring} / yr` : '',
-    setup: setup ? `${setup} one-time` : '',
-    ubm: text(services[UBM_SERVICE]).replace(/^-$/, ''),
-    contractTerm: contracts?.soonestEnd ? `Expires ${dateText(contracts.soonestEnd)}` : '',
+    fee: contract.fee,
+    setup: contract.setup,
+    ubm: ubmScope(services),
+    contractTerm: contract.contractTerm,
     upsell: upsellOpportunities(services, p.cdm),
   };
 }
