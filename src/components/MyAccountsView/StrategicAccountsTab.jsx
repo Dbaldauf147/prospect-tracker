@@ -18,6 +18,7 @@ import { matchesCdm } from '../../utils/cdmMatch';
 import { STRATEGIC_STORAGE_KEY, ON_STRATEGIC_LIST, strategicLookup, strategicAccountRows } from '../../utils/strategicAccounts';
 import { DataTable } from '../common/DataTable';
 import { AccountMriTab } from './AccountMriTab';
+import { LISTED_ROW_STYLE, LISTED_COMPANY_CELL, LISTED_NAME_INK } from './strategicListedStyle';
 
 const VIEWS = [
   { key: 'accounts', label: 'Accounts', title: 'The strategic accounts and why each one is here. A Tier 1 account shows only when it is on the Strategic Accounts list.' },
@@ -39,13 +40,8 @@ const TIER_TINTS = {
 };
 const LIST_TINT = { bg: '#FEF2F2', border: '#FECACA', ink: '#B91C1C' };
 // A company the Strategic Accounts list names reads differently from the
-// Tier 2 accounts around it: its whole row is tinted, a red bar runs down
-// its left edge and its name is in the list's red, the same red as the
-// strip on the company popup.
+// Tier 2 accounts around it, in both views (strategicListedStyle.js).
 const onList = r => r.reasons.includes(ON_STRATEGIC_LIST);
-const LISTED_ROW_STYLE = { background: '#FEF2F2' };
-const LISTED_COMPANY_CELL = { boxShadow: 'inset 4px 0 0 #DC2626' };
-const LISTED_NAME_INK = '#B91C1C';
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 const pill = (text, tint) => (
   <span key={text} style={{ fontSize: '0.68rem', fontWeight: 700, color: tint.ink, background: tint.bg, border: `1px solid ${tint.border}`, padding: '0 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{text}</span>
@@ -173,7 +169,7 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
           {rows.length} account{rows.length === 1 ? '' : 's'} · {count('Tier 2')} Tier 2 · {count(ON_STRATEGIC_LIST)} on the Strategic Accounts list
         </span>
-        {view === 'accounts' && count(ON_STRATEGIC_LIST) > 0 && (
+        {count(ON_STRATEGIC_LIST) > 0 && (
           <span
             title="Rows tinted red with a red bar and a red company name are on the Strategic Accounts list. The other rows are here as Tier 2 accounts only."
             style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: '#7F1D1D' }}
@@ -189,6 +185,7 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
       {view === 'mri' ? (
         <AccountMriTab
           rows={rows}
+          isListed={onList}
           hubspotContacts={hubspotContacts}
           settings={settings}
           updateSettings={updateSettings}
