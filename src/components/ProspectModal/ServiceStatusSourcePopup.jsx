@@ -24,6 +24,7 @@ const muted = { color: '#CBD5E1' };
 
 export default function ServiceStatusSourcePopup({
   label,
+  company = '',
   manualStatus,
   oppStage,
   autoNaText = '',
@@ -68,10 +69,11 @@ export default function ServiceStatusSourcePopup({
       <div
         role="dialog"
         aria-label={`${label} status`}
-        style={{ background: 'var(--color-surface, #fff)', borderRadius: 8, boxShadow: '0 10px 30px rgba(0,0,0,0.25)', width: 'min(640px, 100%)', maxHeight: '85vh', overflowY: 'auto', fontSize: '0.8rem', color: 'var(--color-text, #1E293B)' }}
+        style={{ background: 'var(--color-surface, #fff)', borderRadius: 8, boxShadow: '0 10px 30px rgba(0,0,0,0.25)', width: 'min(1100px, 100%)', maxHeight: '85vh', overflowY: 'auto', fontSize: '0.8rem', color: 'var(--color-text, #1E293B)' }}
       >
         <div style={{ padding: '0.7rem 1rem', borderBottom: '1px solid var(--color-border, #E2E8F0)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
+            {company && <div data-status-company style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B', marginBottom: 2 }}>{company}</div>}
             <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1E40AF' }}>{label}</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: 4, flexWrap: 'wrap' }}>
               <span data-status-source={kind} style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: colors.bg || '#F1F5F9', color: colors.color || '#475569' }}>
@@ -119,6 +121,7 @@ export default function ServiceStatusSourcePopup({
                   <thead>
                     <tr>
                       <th style={th}>Opportunity</th>
+                      <th style={th}>Company</th>
                       <th style={th}>Stage</th>
                       <th style={th}>Scope</th>
                       <th style={{ ...th, textAlign: 'right' }}>Deal Size</th>
@@ -136,6 +139,7 @@ export default function ServiceStatusSourcePopup({
                             {o.name || o.scope || <span style={{ color: '#94A3B8', fontWeight: 400 }}>Unnamed opp</span>}
                             {sets && <span title="This opp's stage is the status shown" style={{ marginLeft: 6, fontSize: '0.6rem', fontWeight: 700, color: '#0369A1', whiteSpace: 'nowrap' }}>SETS STATUS</span>}
                           </td>
+                          <td style={{ ...td, color: '#334155' }}>{o.account || <span style={muted}>-</span>}</td>
                           <td style={td}>
                             {o.stage
                               ? <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, whiteSpace: 'nowrap', background: c.bg, color: c.color }}>{o.stage}</span>
