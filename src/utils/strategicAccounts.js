@@ -107,17 +107,17 @@ export function strategicMatches(rows, company, mapping = {}, dismissed = {}) {
   return strategicLookup(rows, mapping, dismissed)(company);
 }
 
-// Tier 1 accounts are left off the subtab altogether, even ones the list
-// names: Dan works those himself and did not want them repeated here.
+// Tier 1 on its own does not put an account on the subtab. A Tier 1 account
+// the Strategic Accounts list names (Brookfield, say) is still here, as a
+// listed company.
 const STRATEGIC_TIERS = new Set(['Tier 2']);
-const LEFT_OFF_TIER = 'Tier 1';
 export const ON_STRATEGIC_LIST = 'Strategic Accounts list';
 
 /**
  * My Accounts > Strategic Accounts: every Tier 2 account on My Accounts,
  * plus every tracker company this CDM is on that the Strategic Accounts
- * list names (whether or not My Accounts carries it). A Tier 1 account on
- * My Accounts is never here, listed or not.
+ * list names (whether or not My Accounts carries it, and whatever its
+ * tier). A Tier 1 account is here only when the list names it.
  *
  * `accounts` are My Accounts rows (myTier / tierLabel set), `prospects` the
  * tracker records, `lookup` a strategicLookup, `isCdm` whether a CDM cell is
@@ -162,7 +162,6 @@ export function strategicAccountRows({ accounts = [], prospects = [], lookup, is
     if (!p?.company || !isCdm?.(p.cdm)) continue;
     if (!lookup || lookup(p.company).length === 0) continue;
     const account = accountById.get(p.id);
-    if (account?.myTier === LEFT_OFF_TIER) continue;
     add(account || p, account ? (account.tierLabel || account.myTier) : String(p.tier || '').trim(), ON_STRATEGIC_LIST);
   }
   return [...out.values()].sort((a, b) => a.company.localeCompare(b.company));
