@@ -11,7 +11,8 @@
 // run it without a browser.
 
 import { companiesMatch } from './listFlags.js';
-import { carriesDivision } from './companyIndex.js';
+import { carriesDivision, divisionQualifiers } from './companyIndex.js';
+import { exactCompanyKey } from './companyRoster.js';
 
 // The owned companies as [{ name, kind }], deduped by name, with anything
 // that is the company itself dropped. Divisions come first, so a company
@@ -76,3 +77,43 @@ export function ownedCompanyContacts(contacts, owned, {
   }
   return out;
 }
+
+// Which owned company a contact on the company's OWN roster really works
+// at, or null when they belong on the roster. The roster's fuzzy name match
+// and hand links can pull a portfolio company's or a division's people onto
+// the parent; those people go in the owned-company table instead, so the
+// same person is never listed as the parent's staff.
+//
+// Moves: anyone linked by hand to an owned company (even if also linked to
+// this one: they are at the portfolio company).
+// Otherwise stays on the roster: anyone linked to this company by hand, and
+// anyone whose Company text is exactly this company's name or one of its
+// aliases.
+// Otherwise moves: anyone whose Company text names an owned company (the same match ownedCompanyContacts uses). A text that fuzzy
+// matches both the company and an owned company stays, unless the owned
+// one is a division whose bracket the text carries ("Brookfield (Self
+// Storage)" for "Brookfield Self Storage").
+//
+//   owned      from ownedCompanyList
+//   self       the company's own name
+//   ownNames   its other names (aliases, HubSpot company names)
+//   links      settings.companyContactLinks  { companyLower: [id, …] }
+export function ownedCompanyFor(contact, owned, { self = '', ownNames = [], links = {} } = {}) {
+  if (!owned?.length || !contact) return null;
+  const id = idOf(contact);
+  if (id) {
+    const linked = owned.find(o => (links?.[o.name.toLowerCase()] || []).map(String).includes(id));
+    if (linked) return linked;
+  }
+  const selfKey = String(self || '').trim().toLowerCase();
+  if (id && (links?.[selfKey] || []).map(String).includes(id)) return null;
+  const text = String(contact.company || '').trim();
+  if (!text) return null;
+  const key = exactCompanyKey(text);
+  if ([self, ...ownNames].some(n => exactCompanyKey(n) && exactCompanyKey(n) === key)) return null;
+  const hit = owned.find(o => companiesMatch(text, o.name) && carriesDivision(text, o.name));
+  if (!hit) return null;
+  if (companiesMatch(text, self) && divisionQualifiers(hit.name).length === 0) return null;
+  return hit;
+}
+
