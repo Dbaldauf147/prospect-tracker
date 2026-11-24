@@ -705,6 +705,734 @@ function CallContextImportPicker({ candidates, onImport }) {
   );
 }
 
+// Dan's Ask is keyed on the attendee's email when present, otherwise on
+// a name-based key — so manually added attendees without an email still
+// get their Ask persisted.
+const dansAskKey = (att) => {
+  const em = (att?.email || '').trim().toLowerCase();
+  if (em) return em;
+  const nm = (att?.name || '').trim().toLowerCase();
+  return nm ? `name:${nm}` : '';
+};
+
+// A saved form laid over the blank template, so every field and table the
+// template knows is present. Shared by the on-screen form and the exports.
+function normalizeFormData(src, template, cdmName) {
+  const base = emptyFormData(template, cdmName);
+  
+  if (!src) return base;
+  return {
+    fieldValues: { ...base.fieldValues, ...(src.fieldValues || {}) },
+    tables: Object.fromEntries(
+      template.tables.map(t => [t.key, (src.tables && src.tables[t.key]) || base.tables[t.key]])
+    ),
+    linkedBfoLink: src.linkedBfoLink || null,
+    linkedOppName: src.linkedOppName || null,
+    meeting: src.meeting || null,
+    // Carry the per-form seed record through so the question auto-fill
+    // effects can tell which services were already imported. Without
+    // this, formData.seededScopeServices is always undefined and the
+    // effects fall back to inferring seeds from populated rows — which
+    // resurrects questions the user deleted after a page refresh.
+    seededScopeServices: src.seededScopeServices || null,
+  };
+}
+
+// Attendee matching + SE vs Customer bucketing for one meeting. Pure, so
+// the bulk Call Plans download can run it for a page that is not on screen.
+function bucketAttendees({ meeting, allHubspotContacts, companyContacts, companyName, contactNicknames }) {
+  const mt = meeting;
+  const ics = mt?.attendees || [];
+  const manual = mt?.manualAttendees || [];
+  const empty = { seAttendees: [], customerAttendees: [] };
+  if (ics.length === 0 && manual.length === 0) return empty;
+  const byEmail = new Map();
+  const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
+  for (const c of pool) {
+    const em = (c.email || '').toLowerCase().trim();
+    if (em && !byEmail.has(em)) byEmail.set(em, c);
+  }
+  const thisCompany = (companyName || '').toLowerCase().trim();
+  const se = [];
+  const cust = [];
+  const seen = new Set();
+  for (const a of [...ics, ...manual]) {
+    const em = (a.email || '').toLowerCase().trim();
+    const key = em || `name:${(a.name || '').toLowerCase().trim()}`;
+    if (seen.has(key)) continue; // dedupe if same email/name on both sides
+    seen.add(key);
+    // Prefer the live HubSpot contact, but fall back to the snapshot
+    // persisted on the attendee so the section still populates when the
+    // contact pool hasn't been loaded/refreshed this session.
+    const match = (em ? byEmail.get(em) : null) || a.matchSnapshot || null;
+    const matchedCompany = (match?.company || '').trim();
+    const matchedOtherCompany = !!matchedCompany && matchedCompany.toLowerCase() !== thisCompany;
+    const enriched = { ...a, match, matchedCompany, matchedOtherCompany };
+    // Explicit bucket on manual attendees wins; otherwise fall back to
+    // email-domain detection for @se.com / @schneider-electric.com.
+    // When the address came in as an Exchange X.500 DN (cached-mode
+    // .msg drag from Outlook desktop), the SMTP form is missing, but
+    // those DNs reliably contain Schneider's `sesa<digits>` SAM
+    // suffix on the cn= leg and / or the literal "schneider" substring
+    // higher up the path — either is a strong SE signal.
+    let isSE;
+    if (a.bucket === 'se') isSE = true;
+    else if (a.bucket === 'customer') isSE = false;
+    else {
+      const exHint = String(a.rawParams?.exAddress || '').toLowerCase();
+      isSE = /@(se\.com|schneider-electric\.com)$/i.test(em)
+        || /sesa\d+/.test(em) || /sesa\d+/.test(exHint)
+        || /schneider/.test(em) || /schneider/.test(exHint);
+    }
+    if (isSE) se.push(enriched); else cust.push(enriched);
+  }
+  // Required first, optional after. Within each group sort by an
+  // explicit _order field when set (so user-driven drag / move
+  // up-down survives a refresh) and fall back to alphabetical.
+  const sorter = (a, b) => {
+    if (!!a.required !== !!b.required) return a.required ? -1 : 1;
+    const ao = Number.isFinite(a._order) ? a._order : null;
+    const bo = Number.isFinite(b._order) ? b._order : null;
+    if (ao !== null && bo !== null) return ao - bo;
+    if (ao !== null) return -1;
+    if (bo !== null) return 1;
+    return displayAttendeeName(a, contactNicknames).localeCompare(displayAttendeeName(b, contactNicknames));
+  };
+  se.sort(sorter);
+  // Primary Points of Contact lead the customer list (within their
+  // Required / Optional bucket), on screen and in the Excel export.
+  cust.sort((a, b) => {
+    const pa = isPrimaryPoc(a.match), pb = isPrimaryPoc(b.match);
+    if (!!a.required !== !!b.required) return a.required ? -1 : 1;
+    if (pa !== pb) return pa ? -1 : 1;
+    return sorter(a, b);
+  });
+  return { seAttendees: se, customerAttendees: cust };
+}
+
+// ---- Call Plan workbook (Schneider Electric branding) ----
+// Builds the .xlsx for one call plan and returns its bytes. The form's
+// Export Excel button and the Call Plans "Download all" both go through here.
+async function buildCallPlanWorkbookBuffer({ formData, template, companyName, companyBackground, seAttendees, customerAttendees, dansAsks, peOwners, meetingStartIso, contactNicknames, contactNotes, contactReportsTo, allHubspotContacts, companyContacts }) {
+    const { Workbook } = await import('exceljs');
+
+    // Schneider Electric brand palette (matches Portfolio Companies export)
+    const SE_GREEN = 'FF3DCD58';      // Life is On green (title band)
+    const SE_GREEN_DARK = 'FF009530'; // Section / table header band
+    const SE_TEXT_DARK = 'FF1E293B';
+    const SE_SURFACE = 'FFF6F9F4';    // Zebra / field-label surface
+    const SE_BORDER = 'FFD4DDE1';
+    const SE_MUTED = 'FF64748B';
+
+    const thin = { style: 'thin', color: { argb: SE_BORDER } };
+    const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Opportunity', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ state: 'frozen', ySplit: 3, showGridLines: false }],
+    });
+    // 10-column sheet with uniform widths so any N-column table splits
+    // the full page width into visually balanced slots (1-col = full
+    // width, 2-col = 5/5, 3-col = 3/3/4, 4-col = 3/3/2/2, 5-col = 2/2/
+    // 2/2/2). The attendees section uses cols 1-4 for SE and cols 6-10
+    // for the customer side, with col 5 as a visual gap.
+    const colWidths = [24, 24, 24, 24, 24, 24, 24, 24, 24, 24];
+    ws.columns = colWidths.map(w => ({ width: w }));
+    const SPAN = colWidths.length;
+
+    // Estimate how many visible rows a cell will take given its text and
+    // column width (Excel character-width units). Used to set row.height
+    // so wrapped text is fully visible without leaving excess empty
+    // space. Nunito Sans 10pt is ~0.67x the width of Excel's default
+    // Calibri 11pt, so ~1.5 chars fit per column-width unit in practice.
+    //
+    // Also normalizes whitespace so copy-pasted HubSpot notes (trailing
+    // newlines, triple-blank-line paragraph breaks, stray \r chars)
+    // don't inflate the line count past what Excel will actually render.
+    const estimateWrappedLines = (text, colUnits) => {
+      if (!text) return 1;
+      const s = String(text)
+        .replace(/\r/g, '')
+        .replace(/[ \t]+\n/g, '\n')     // strip trailing spaces on wrap
+        .replace(/\n{3,}/g, '\n\n')     // collapse >2 blank lines
+        .replace(/^\s+|\s+$/g, '');     // trim outer whitespace
+      if (!s) return 1;
+      const explicit = s.split('\n');
+      let lines = 0;
+      // Slightly conservative chars-per-line (1.4 rather than 1.5) so
+      // text that wraps just past the column width is counted as the
+      // extra line it really takes, instead of being clipped.
+      const perLine = Math.max(8, Math.floor(colUnits * 1.4));
+      for (const line of explicit) {
+        const len = line.length;
+        if (len === 0) { lines += 1; continue; }
+        lines += Math.ceil(len / perLine);
+      }
+      return Math.max(1, lines);
+    };
+    // ~14pt per wrapped line of 10pt text (matches Excel's native
+    // auto-fit), with a 16pt floor so single-line rows stay tight.
+    // Multi-line (wrapping) cells get a small cushion on top so the
+    // final line never clips when Excel wraps a touch tighter than
+    // estimated.
+    const rowHeightForLines = (lines) => (lines <= 1 ? 16 : Math.min(600, lines * 14 + 8));
+
+    // Row 1: "SE ADVISORY SERVICES" wordmark. SE is green, the rest
+    // is dark gray — rendered as a rich-text cell on a white background.
+    ws.mergeCells(1, 1, 1, SPAN);
+    const wordmarkCell = ws.getCell(1, 1);
+    wordmarkCell.value = {
+      richText: [
+        { text: 'SE', font: { name: 'Nunito Sans', bold: true, size: 22, color: { argb: SE_GREEN } } },
+        { text: ' ADVISORY SERVICES', font: { name: 'Nunito Sans', bold: true, size: 22, color: { argb: 'FF475569' } } },
+      ],
+    };
+    wordmarkCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+    wordmarkCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    ws.getRow(1).height = 40;
+
+    // Row 2: Call Plan brand band (green).
+    ws.mergeCells(2, 1, 2, SPAN);
+    const titleCell = ws.getCell(2, 1);
+    titleCell.value = 'Call Plan';
+    titleCell.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(2).height = 26;
+
+    // Row 3: Subtitle — "{Company} · Opportunity Prep"
+    ws.mergeCells(3, 1, 3, SPAN);
+    const subCell = ws.getCell(3, 1);
+    subCell.value = `${companyName || 'Opportunity'}  ·  Opportunity Prep`;
+    subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_MUTED } };
+    subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(3).height = 20;
+
+    // Helpers — all operate on the already-established column layout.
+    const addSectionHeader = (text) => {
+      const row = ws.addRow([]);
+      ws.mergeCells(row.number, 1, row.number, SPAN);
+      const c = ws.getCell(row.number, 1);
+      c.value = text;
+      c.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      c.border = borderAll;
+      row.height = 24;
+    };
+
+    const addFieldRow = (label, value, hyperlink) => {
+      const row = ws.addRow([]);
+      // Label cell
+      const labelCell = ws.getCell(row.number, 1);
+      labelCell.value = label;
+      labelCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+      labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+      labelCell.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+      labelCell.border = borderAll;
+      // Value cell (merged across remaining columns)
+      ws.mergeCells(row.number, 2, row.number, SPAN);
+      const valCell = ws.getCell(row.number, 2);
+      const displayText = (value === '' || value == null) ? null : String(value);
+      if (hyperlink) {
+        // Clickable link — Excel styles it blue + underline automatically
+        // from the 'hyperlink' type, but we set font explicitly for
+        // consistency across viewers.
+        valCell.value = { text: displayText || hyperlink, hyperlink };
+        valCell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true };
+      } else {
+        valCell.value = displayText;
+        valCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+      }
+      valCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+      valCell.border = borderAll;
+      // Size the row so wrapped content isn't clipped. The merged value
+      // cell spans cols 2..SPAN, so we estimate wraps against the sum of
+      // their widths.
+      const mergedWidth = colWidths.slice(1).reduce((a, b) => a + b, 0);
+      row.height = rowHeightForLines(estimateWrappedLines(value, mergedWidth));
+    };
+
+    const addBlankRow = () => { ws.addRow([]); };
+
+    const addSubheading = (text) => {
+      const row = ws.addRow([]);
+      ws.mergeCells(row.number, 1, row.number, SPAN);
+      const c = ws.getCell(row.number, 1);
+      c.value = text;
+      c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+      c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      row.height = 18;
+    };
+
+    const addTable = (title, columns, rows, _widths /* unused */, opts = {}) => {
+      addSectionHeader(title);
+      const highlightRow = typeof opts.highlightRow === 'function' ? opts.highlightRow : null;
+      // Distribute the SPAN worksheet columns across this table's columns
+      // so the whole table fills the full page width. Columns can declare
+      // a widthRatio (e.g. 0.25 for a Service column); any missing ratios
+      // default to equal shares of whatever is left. Widths are then
+      // rounded to whole worksheet-column slots, with any remainder going
+      // to the widest column so narrow columns don't swell unexpectedly.
+      const numCols = columns.length;
+      const explicit = columns.map(c => (typeof c.widthRatio === 'number' ? c.widthRatio : null));
+      const explicitSum = explicit.reduce((a, r) => a + (r || 0), 0);
+      const unspecifiedCount = explicit.filter(r => r == null).length;
+      const remainder = Math.max(0, 1 - explicitSum);
+      const defaultShare = unspecifiedCount > 0 ? remainder / unspecifiedCount : 0;
+      const ratios = explicit.map(r => (r == null ? defaultShare : r));
+      const ratioSum = ratios.reduce((a, b) => a + b, 0) || 1;
+      const widths = ratios.map(r => Math.max(1, Math.floor((r / ratioSum) * SPAN)));
+      let used = widths.reduce((a, b) => a + b, 0);
+      while (used > SPAN) {
+        let maxIdx = 0;
+        for (let i = 1; i < numCols; i++) if (widths[i] > widths[maxIdx]) maxIdx = i;
+        if (widths[maxIdx] <= 1) break;
+        widths[maxIdx]--;
+        used--;
+      }
+      while (used < SPAN) {
+        let maxIdx = 0;
+        for (let i = 1; i < numCols; i++) if (ratios[i] > ratios[maxIdx]) maxIdx = i;
+        widths[maxIdx]++;
+        used++;
+      }
+      const slots = [];
+      let cur = 1;
+      for (let i = 0; i < numCols; i++) {
+        const w = widths[i];
+        slots.push({ start: cur, end: cur + w - 1 });
+        cur += w;
+      }
+      const slotUnits = (slot) => {
+        let u = 0;
+        for (let k = slot.start - 1; k <= slot.end - 1; k++) u += colWidths[k] || 0;
+        return u;
+      };
+
+      // Header row
+      const hRow = ws.addRow([]);
+      slots.forEach((slot, i) => {
+        const c = ws.getCell(hRow.number, slot.start);
+        c.value = columns[i].label;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        c.border = borderAll;
+        if (slot.end > slot.start) {
+          ws.mergeCells(hRow.number, slot.start, hRow.number, slot.end);
+        }
+      });
+      hRow.height = 22;
+
+      // Data rows
+      const HL_BG = 'FFFEF3C7';   // amber-100 — highlighted (top) row fill
+      const HL_TEXT = 'FF7C2D12'; // amber-900 — highlighted row text
+      const dataRows = rows.length > 0 ? rows : [{}];
+      dataRows.forEach((r, idx) => {
+        const dRow = ws.addRow([]);
+        const zebra = idx % 2 === 1;
+        const isHighlight = highlightRow ? highlightRow(r) : false;
+        let maxLines = 1;
+        slots.forEach((slot, i) => {
+          const col = columns[i];
+          const raw = r[col.key];
+          const c = ws.getCell(dRow.number, slot.start);
+          // Agenda minutes should be a real number in the sheet, not text.
+          if (col.numeric) {
+            const n = (raw === '' || raw == null) ? null : Number(raw);
+            c.value = (n != null && !isNaN(n)) ? n : null;
+            if (col.numFmt) c.numFmt = col.numFmt;
+          } else {
+            // Star the highlighted row's first column so the top issue
+            // reads as "★ …" while staying in the same table.
+            const text = (raw === '' || raw == null) ? '' : String(raw);
+            const display = (isHighlight && i === 0) ? `★ ${text}`.trim() : text;
+            c.value = display === '' ? null : display;
+          }
+          c.font = { name: 'Nunito Sans', size: 10, bold: isHighlight, color: { argb: isHighlight ? HL_TEXT : SE_TEXT_DARK } };
+          c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+          c.border = borderAll;
+          if (isHighlight) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HL_BG } };
+          else if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+          if (slot.end > slot.start) {
+            ws.mergeCells(dRow.number, slot.start, dRow.number, slot.end);
+          }
+          const measure = (isHighlight && i === 0 && (raw != null && raw !== '')) ? `★ ${raw}` : raw;
+          maxLines = Math.max(maxLines, estimateWrappedLines(measure, slotUnits(slot)));
+        });
+        dRow.height = rowHeightForLines(maxLines);
+      });
+    };
+
+    // --- Company Background (from saved Claude research) -------------
+    // Surfaces the prospect's Claude research at the very top of the
+    // export. Sources are intentionally omitted; Summary, Programs,
+    // Targets, Frameworks, and Reports (with clickable URLs) are
+    // included. Skipped entirely when no research has been run yet.
+    if (companyBackground) {
+      const d = companyBackground;
+      const hasSummary = typeof d.summary === 'string' && d.summary.trim().length > 0;
+      const hasPrograms = Array.isArray(d.programs) && d.programs.length > 0;
+      const hasTargets = Array.isArray(d.targets) && d.targets.length > 0;
+      const hasFrameworks = Array.isArray(d.frameworks) && d.frameworks.length > 0;
+      const hasReports = Array.isArray(d.reports) && d.reports.length > 0;
+      if (hasSummary || hasPrograms || hasTargets || hasFrameworks || hasReports) {
+        addBlankRow();
+        addSectionHeader('Company Background');
+        if (hasSummary) addFieldRow('Summary', d.summary.trim());
+        if (hasPrograms) addFieldRow('Programs', d.programs.map(p => `• ${p}`).join('\n'));
+        if (hasTargets) addFieldRow('Targets', d.targets.map(t => `• ${t}`).join('\n'));
+        if (hasFrameworks) addFieldRow('Frameworks', d.frameworks.join(', '));
+        if (hasReports) {
+          for (const r of d.reports) {
+            const title = r?.title || r?.url || '';
+            const year = r?.year ? ` (${r.year})` : '';
+            addFieldRow('Report', `${title}${year}`, r?.url || undefined);
+          }
+        }
+      }
+    }
+
+    // --- Meeting (imported from .ics) --------------------------------
+    if (formData.meeting) {
+      addBlankRow();
+      addSectionHeader('Meeting');
+      addFieldRow('Subject', formData.meeting.subject || '');
+      addFieldRow('When', formatDateTime(formData.meeting.start));
+      addFieldRow('Ends', formatDateTime(formData.meeting.end));
+      if (formData.meeting.sourceTimeZone) {
+        addFieldRow('Original TZ', formData.meeting.sourceTimeZone);
+      }
+      const mins = formData.meeting.durationMinutes;
+      if (mins != null) {
+        const h = Math.floor(mins / 60), m = mins % 60;
+        addFieldRow('Duration', m === 0 ? `${h}h` : h === 0 ? `${m} min` : `${h}h ${m}m`);
+      }
+      if (formData.meeting.location) addFieldRow('Location', formData.meeting.location);
+
+      // Side-by-side attendee tables mirroring the on-screen form. SE
+      // uses cols 1-4 (Name, Required, Dan's Ask, filler); col 5 is the
+      // gap; Customer uses cols 6-10 (Name, Required, Title, City/Country,
+      // Notes).
+      addSectionHeader('Attendees');
+
+      // Company sub-headers row
+      const sbRow = ws.addRow([]);
+      ws.mergeCells(sbRow.number, 1, sbRow.number, 4);
+      ws.mergeCells(sbRow.number, 6, sbRow.number, 10);
+      const seHead = ws.getCell(sbRow.number, 1);
+      seHead.value = 'Schneider Electric';
+      seHead.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+      seHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      const custHead = ws.getCell(sbRow.number, 6);
+      custHead.value = companyName || 'Customer';
+      custHead.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+      custHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      sbRow.height = 20;
+
+      // Column headers row
+      const seColLabels = ['Name', 'Required?', "Dan's Ask", ''];
+      const custColLabels = ['Name', 'Reports to', 'Title', 'City, Country', 'Notes'];
+      const hdrRow = ws.addRow([]);
+      const styleHeader = (cell, text, filled) => {
+        cell.value = text;
+        if (filled) {
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        }
+        cell.border = borderAll;
+      };
+      for (let c = 0; c < 4; c++) styleHeader(hdrRow.getCell(c + 1), seColLabels[c], c < 3);
+      // Merge the Dan's Ask header cell across cols 3-4 so it spans the
+      // same width as the data cells below.
+      ws.mergeCells(hdrRow.number, 3, hdrRow.number, 4);
+      for (let c = 0; c < 5; c++) styleHeader(hdrRow.getCell(c + 6), custColLabels[c], true);
+      hdrRow.height = 22;
+
+      const dansAskMap = dansAsks || {};
+      let anyPeRow = false;
+      let anyPocRow = false;
+      const maxAttendeeRows = Math.max(seAttendees.length, customerAttendees.length, 1);
+      for (let i = 0; i < maxAttendeeRows; i++) {
+        const dRow = ws.addRow([]);
+        const zebra = i % 2 === 1;
+        let maxLines = 1;
+
+        // Helper: normalize a LinkedIn URL from any of the three props
+        // HubSpot uses for it. Adds https:// prefix if missing.
+        const liUrlFor = (att) => {
+          const raw = (att?.match?.hs_linkedin_url || att?.match?.linkedin_url || att?.match?.hs_linkedinid || '').trim();
+          if (!raw) return '';
+          return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+        };
+
+        const se = seAttendees[i];
+        const seVals = se
+          ? [
+              displayAttendeeName(se, contactNicknames),
+              se.required ? 'Required' : 'Optional',
+              dansAskMap[dansAskKey(se)] || '',
+              '',
+            ]
+          : ['', '', '', ''];
+        const seLink = liUrlFor(se);
+        for (let c = 0; c < 4; c++) {
+          const cell = dRow.getCell(c + 1);
+          // Column 0 is Name — hyperlink to LinkedIn when we have it.
+          if (c === 0 && seLink && seVals[0]) {
+            cell.value = { text: seVals[0], hyperlink: seLink };
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true };
+          } else {
+            cell.value = seVals[c];
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          }
+          cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+          cell.border = borderAll;
+          if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+          if (c < 3) maxLines = Math.max(maxLines, estimateWrappedLines(seVals[c], colWidths[c]));
+        }
+        // Merge Dan's Ask (col 3) with the empty col 4 so the field has
+        // more horizontal room for longer text and matches the visual
+        // weight of the customer-side Notes column.
+        ws.mergeCells(dRow.number, 3, dRow.number, 4);
+        // Re-estimate Dan's Ask wrap against the merged width.
+        maxLines = Math.max(
+          maxLines,
+          estimateWrappedLines(seVals[2], (colWidths[2] || 0) + (colWidths[3] || 0))
+        );
+
+        const cust = customerAttendees[i];
+        const custRoles = cust ? attendeeRoles(cust, peOwners) : { peOwner: '', primaryPoc: false };
+        const custRole = custRoles.peOwner ? ATTENDEE_ROLE_STYLE.pe : custRoles.primaryPoc ? ATTENDEE_ROLE_STYLE.poc : null;
+        if (custRoles.peOwner) anyPeRow = true;
+        if (custRoles.primaryPoc) anyPocRow = true;
+        let custVals;
+        if (cust) {
+          const city = (cust.match?.city || '').trim();
+          const country = (cust.match?.country || '').trim();
+          const noteSrc = (cust.match?.id && contactNotes[cust.match.id]) || cust.match?.notes || cust.match?.hs_content_membership_notes || cust.match?.message || '';
+          // Resolve Reports to: contactReportsTo[id] holds an array of
+          // manager contact ids; map each to its display name from the
+          // hubspot pool. Falls back to '' if not matched or unknown.
+          const mgrIds = (cust.match?.id && Array.isArray(contactReportsTo[cust.match.id]))
+            ? contactReportsTo[cust.match.id]
+            : [];
+          const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
+          const byId = new Map();
+          for (const c of pool) {
+            const id = c.id || c.vid;
+            if (id) byId.set(String(id), c);
+          }
+          const reportsToText = mgrIds
+            .map(id => {
+              const m = byId.get(String(id));
+              if (!m) return '';
+              const fn = (m.firstname || '').trim();
+              const ln = (m.lastname || '').trim();
+              return [fn, ln].filter(Boolean).join(' ') || (m.email || '');
+            })
+            .filter(Boolean)
+            .join(', ');
+          const roleLabels = [
+            custRoles.peOwner ? ATTENDEE_ROLE_STYLE.pe.label : '',
+            custRoles.primaryPoc ? ATTENDEE_ROLE_STYLE.poc.label : '',
+          ].filter(Boolean);
+          custVals = [
+            displayAttendeeName(cust, contactNicknames) + (roleLabels.length ? ` (${roleLabels.join(', ')})` : ''),
+            reportsToText,
+            cust.match?.jobtitle || '',
+            [city, country].filter(Boolean).join(', '),
+            noteSrc,
+          ];
+        } else {
+          custVals = ['', '', '', '', ''];
+        }
+        const custLink = liUrlFor(cust);
+        for (let c = 0; c < 5; c++) {
+          const cell = dRow.getCell(c + 6);
+          // Column 0 of the customer block is Name — hyperlink to LinkedIn when we have it.
+          if (c === 0 && custLink && custVals[0]) {
+            cell.value = { text: custVals[0], hyperlink: custLink };
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true, bold: !!custRole };
+          } else {
+            cell.value = custVals[c];
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: (c === 0 && custRole) ? custRole.xlFg : SE_TEXT_DARK }, bold: c === 0 && !!custRole };
+          }
+          cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+          cell.border = borderAll;
+          // PE owner / Primary POC rows take their tint over the zebra
+          // stripe, matching the on-screen list.
+          if (custRole) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: custRole.xlFill } };
+          else if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+          maxLines = Math.max(maxLines, estimateWrappedLines(custVals[c], colWidths[c + 5]));
+        }
+
+        dRow.height = rowHeightForLines(maxLines);
+      }
+
+      // Key for the tinted rows, only for the roles actually present.
+      const keyParts = [
+        anyPeRow ? { r: ATTENDEE_ROLE_STYLE.pe, text: `PE owner${peOwners.length ? ` (${peOwners.join(', ')})` : ''}` } : null,
+        anyPocRow ? { r: ATTENDEE_ROLE_STYLE.poc, text: 'Primary Point of Contact' } : null,
+      ].filter(Boolean);
+      if (keyParts.length) {
+        const kRow = ws.addRow([]);
+        keyParts.forEach((k, idx) => {
+          const cell = kRow.getCell(6 + idx * 2);
+          cell.value = k.text;
+          cell.font = { name: 'Nunito Sans', size: 9, bold: true, color: { argb: k.r.xlFg } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: k.r.xlFill } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          ws.mergeCells(kRow.number, 6 + idx * 2, kRow.number, 7 + idx * 2);
+        });
+      }
+    }
+
+    // --- Meeting Prep (free-form) -----------------------------------
+    addBlankRow();
+    addSectionHeader('Meeting Prep');
+    {
+      const raw = (formData.fieldValues.pptLink || '').trim();
+      const href = raw ? (/^https?:\/\//i.test(raw) ? raw : `https://${raw}`) : '';
+      addFieldRow('PPT Link', raw, href);
+    }
+    // Call Context can be long — when a single cell exceeds Excel's
+    // per-row height limit (~409 pt) the trailing lines clip and the
+    // user has to expand the row by hand to see them. Render it as a
+    // subheading + one row per paragraph so each row stays well under
+    // the cap and the full text is visible by default.
+    {
+      const ctx = String(formData.fieldValues.context || '').trim();
+      if (ctx) {
+        addSubheading('Call Context');
+        const fullWidth = colWidths.reduce((a, b) => a + b, 0);
+        const paragraphs = ctx.split(/\n{2,}/);
+        for (const para of paragraphs) {
+          const text = para.replace(/\s+$/g, '');
+          if (!text) continue;
+          const row = ws.addRow([]);
+          ws.mergeCells(row.number, 1, row.number, SPAN);
+          const c = ws.getCell(row.number, 1);
+          c.value = text;
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+          c.border = borderAll;
+          row.height = rowHeightForLines(estimateWrappedLines(text, fullWidth));
+        }
+      } else {
+        addFieldRow('Call Context', '');
+      }
+    }
+    addFieldRow('Intent', formData.fieldValues.intent || '');
+    addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
+
+    // --- Details (structured fields) --------------------------------
+    // "General Notes" and "Scoping Details Notes" are explicitly
+    // excluded from the export — they're surfaced inside the Notes
+    // page UI but the user doesn't want them duplicated into the
+    // structured Details block of the workbook.
+    const DETAILS_EXPORT_SKIP = new Set(['summary', 'scopingNotes']);
+    addBlankRow();
+    addSectionHeader('Details');
+    for (const f of template.fields) {
+      if (DETAILS_EXPORT_SKIP.has(f.key)) continue;
+      if (f.showWhenStatus && formData.fieldValues.status !== f.showWhenStatus) continue;
+      const raw = (formData.fieldValues[f.key] || '').trim ? (formData.fieldValues[f.key] || '').trim() : (formData.fieldValues[f.key] || '');
+      if (f.isLink && raw) {
+        const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+        addFieldRow(f.label, raw, href);
+      } else {
+        addFieldRow(f.label, raw);
+      }
+    }
+
+    // --- Tables (Agenda, Questions, Action Items, Risks) ------------
+    for (const t of template.tables) {
+      addBlankRow();
+      const widths = colWidths.slice(0, t.columns.length);
+      let tableRows = formData.tables[t.key] || [];
+      // For the Smart Agenda, backfill each row's Start Time from the
+      // meeting's start + the sum of prior durations so the exported
+      // sheet shows real clock times instead of blanks.
+      if (t.smartAgenda && meetingStartIso) {
+        let priorSum = 0;
+        tableRows = tableRows.map((r) => {
+          const out = { ...r };
+          try {
+            const d = new Date(meetingStartIso);
+            d.setMinutes(d.getMinutes() + priorSum);
+            out.startTime = formatEasternTime(d.toISOString());
+          } catch {}
+          priorSum += Number(r?.duration) || 0;
+          return out;
+        });
+      }
+      // Key Issues: keep the starred "top issue" inside the Key Issues
+      // table rather than lifting it into a separate callout above.
+      // Float it to the first row and flag it so addTable renders it
+      // with the amber highlight / ★ styling — same table, different
+      // formatting.
+      let addTableOpts;
+      if (t.key === 'meetingNotes') {
+        const starred = tableRows.find(r => r?.starred);
+        if (starred) {
+          tableRows = [starred, ...tableRows.filter(r => r !== starred)];
+          addTableOpts = { highlightRow: (r) => r === starred };
+        }
+      }
+      addTable(t.label, t.columns, tableRows, widths, addTableOpts);
+      // Restore defaults for next block
+      colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    }
+
+    // Frame the whole document with a medium SE-green outer border.
+    // Gridlines are already off (view.showGridLines = false), so this
+    // border is what visually defines where the sheet ends; we preserve
+    // each cell's existing thin internal borders and only override the
+    // perimeter side(s).
+    {
+      const outer = { style: 'medium', color: { argb: SE_GREEN_DARK } };
+      const lastRow = ws.rowCount;
+      for (let r = 1; r <= lastRow; r++) {
+        for (let c = 1; c <= SPAN; c++) {
+          if (r !== 1 && r !== lastRow && c !== 1 && c !== SPAN) continue;
+          const cell = ws.getCell(r, c);
+          const b = { ...(cell.border || {}) };
+          if (r === 1) b.top = outer;
+          if (r === lastRow) b.bottom = outer;
+          if (c === 1) b.left = outer;
+          if (c === SPAN) b.right = outer;
+          cell.border = b;
+        }
+      }
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+  return buf;
+}
+
+// One saved call plan (a form-type page's formData) to .xlsx bytes, deriving
+// everything the on-screen form derives before it exports.
+// eslint-disable-next-line react-refresh/only-export-components
+export async function buildCallPlanXlsx({ formData: saved, companyName, companyBackground = null, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], cdmName, peOwner = null }) {
+  const template = DEFAULT_FORM_TEMPLATE;
+  const formData = normalizeFormData(saved, template, cdmName);
+  const { seAttendees, customerAttendees } = bucketAttendees({ meeting: formData.meeting, allHubspotContacts, companyContacts, companyName, contactNicknames });
+  const raw = peOwner != null ? peOwner : (matchProspectByName(companyName, prospects)?.peOwner || '');
+  return buildCallPlanWorkbookBuffer({
+    formData, template, companyName, companyBackground, seAttendees, customerAttendees,
+    dansAsks: formData.meeting?.dansAsks || {},
+    peOwners: splitPeOwners(raw),
+    meetingStartIso: formData.meeting?.start || '',
+    contactNicknames, contactNotes, contactReportsTo, allHubspotContacts, companyContacts,
+  });
+}
+
 export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, onOpenContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor, companyBackground = null, serviceQuestionsOverride = null, serviceTheirQuestionsOverride = null, peOwner = null }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
@@ -759,26 +1487,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const formData = useMemo(() => {
-    const base = emptyFormData(template, cdmName);
-    const src = localValue;
-    if (!src) return base;
-    return {
-      fieldValues: { ...base.fieldValues, ...(src.fieldValues || {}) },
-      tables: Object.fromEntries(
-        template.tables.map(t => [t.key, (src.tables && src.tables[t.key]) || base.tables[t.key]])
-      ),
-      linkedBfoLink: src.linkedBfoLink || null,
-      linkedOppName: src.linkedOppName || null,
-      meeting: src.meeting || null,
-      // Carry the per-form seed record through so the question auto-fill
-      // effects can tell which services were already imported. Without
-      // this, formData.seededScopeServices is always undefined and the
-      // effects fall back to inferring seeds from populated rows — which
-      // resurrects questions the user deleted after a page refresh.
-      seededScopeServices: src.seededScopeServices || null,
-    };
-  }, [localValue, template, cdmName]);
+  const formData = useMemo(() => normalizeFormData(localValue, template, cdmName), [localValue, template, cdmName]);
 
   // Optimistic local update — feels instant; debounced useEffect above
   // flushes to the parent ~350ms after the last edit.
@@ -1629,15 +2338,6 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // "Dan's Ask" — per-SE-attendee free text stored under the meeting
   // object, keyed by lowercased email so it survives ICS re-imports.
   const dansAsks = (formData.meeting?.dansAsks) || {};
-  // Dan's Ask is keyed on the attendee's email when present, otherwise on
-  // a name-based key — so manually added attendees without an email still
-  // get their Ask persisted.
-  const dansAskKey = (att) => {
-    const em = (att?.email || '').trim().toLowerCase();
-    if (em) return em;
-    const nm = (att?.name || '').trim().toLowerCase();
-    return nm ? `name:${nm}` : '';
-  };
   const updateDansAsk = (attendee, text) => {
     const key = dansAskKey(attendee);
     if (!key) return;
@@ -1974,75 +2674,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // @se.com address (case-insensitive, matches subdomains too). Everyone
   // else is grouped under the current customer company. We also track
   // each attendee's required/optional role from the ICS.
-  const { seAttendees, customerAttendees } = useMemo(() => {
-    const mt = formData.meeting;
-    const ics = mt?.attendees || [];
-    const manual = mt?.manualAttendees || [];
-    const empty = { seAttendees: [], customerAttendees: [] };
-    if (ics.length === 0 && manual.length === 0) return empty;
-    const byEmail = new Map();
-    const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
-    for (const c of pool) {
-      const em = (c.email || '').toLowerCase().trim();
-      if (em && !byEmail.has(em)) byEmail.set(em, c);
-    }
-    const thisCompany = (companyName || '').toLowerCase().trim();
-    const se = [];
-    const cust = [];
-    const seen = new Set();
-    for (const a of [...ics, ...manual]) {
-      const em = (a.email || '').toLowerCase().trim();
-      const key = em || `name:${(a.name || '').toLowerCase().trim()}`;
-      if (seen.has(key)) continue; // dedupe if same email/name on both sides
-      seen.add(key);
-      // Prefer the live HubSpot contact, but fall back to the snapshot
-      // persisted on the attendee so the section still populates when the
-      // contact pool hasn't been loaded/refreshed this session.
-      const match = (em ? byEmail.get(em) : null) || a.matchSnapshot || null;
-      const matchedCompany = (match?.company || '').trim();
-      const matchedOtherCompany = !!matchedCompany && matchedCompany.toLowerCase() !== thisCompany;
-      const enriched = { ...a, match, matchedCompany, matchedOtherCompany };
-      // Explicit bucket on manual attendees wins; otherwise fall back to
-      // email-domain detection for @se.com / @schneider-electric.com.
-      // When the address came in as an Exchange X.500 DN (cached-mode
-      // .msg drag from Outlook desktop), the SMTP form is missing, but
-      // those DNs reliably contain Schneider's `sesa<digits>` SAM
-      // suffix on the cn= leg and / or the literal "schneider" substring
-      // higher up the path — either is a strong SE signal.
-      let isSE;
-      if (a.bucket === 'se') isSE = true;
-      else if (a.bucket === 'customer') isSE = false;
-      else {
-        const exHint = String(a.rawParams?.exAddress || '').toLowerCase();
-        isSE = /@(se\.com|schneider-electric\.com)$/i.test(em)
-          || /sesa\d+/.test(em) || /sesa\d+/.test(exHint)
-          || /schneider/.test(em) || /schneider/.test(exHint);
-      }
-      if (isSE) se.push(enriched); else cust.push(enriched);
-    }
-    // Required first, optional after. Within each group sort by an
-    // explicit _order field when set (so user-driven drag / move
-    // up-down survives a refresh) and fall back to alphabetical.
-    const sorter = (a, b) => {
-      if (!!a.required !== !!b.required) return a.required ? -1 : 1;
-      const ao = Number.isFinite(a._order) ? a._order : null;
-      const bo = Number.isFinite(b._order) ? b._order : null;
-      if (ao !== null && bo !== null) return ao - bo;
-      if (ao !== null) return -1;
-      if (bo !== null) return 1;
-      return displayAttendeeName(a, contactNicknames).localeCompare(displayAttendeeName(b, contactNicknames));
-    };
-    se.sort(sorter);
-    // Primary Points of Contact lead the customer list (within their
-    // Required / Optional bucket), on screen and in the Excel export.
-    cust.sort((a, b) => {
-      const pa = isPrimaryPoc(a.match), pb = isPrimaryPoc(b.match);
-      if (!!a.required !== !!b.required) return a.required ? -1 : 1;
-      if (pa !== pb) return pa ? -1 : 1;
-      return sorter(a, b);
-    });
-    return { seAttendees: se, customerAttendees: cust };
-  }, [formData.meeting, allHubspotContacts, companyContacts, companyName]);
+  const { seAttendees, customerAttendees } = useMemo(
+    () => bucketAttendees({ meeting: formData.meeting, allHubspotContacts, companyContacts, companyName, contactNicknames }),
+    [formData.meeting, allHubspotContacts, companyContacts, companyName, contactNicknames]);
 
   const totalAttendees = (seAttendees?.length || 0) + (customerAttendees?.length || 0);
 
@@ -2411,605 +3045,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // ---- Export to Excel with Schneider Electric branding ----
   const exportExcel = async () => {
     try {
-      const { Workbook } = await import('exceljs');
-
-      // Schneider Electric brand palette (matches Portfolio Companies export)
-      const SE_GREEN = 'FF3DCD58';      // Life is On green (title band)
-      const SE_GREEN_DARK = 'FF009530'; // Section / table header band
-      const SE_TEXT_DARK = 'FF1E293B';
-      const SE_SURFACE = 'FFF6F9F4';    // Zebra / field-label surface
-      const SE_BORDER = 'FFD4DDE1';
-      const SE_MUTED = 'FF64748B';
-
-      const thin = { style: 'thin', color: { argb: SE_BORDER } };
-      const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
-
-      const wb = new Workbook();
-      wb.creator = 'Schneider Electric · Prospect Tracker';
-      wb.created = new Date();
-      const ws = wb.addWorksheet('Opportunity', {
-        properties: { tabColor: { argb: SE_GREEN } },
-        views: [{ state: 'frozen', ySplit: 3, showGridLines: false }],
-      });
-      // 10-column sheet with uniform widths so any N-column table splits
-      // the full page width into visually balanced slots (1-col = full
-      // width, 2-col = 5/5, 3-col = 3/3/4, 4-col = 3/3/2/2, 5-col = 2/2/
-      // 2/2/2). The attendees section uses cols 1-4 for SE and cols 6-10
-      // for the customer side, with col 5 as a visual gap.
-      const colWidths = [24, 24, 24, 24, 24, 24, 24, 24, 24, 24];
-      ws.columns = colWidths.map(w => ({ width: w }));
-      const SPAN = colWidths.length;
-
-      // Estimate how many visible rows a cell will take given its text and
-      // column width (Excel character-width units). Used to set row.height
-      // so wrapped text is fully visible without leaving excess empty
-      // space. Nunito Sans 10pt is ~0.67x the width of Excel's default
-      // Calibri 11pt, so ~1.5 chars fit per column-width unit in practice.
-      //
-      // Also normalizes whitespace so copy-pasted HubSpot notes (trailing
-      // newlines, triple-blank-line paragraph breaks, stray \r chars)
-      // don't inflate the line count past what Excel will actually render.
-      const estimateWrappedLines = (text, colUnits) => {
-        if (!text) return 1;
-        const s = String(text)
-          .replace(/\r/g, '')
-          .replace(/[ \t]+\n/g, '\n')     // strip trailing spaces on wrap
-          .replace(/\n{3,}/g, '\n\n')     // collapse >2 blank lines
-          .replace(/^\s+|\s+$/g, '');     // trim outer whitespace
-        if (!s) return 1;
-        const explicit = s.split('\n');
-        let lines = 0;
-        // Slightly conservative chars-per-line (1.4 rather than 1.5) so
-        // text that wraps just past the column width is counted as the
-        // extra line it really takes, instead of being clipped.
-        const perLine = Math.max(8, Math.floor(colUnits * 1.4));
-        for (const line of explicit) {
-          const len = line.length;
-          if (len === 0) { lines += 1; continue; }
-          lines += Math.ceil(len / perLine);
-        }
-        return Math.max(1, lines);
-      };
-      // ~14pt per wrapped line of 10pt text (matches Excel's native
-      // auto-fit), with a 16pt floor so single-line rows stay tight.
-      // Multi-line (wrapping) cells get a small cushion on top so the
-      // final line never clips when Excel wraps a touch tighter than
-      // estimated.
-      const rowHeightForLines = (lines) => (lines <= 1 ? 16 : Math.min(600, lines * 14 + 8));
-
-      // Row 1: "SE ADVISORY SERVICES" wordmark. SE is green, the rest
-      // is dark gray — rendered as a rich-text cell on a white background.
-      ws.mergeCells(1, 1, 1, SPAN);
-      const wordmarkCell = ws.getCell(1, 1);
-      wordmarkCell.value = {
-        richText: [
-          { text: 'SE', font: { name: 'Nunito Sans', bold: true, size: 22, color: { argb: SE_GREEN } } },
-          { text: ' ADVISORY SERVICES', font: { name: 'Nunito Sans', bold: true, size: 22, color: { argb: 'FF475569' } } },
-        ],
-      };
-      wordmarkCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
-      wordmarkCell.alignment = { vertical: 'middle', horizontal: 'center' };
-      ws.getRow(1).height = 40;
-
-      // Row 2: Call Plan brand band (green).
-      ws.mergeCells(2, 1, 2, SPAN);
-      const titleCell = ws.getCell(2, 1);
-      titleCell.value = 'Call Plan';
-      titleCell.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
-      titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(2).height = 26;
-
-      // Row 3: Subtitle — "{Company} · Opportunity Prep"
-      ws.mergeCells(3, 1, 3, SPAN);
-      const subCell = ws.getCell(3, 1);
-      subCell.value = `${companyName || 'Opportunity'}  ·  Opportunity Prep`;
-      subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_MUTED } };
-      subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(3).height = 20;
-
-      // Helpers — all operate on the already-established column layout.
-      const addSectionHeader = (text) => {
-        const row = ws.addRow([]);
-        ws.mergeCells(row.number, 1, row.number, SPAN);
-        const c = ws.getCell(row.number, 1);
-        c.value = text;
-        c.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        c.border = borderAll;
-        row.height = 24;
-      };
-
-      const addFieldRow = (label, value, hyperlink) => {
-        const row = ws.addRow([]);
-        // Label cell
-        const labelCell = ws.getCell(row.number, 1);
-        labelCell.value = label;
-        labelCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
-        labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
-        labelCell.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
-        labelCell.border = borderAll;
-        // Value cell (merged across remaining columns)
-        ws.mergeCells(row.number, 2, row.number, SPAN);
-        const valCell = ws.getCell(row.number, 2);
-        const displayText = (value === '' || value == null) ? null : String(value);
-        if (hyperlink) {
-          // Clickable link — Excel styles it blue + underline automatically
-          // from the 'hyperlink' type, but we set font explicitly for
-          // consistency across viewers.
-          valCell.value = { text: displayText || hyperlink, hyperlink };
-          valCell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true };
-        } else {
-          valCell.value = displayText;
-          valCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        }
-        valCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-        valCell.border = borderAll;
-        // Size the row so wrapped content isn't clipped. The merged value
-        // cell spans cols 2..SPAN, so we estimate wraps against the sum of
-        // their widths.
-        const mergedWidth = colWidths.slice(1).reduce((a, b) => a + b, 0);
-        row.height = rowHeightForLines(estimateWrappedLines(value, mergedWidth));
-      };
-
-      const addBlankRow = () => { ws.addRow([]); };
-
-      const addSubheading = (text) => {
-        const row = ws.addRow([]);
-        ws.mergeCells(row.number, 1, row.number, SPAN);
-        const c = ws.getCell(row.number, 1);
-        c.value = text;
-        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
-        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        row.height = 18;
-      };
-
-      const addTable = (title, columns, rows, _widths /* unused */, opts = {}) => {
-        addSectionHeader(title);
-        const highlightRow = typeof opts.highlightRow === 'function' ? opts.highlightRow : null;
-        // Distribute the SPAN worksheet columns across this table's columns
-        // so the whole table fills the full page width. Columns can declare
-        // a widthRatio (e.g. 0.25 for a Service column); any missing ratios
-        // default to equal shares of whatever is left. Widths are then
-        // rounded to whole worksheet-column slots, with any remainder going
-        // to the widest column so narrow columns don't swell unexpectedly.
-        const numCols = columns.length;
-        const explicit = columns.map(c => (typeof c.widthRatio === 'number' ? c.widthRatio : null));
-        const explicitSum = explicit.reduce((a, r) => a + (r || 0), 0);
-        const unspecifiedCount = explicit.filter(r => r == null).length;
-        const remainder = Math.max(0, 1 - explicitSum);
-        const defaultShare = unspecifiedCount > 0 ? remainder / unspecifiedCount : 0;
-        const ratios = explicit.map(r => (r == null ? defaultShare : r));
-        const ratioSum = ratios.reduce((a, b) => a + b, 0) || 1;
-        const widths = ratios.map(r => Math.max(1, Math.floor((r / ratioSum) * SPAN)));
-        let used = widths.reduce((a, b) => a + b, 0);
-        while (used > SPAN) {
-          let maxIdx = 0;
-          for (let i = 1; i < numCols; i++) if (widths[i] > widths[maxIdx]) maxIdx = i;
-          if (widths[maxIdx] <= 1) break;
-          widths[maxIdx]--;
-          used--;
-        }
-        while (used < SPAN) {
-          let maxIdx = 0;
-          for (let i = 1; i < numCols; i++) if (ratios[i] > ratios[maxIdx]) maxIdx = i;
-          widths[maxIdx]++;
-          used++;
-        }
-        const slots = [];
-        let cur = 1;
-        for (let i = 0; i < numCols; i++) {
-          const w = widths[i];
-          slots.push({ start: cur, end: cur + w - 1 });
-          cur += w;
-        }
-        const slotUnits = (slot) => {
-          let u = 0;
-          for (let k = slot.start - 1; k <= slot.end - 1; k++) u += colWidths[k] || 0;
-          return u;
-        };
-
-        // Header row
-        const hRow = ws.addRow([]);
-        slots.forEach((slot, i) => {
-          const c = ws.getCell(hRow.number, slot.start);
-          c.value = columns[i].label;
-          c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-          c.border = borderAll;
-          if (slot.end > slot.start) {
-            ws.mergeCells(hRow.number, slot.start, hRow.number, slot.end);
-          }
-        });
-        hRow.height = 22;
-
-        // Data rows
-        const HL_BG = 'FFFEF3C7';   // amber-100 — highlighted (top) row fill
-        const HL_TEXT = 'FF7C2D12'; // amber-900 — highlighted row text
-        const dataRows = rows.length > 0 ? rows : [{}];
-        dataRows.forEach((r, idx) => {
-          const dRow = ws.addRow([]);
-          const zebra = idx % 2 === 1;
-          const isHighlight = highlightRow ? highlightRow(r) : false;
-          let maxLines = 1;
-          slots.forEach((slot, i) => {
-            const col = columns[i];
-            const raw = r[col.key];
-            const c = ws.getCell(dRow.number, slot.start);
-            // Agenda minutes should be a real number in the sheet, not text.
-            if (col.numeric) {
-              const n = (raw === '' || raw == null) ? null : Number(raw);
-              c.value = (n != null && !isNaN(n)) ? n : null;
-              if (col.numFmt) c.numFmt = col.numFmt;
-            } else {
-              // Star the highlighted row's first column so the top issue
-              // reads as "★ …" while staying in the same table.
-              const text = (raw === '' || raw == null) ? '' : String(raw);
-              const display = (isHighlight && i === 0) ? `★ ${text}`.trim() : text;
-              c.value = display === '' ? null : display;
-            }
-            c.font = { name: 'Nunito Sans', size: 10, bold: isHighlight, color: { argb: isHighlight ? HL_TEXT : SE_TEXT_DARK } };
-            c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-            c.border = borderAll;
-            if (isHighlight) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HL_BG } };
-            else if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
-            if (slot.end > slot.start) {
-              ws.mergeCells(dRow.number, slot.start, dRow.number, slot.end);
-            }
-            const measure = (isHighlight && i === 0 && (raw != null && raw !== '')) ? `★ ${raw}` : raw;
-            maxLines = Math.max(maxLines, estimateWrappedLines(measure, slotUnits(slot)));
-          });
-          dRow.height = rowHeightForLines(maxLines);
-        });
-      };
-
-      // --- Company Background (from saved Claude research) -------------
-      // Surfaces the prospect's Claude research at the very top of the
-      // export. Sources are intentionally omitted; Summary, Programs,
-      // Targets, Frameworks, and Reports (with clickable URLs) are
-      // included. Skipped entirely when no research has been run yet.
-      if (companyBackground) {
-        const d = companyBackground;
-        const hasSummary = typeof d.summary === 'string' && d.summary.trim().length > 0;
-        const hasPrograms = Array.isArray(d.programs) && d.programs.length > 0;
-        const hasTargets = Array.isArray(d.targets) && d.targets.length > 0;
-        const hasFrameworks = Array.isArray(d.frameworks) && d.frameworks.length > 0;
-        const hasReports = Array.isArray(d.reports) && d.reports.length > 0;
-        if (hasSummary || hasPrograms || hasTargets || hasFrameworks || hasReports) {
-          addBlankRow();
-          addSectionHeader('Company Background');
-          if (hasSummary) addFieldRow('Summary', d.summary.trim());
-          if (hasPrograms) addFieldRow('Programs', d.programs.map(p => `• ${p}`).join('\n'));
-          if (hasTargets) addFieldRow('Targets', d.targets.map(t => `• ${t}`).join('\n'));
-          if (hasFrameworks) addFieldRow('Frameworks', d.frameworks.join(', '));
-          if (hasReports) {
-            for (const r of d.reports) {
-              const title = r?.title || r?.url || '';
-              const year = r?.year ? ` (${r.year})` : '';
-              addFieldRow('Report', `${title}${year}`, r?.url || undefined);
-            }
-          }
-        }
-      }
-
-      // --- Meeting (imported from .ics) --------------------------------
-      if (formData.meeting) {
-        addBlankRow();
-        addSectionHeader('Meeting');
-        addFieldRow('Subject', formData.meeting.subject || '');
-        addFieldRow('When', formatDateTime(formData.meeting.start));
-        addFieldRow('Ends', formatDateTime(formData.meeting.end));
-        if (formData.meeting.sourceTimeZone) {
-          addFieldRow('Original TZ', formData.meeting.sourceTimeZone);
-        }
-        const mins = formData.meeting.durationMinutes;
-        if (mins != null) {
-          const h = Math.floor(mins / 60), m = mins % 60;
-          addFieldRow('Duration', m === 0 ? `${h}h` : h === 0 ? `${m} min` : `${h}h ${m}m`);
-        }
-        if (formData.meeting.location) addFieldRow('Location', formData.meeting.location);
-
-        // Side-by-side attendee tables mirroring the on-screen form. SE
-        // uses cols 1-4 (Name, Required, Dan's Ask, filler); col 5 is the
-        // gap; Customer uses cols 6-10 (Name, Required, Title, City/Country,
-        // Notes).
-        addSectionHeader('Attendees');
-
-        // Company sub-headers row
-        const sbRow = ws.addRow([]);
-        ws.mergeCells(sbRow.number, 1, sbRow.number, 4);
-        ws.mergeCells(sbRow.number, 6, sbRow.number, 10);
-        const seHead = ws.getCell(sbRow.number, 1);
-        seHead.value = 'Schneider Electric';
-        seHead.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
-        seHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        const custHead = ws.getCell(sbRow.number, 6);
-        custHead.value = companyName || 'Customer';
-        custHead.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
-        custHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        sbRow.height = 20;
-
-        // Column headers row
-        const seColLabels = ['Name', 'Required?', "Dan's Ask", ''];
-        const custColLabels = ['Name', 'Reports to', 'Title', 'City, Country', 'Notes'];
-        const hdrRow = ws.addRow([]);
-        const styleHeader = (cell, text, filled) => {
-          cell.value = text;
-          if (filled) {
-            cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-          }
-          cell.border = borderAll;
-        };
-        for (let c = 0; c < 4; c++) styleHeader(hdrRow.getCell(c + 1), seColLabels[c], c < 3);
-        // Merge the Dan's Ask header cell across cols 3-4 so it spans the
-        // same width as the data cells below.
-        ws.mergeCells(hdrRow.number, 3, hdrRow.number, 4);
-        for (let c = 0; c < 5; c++) styleHeader(hdrRow.getCell(c + 6), custColLabels[c], true);
-        hdrRow.height = 22;
-
-        const dansAskMap = dansAsks || {};
-        let anyPeRow = false;
-        let anyPocRow = false;
-        const maxAttendeeRows = Math.max(seAttendees.length, customerAttendees.length, 1);
-        for (let i = 0; i < maxAttendeeRows; i++) {
-          const dRow = ws.addRow([]);
-          const zebra = i % 2 === 1;
-          let maxLines = 1;
-
-          // Helper: normalize a LinkedIn URL from any of the three props
-          // HubSpot uses for it. Adds https:// prefix if missing.
-          const liUrlFor = (att) => {
-            const raw = (att?.match?.hs_linkedin_url || att?.match?.linkedin_url || att?.match?.hs_linkedinid || '').trim();
-            if (!raw) return '';
-            return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-          };
-
-          const se = seAttendees[i];
-          const seVals = se
-            ? [
-                displayAttendeeName(se, contactNicknames),
-                se.required ? 'Required' : 'Optional',
-                dansAskMap[dansAskKey(se)] || '',
-                '',
-              ]
-            : ['', '', '', ''];
-          const seLink = liUrlFor(se);
-          for (let c = 0; c < 4; c++) {
-            const cell = dRow.getCell(c + 1);
-            // Column 0 is Name — hyperlink to LinkedIn when we have it.
-            if (c === 0 && seLink && seVals[0]) {
-              cell.value = { text: seVals[0], hyperlink: seLink };
-              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true };
-            } else {
-              cell.value = seVals[c];
-              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-            }
-            cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
-            cell.border = borderAll;
-            if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
-            if (c < 3) maxLines = Math.max(maxLines, estimateWrappedLines(seVals[c], colWidths[c]));
-          }
-          // Merge Dan's Ask (col 3) with the empty col 4 so the field has
-          // more horizontal room for longer text and matches the visual
-          // weight of the customer-side Notes column.
-          ws.mergeCells(dRow.number, 3, dRow.number, 4);
-          // Re-estimate Dan's Ask wrap against the merged width.
-          maxLines = Math.max(
-            maxLines,
-            estimateWrappedLines(seVals[2], (colWidths[2] || 0) + (colWidths[3] || 0))
-          );
-
-          const cust = customerAttendees[i];
-          const custRoles = cust ? attendeeRoles(cust, peOwners) : { peOwner: '', primaryPoc: false };
-          const custRole = custRoles.peOwner ? ATTENDEE_ROLE_STYLE.pe : custRoles.primaryPoc ? ATTENDEE_ROLE_STYLE.poc : null;
-          if (custRoles.peOwner) anyPeRow = true;
-          if (custRoles.primaryPoc) anyPocRow = true;
-          let custVals;
-          if (cust) {
-            const city = (cust.match?.city || '').trim();
-            const country = (cust.match?.country || '').trim();
-            const noteSrc = (cust.match?.id && contactNotes[cust.match.id]) || cust.match?.notes || cust.match?.hs_content_membership_notes || cust.match?.message || '';
-            // Resolve Reports to: contactReportsTo[id] holds an array of
-            // manager contact ids; map each to its display name from the
-            // hubspot pool. Falls back to '' if not matched or unknown.
-            const mgrIds = (cust.match?.id && Array.isArray(contactReportsTo[cust.match.id]))
-              ? contactReportsTo[cust.match.id]
-              : [];
-            const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
-            const byId = new Map();
-            for (const c of pool) {
-              const id = c.id || c.vid;
-              if (id) byId.set(String(id), c);
-            }
-            const reportsToText = mgrIds
-              .map(id => {
-                const m = byId.get(String(id));
-                if (!m) return '';
-                const fn = (m.firstname || '').trim();
-                const ln = (m.lastname || '').trim();
-                return [fn, ln].filter(Boolean).join(' ') || (m.email || '');
-              })
-              .filter(Boolean)
-              .join(', ');
-            const roleLabels = [
-              custRoles.peOwner ? ATTENDEE_ROLE_STYLE.pe.label : '',
-              custRoles.primaryPoc ? ATTENDEE_ROLE_STYLE.poc.label : '',
-            ].filter(Boolean);
-            custVals = [
-              displayAttendeeName(cust, contactNicknames) + (roleLabels.length ? ` (${roleLabels.join(', ')})` : ''),
-              reportsToText,
-              cust.match?.jobtitle || '',
-              [city, country].filter(Boolean).join(', '),
-              noteSrc,
-            ];
-          } else {
-            custVals = ['', '', '', '', ''];
-          }
-          const custLink = liUrlFor(cust);
-          for (let c = 0; c < 5; c++) {
-            const cell = dRow.getCell(c + 6);
-            // Column 0 of the customer block is Name — hyperlink to LinkedIn when we have it.
-            if (c === 0 && custLink && custVals[0]) {
-              cell.value = { text: custVals[0], hyperlink: custLink };
-              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true, bold: !!custRole };
-            } else {
-              cell.value = custVals[c];
-              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: (c === 0 && custRole) ? custRole.xlFg : SE_TEXT_DARK }, bold: c === 0 && !!custRole };
-            }
-            cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
-            cell.border = borderAll;
-            // PE owner / Primary POC rows take their tint over the zebra
-            // stripe, matching the on-screen list.
-            if (custRole) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: custRole.xlFill } };
-            else if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
-            maxLines = Math.max(maxLines, estimateWrappedLines(custVals[c], colWidths[c + 5]));
-          }
-
-          dRow.height = rowHeightForLines(maxLines);
-        }
-
-        // Key for the tinted rows, only for the roles actually present.
-        const keyParts = [
-          anyPeRow ? { r: ATTENDEE_ROLE_STYLE.pe, text: `PE owner${peOwners.length ? ` (${peOwners.join(', ')})` : ''}` } : null,
-          anyPocRow ? { r: ATTENDEE_ROLE_STYLE.poc, text: 'Primary Point of Contact' } : null,
-        ].filter(Boolean);
-        if (keyParts.length) {
-          const kRow = ws.addRow([]);
-          keyParts.forEach((k, idx) => {
-            const cell = kRow.getCell(6 + idx * 2);
-            cell.value = k.text;
-            cell.font = { name: 'Nunito Sans', size: 9, bold: true, color: { argb: k.r.xlFg } };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: k.r.xlFill } };
-            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-            ws.mergeCells(kRow.number, 6 + idx * 2, kRow.number, 7 + idx * 2);
-          });
-        }
-      }
-
-      // --- Meeting Prep (free-form) -----------------------------------
-      addBlankRow();
-      addSectionHeader('Meeting Prep');
-      {
-        const raw = (formData.fieldValues.pptLink || '').trim();
-        const href = raw ? (/^https?:\/\//i.test(raw) ? raw : `https://${raw}`) : '';
-        addFieldRow('PPT Link', raw, href);
-      }
-      // Call Context can be long — when a single cell exceeds Excel's
-      // per-row height limit (~409 pt) the trailing lines clip and the
-      // user has to expand the row by hand to see them. Render it as a
-      // subheading + one row per paragraph so each row stays well under
-      // the cap and the full text is visible by default.
-      {
-        const ctx = String(formData.fieldValues.context || '').trim();
-        if (ctx) {
-          addSubheading('Call Context');
-          const fullWidth = colWidths.reduce((a, b) => a + b, 0);
-          const paragraphs = ctx.split(/\n{2,}/);
-          for (const para of paragraphs) {
-            const text = para.replace(/\s+$/g, '');
-            if (!text) continue;
-            const row = ws.addRow([]);
-            ws.mergeCells(row.number, 1, row.number, SPAN);
-            const c = ws.getCell(row.number, 1);
-            c.value = text;
-            c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-            c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-            c.border = borderAll;
-            row.height = rowHeightForLines(estimateWrappedLines(text, fullWidth));
-          }
-        } else {
-          addFieldRow('Call Context', '');
-        }
-      }
-      addFieldRow('Intent', formData.fieldValues.intent || '');
-      addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
-
-      // --- Details (structured fields) --------------------------------
-      // "General Notes" and "Scoping Details Notes" are explicitly
-      // excluded from the export — they're surfaced inside the Notes
-      // page UI but the user doesn't want them duplicated into the
-      // structured Details block of the workbook.
-      const DETAILS_EXPORT_SKIP = new Set(['summary', 'scopingNotes']);
-      addBlankRow();
-      addSectionHeader('Details');
-      for (const f of template.fields) {
-        if (DETAILS_EXPORT_SKIP.has(f.key)) continue;
-        if (f.showWhenStatus && formData.fieldValues.status !== f.showWhenStatus) continue;
-        const raw = (formData.fieldValues[f.key] || '').trim ? (formData.fieldValues[f.key] || '').trim() : (formData.fieldValues[f.key] || '');
-        if (f.isLink && raw) {
-          const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-          addFieldRow(f.label, raw, href);
-        } else {
-          addFieldRow(f.label, raw);
-        }
-      }
-
-      // --- Tables (Agenda, Questions, Action Items, Risks) ------------
-      for (const t of template.tables) {
-        addBlankRow();
-        const widths = colWidths.slice(0, t.columns.length);
-        let tableRows = formData.tables[t.key] || [];
-        // For the Smart Agenda, backfill each row's Start Time from the
-        // meeting's start + the sum of prior durations so the exported
-        // sheet shows real clock times instead of blanks.
-        if (t.smartAgenda && meetingStartIso) {
-          let priorSum = 0;
-          tableRows = tableRows.map((r) => {
-            const out = { ...r };
-            try {
-              const d = new Date(meetingStartIso);
-              d.setMinutes(d.getMinutes() + priorSum);
-              out.startTime = formatEasternTime(d.toISOString());
-            } catch {}
-            priorSum += Number(r?.duration) || 0;
-            return out;
-          });
-        }
-        // Key Issues: keep the starred "top issue" inside the Key Issues
-        // table rather than lifting it into a separate callout above.
-        // Float it to the first row and flag it so addTable renders it
-        // with the amber highlight / ★ styling — same table, different
-        // formatting.
-        let addTableOpts;
-        if (t.key === 'meetingNotes') {
-          const starred = tableRows.find(r => r?.starred);
-          if (starred) {
-            tableRows = [starred, ...tableRows.filter(r => r !== starred)];
-            addTableOpts = { highlightRow: (r) => r === starred };
-          }
-        }
-        addTable(t.label, t.columns, tableRows, widths, addTableOpts);
-        // Restore defaults for next block
-        colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-      }
-
-      // Frame the whole document with a medium SE-green outer border.
-      // Gridlines are already off (view.showGridLines = false), so this
-      // border is what visually defines where the sheet ends; we preserve
-      // each cell's existing thin internal borders and only override the
-      // perimeter side(s).
-      {
-        const outer = { style: 'medium', color: { argb: SE_GREEN_DARK } };
-        const lastRow = ws.rowCount;
-        for (let r = 1; r <= lastRow; r++) {
-          for (let c = 1; c <= SPAN; c++) {
-            if (r !== 1 && r !== lastRow && c !== 1 && c !== SPAN) continue;
-            const cell = ws.getCell(r, c);
-            const b = { ...(cell.border || {}) };
-            if (r === 1) b.top = outer;
-            if (r === lastRow) b.bottom = outer;
-            if (c === 1) b.left = outer;
-            if (c === SPAN) b.right = outer;
-            cell.border = b;
-          }
-        }
-      }
-
-      const buf = await wb.xlsx.writeBuffer();
+      const buf = await buildCallPlanWorkbookBuffer({ formData, template, companyName, companyBackground, seAttendees, customerAttendees, dansAsks, peOwners, meetingStartIso, contactNicknames, contactNotes, contactReportsTo, allHubspotContacts, companyContacts });
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url = URL.createObjectURL(blob);
       const safeCompany = (companyName || 'Opportunity').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);

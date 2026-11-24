@@ -34,7 +34,7 @@ const COL_HEAD = {
 import { stripDashes, sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { createPortal } from 'react-dom';
 import { lazyView } from '../../utils/lazyView';
-import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
+import { OpportunityForm, DEFAULT_FORM_TEMPLATE, buildCallPlanXlsx } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { CompetitorConsultantForm, CompetitorContactCards } from './CompetitorConsultants';
 import { saveConsultant, consultantFirms, setContactCompetitor, contactIsCompetitor, normalizeConsultants } from '../../utils/competitorConsultants';
@@ -9253,6 +9253,68 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
   }, [selectedOpp, oppNoteDraft, fields.company]);
 
+  // Every call plan for this company in one .zip: form pages as the same
+  // Excel file their Export Excel button makes, free-text pages as Word.
+  const [downloadingCallPlans, setDownloadingCallPlans] = useState(false);
+  const downloadAllCallPlans = useCallback(async () => {
+    const pages = companyOppsData.opportunities || [];
+    if (pages.length === 0) return;
+    setDownloadingCallPlans(true);
+    try {
+      const safe = (v, fallback, max) => (String(v || '').replace(/[\\/:*?\x22<>|]+/g, '_').trim().slice(0, max) || fallback);
+      const safeCompany = safe(fields.company, 'Company', 60);
+      const { default: JSZip } = await import('jszip');
+      const zip = new JSZip();
+      const used = new Set();
+      const uniqueName = (base, ext) => {
+        let name = `${base}.${ext}`;
+        for (let i = 2; used.has(name.toLowerCase()); i++) name = `${base} (${i}).${ext}`;
+        used.add(name.toLowerCase());
+        return name;
+      };
+      for (const page of pages) {
+        const base = `${safeCompany} - ${safe(page.title, 'Call Plan', 80)}`;
+        if (page.type === 'form') {
+          const buf = await buildCallPlanXlsx({
+            formData: page.formData,
+            companyName: fields.company,
+            companyBackground: sustainResearch?.data || null,
+            companyContacts,
+            allHubspotContacts: hubspotContacts,
+            contactNotes: settings.contactNotes || {},
+            contactReportsTo: settings.contactReportsTo || {},
+            contactNicknames: settings.contactNicknames || {},
+            prospects,
+            cdmName,
+            peOwner: fields.peOwner || '',
+          });
+          zip.file(uniqueName(base, 'xlsx'), buf);
+        } else {
+          // The open page's editor may be ahead of what has been saved.
+          const html = page.id === selectedOppId ? oppNoteDraft : page.notes;
+          const bodyHtml = html && html.trim() ? html : '<p></p>';
+          const title = safe(page.title, 'Call Plan', 80);
+          const fullHtml = stripDashes(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title></head><body><h1>${safeCompany} · ${title}</h1>${bodyHtml}</body></html>`);
+          const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
+          zip.file(uniqueName(base, 'docx'), await htmlToDocxBlob(fullHtml));
+        }
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeCompany} - Call Plans.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      alert('Failed to download call plans: ' + (err.message || err));
+    } finally {
+      setDownloadingCallPlans(false);
+    }
+  }, [companyOppsData.opportunities, fields.company, fields.peOwner, sustainResearch, companyContacts, hubspotContacts, settings.contactNotes, settings.contactReportsTo, settings.contactNicknames, prospects, cdmName, selectedOppId, oppNoteDraft]);
+
   const handleOppDocxUpload = useCallback(async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
@@ -10262,7 +10324,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${c.email || '-'}</td>
         <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${c.phone || '-'}</td>
         <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0"><span style="padding:1px 6px;border-radius:999px;font-size:0.7rem;font-weight:700;background:${roleBgs[role] || '#F3F4F6'};color:${roleColors[role] || '#6B7280'}">${role}</span></td>
-        <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${linkedin ? `<a href="${linkedin.startsWith('http') ? linkedin : 'https://linkedin.com/in/' + linkedin}">${linkedin.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}</a>` : '—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #E2E8F0">${linkedin ? `<a href="${linkedin.startsWith('http') ? linkedin : 'https://linkedin.com/in/' + linkedin}">${linkedin.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}</a>` : '-'}</td>
       </tr>`;
     }
 
@@ -12154,13 +12216,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 onClick={() => setOpportunitiesOpen(o => !o)}
               >
                 <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
-                  Notes
+                  Call Plans
                 </label>
                 <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: opportunitiesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
                 {(() => {
                   const n = (companyOppsData.opportunities || []).length;
-                  return n > 0 ? <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{n} {n === 1 ? 'note page' : 'note pages'}</span> : null;
+                  return n > 0 ? <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{n} {n === 1 ? 'call plan' : 'call plans'}</span> : null;
                 })()}
+                <div style={{ flex: 1 }} />
+                {(companyOppsData.opportunities || []).length > 0 && (
+                  <button
+                    type="button"
+                    disabled={downloadingCallPlans}
+                    onClick={(e) => { e.stopPropagation(); downloadAllCallPlans(); }}
+                    title="Download every call plan for this company as one .zip (an Excel file per call plan)"
+                    style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: downloadingCallPlans ? 'default' : 'pointer', opacity: downloadingCallPlans ? 0.6 : 1 }}
+                  >
+                    {downloadingCallPlans ? 'Preparing...' : 'Download all'}
+                  </button>
+                )}
               </div>
               {opportunitiesOpen && (() => {
                 const formNotes = (companyOppsData.opportunities || []).filter(o => o.type === 'form');
