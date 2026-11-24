@@ -143,7 +143,8 @@ import {
 import { computeListFlags, useComplianceFlagSource } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
-import { FRAMEWORKS, SERVICE_STATUSES } from '../../data/enums';
+import { FRAMEWORKS } from '../../data/enums';
+import { useServiceStatuses } from '../../hooks/useServiceStatuses';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { STAGE_BANDS } from '../../utils/stageBands';
@@ -3007,6 +3008,7 @@ const SCOPE_FEE_COLUMNS_NO_STATUS = SCOPE_FEE_COLUMNS.filter(c => c.key !== 'sta
 // card's, so with no card there is nothing to save against, and saying why
 // beats silently dropping the edit.
 function ScopeStatusCell({ item, reading, onSet, disabledReason }) {
+  const statuses = useServiceStatuses();
   const manual = reading?.manual || '';
   const auto = reading?.auto || '';
   const autoNa = reading?.autoNa || null;
@@ -3043,7 +3045,9 @@ function ScopeStatusCell({ item, reading, onSet, disabledReason }) {
         border: `1px solid ${manual ? 'var(--color-accent)' : 'var(--color-border)'}`,
       }}
     >
-      {SERVICE_STATUSES.map(s => (
+      {/* A status since taken off the list still shows. */}
+      {!statuses.includes(effective) && <option value={effective}>{effective}</option>}
+      {statuses.map(s => (
         <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>
       ))}
     </select>

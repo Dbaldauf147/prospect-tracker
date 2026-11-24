@@ -10,7 +10,7 @@ import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
-import { SERVICE_STATUSES } from '../../data/enums';
+import { useServiceStatuses } from '../../hooks/useServiceStatuses';
 import {
   impactAmount,
   impactAmountTitle,
@@ -163,6 +163,7 @@ export function AccountPotentialTab({
   servicesExplored = null,
   onSetServiceStatus = null,
 }) {
+  const serviceStatuses = useServiceStatuses();
   // `|| {}` so the tab still renders outside the AuthProvider (tests,
   // harnesses): with no user it reads the local opps cache and skips the
   // Firestore pull, which is exactly the right behaviour there.
@@ -1277,8 +1278,8 @@ export function AccountPotentialTab({
                 }}
               >
                 {/* An opp stage the card's list doesn't offer still shows. */}
-                {!SERVICE_STATUSES.includes(value) && <option value={value}>{value}</option>}
-                {SERVICE_STATUSES.map(st => (
+                {!serviceStatuses.includes(value) && <option value={value}>{value}</option>}
+                {serviceStatuses.map(st => (
                   <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>
                 ))}
               </select>
