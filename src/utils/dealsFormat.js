@@ -38,15 +38,30 @@ export function fmtPercent(v) {
 // sorts the same way it displays. Handles ISO strings, locale date
 // strings (M/D/YYYY), JS Date instances, and the Excel serial format
 // XLSX emits when cellDates is off.
+//
+// A deal date is a calendar day, and everything downstream reads it in
+// local time (toLocaleDateString, getMonth, setHours). So an Excel serial
+// and a bare "2026-12-31" are built as LOCAL midnight: JavaScript's own
+// parse makes both UTC midnight, which every US timezone reads as the day
+// before (Dec 30), and a Jan 1 term start as December.
 export function asDate(v) {
   if (v == null || v === '') return null;
   if (v instanceof Date) return Number.isFinite(v.getTime()) ? v : null;
   if (typeof v === 'number' && Number.isFinite(v)) {
-    const d = new Date((v - 25569) * 86400 * 1000);
+    // Day 0 of the serial is Dec 30, 1899; a fraction is a time of day.
+    const days = Math.floor(v);
+    const d = new Date(1899, 11, 30 + days);
+    d.setTime(d.getTime() + Math.round((v - days) * 86400000));
     return Number.isFinite(d.getTime()) ? d : null;
   }
   const s = String(v).trim();
   if (s.length < 6) return null;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    // "2026-02-30" would quietly roll over to Mar 2: not a date.
+    return d.getMonth() === Number(iso[2]) - 1 && d.getDate() === Number(iso[3]) ? d : null;
+  }
   const d = new Date(s);
   return Number.isFinite(d.getTime()) ? d : null;
 }

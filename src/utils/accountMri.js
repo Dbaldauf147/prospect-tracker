@@ -248,16 +248,8 @@ export function ubmScope(servicesExplored) {
   return status.toLowerCase() === 'sold' ? 'In scope' : status;
 }
 
-// A deal date as a day. An Excel serial or a bare "2026-12-31" parses as
-// UTC midnight, which local time reads as the day before anywhere west of
-// Greenwich, so those are read back in UTC; a "12/31/2026" parses as local
-// midnight and is read back locally.
-function dealDayText(raw) {
-  const d = asDate(raw);
-  if (!d) return '';
-  const utc = typeof raw === 'number' || /^\d{4}-\d{2}-\d{2}$/.test(String(raw).trim());
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', ...(utc ? { timeZone: 'UTC' } : {}) });
-}
+// A deal date as a day ("Dec 31, 2026"); asDate builds it at local midnight.
+const dealDayText = raw => dateText(asDate(raw));
 
 const agreementName = d => text(d?.['Agreement Name']) || 'Unnamed agreement';
 
