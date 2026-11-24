@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { SERVICE_STATUSES } from '../../data/enums';
+import { useServiceStatuses } from '../../hooks/useServiceStatuses';
 import { buildServiceCatalog, serviceLabelMap } from '../../utils/serviceCoverage';
 import { mergeExtractedServices, ignoreKeyFor } from '../../utils/contractServices';
 import { apiFetch } from '../../utils/apiFetch';
@@ -387,6 +387,7 @@ function ClientCombobox({ clients, value, onChange }) {
  * built up across many contracts.
  */
 export function ContractServicesView({ prospects = [], settings = {}, updateSettings, updateProspect, user }) {
+  const serviceStatuses = useServiceStatuses();
   const saved = useRef(loadSaved()).current;
   const [clientId, setClientId] = useState(() => saved?.clientId || '');
   // [{ fileName, readAs, status, error, result }] in the order analyzed —
@@ -1073,7 +1074,8 @@ export function ContractServicesView({ prospects = [], settings = {}, updateSett
                           onChange={e => setRowState(row, { status: e.target.value })}
                           style={{ padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 5, fontSize: '0.72rem', fontFamily: 'inherit' }}
                         >
-                          {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '- clear -' : s}</option>)}
+                          {st.status && !serviceStatuses.includes(st.status) && <option value={st.status}>{st.status}</option>}
+                          {serviceStatuses.map(s => <option key={s} value={s}>{s === '-' ? '- clear -' : s}</option>)}
                         </select>
                       </td>
                       <td style={{ padding: '0.35rem 0.6rem', verticalAlign: 'top', whiteSpace: 'nowrap', color: current ? '#1E293B' : '#94A3B8' }}>
