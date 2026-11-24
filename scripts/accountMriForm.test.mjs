@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs';
 import { fillAccountMriWorkbook, MRI_PROFILE_FIELDS, MRI_COMMITTEE_TABLE } from '../src/utils/accountMri.js';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_FIELDS, BUY_STATEMENTS, OURS_STATEMENTS, WIN_MATRIX,
-  MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
+  MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress, mriStageProgress,
   mriFormExport, dateSerial, mriSlug,
 } from '../src/utils/accountMriForm.js';
 
@@ -108,6 +108,16 @@ eq(tabProgress({ form, profile: m.values, committee: dms, sites: [] }), {
   profile: Math.round((5 / MRI_PROFILE_FIELDS.length) * 100), diagnosis: 7, committee: 100, opportunity: Math.round((2 / OPPORTUNITY_FIELDS.length) * 100), sites: 0, dealHealth: 11, closePlan: 50,
 }, 'progress per tab');
 eq(tabProgress({}).closePlan, 0, 'nothing saved');
+
+// The Progress column: the first tab with gaps, and how far along it is.
+const full100 = Object.fromEntries(MRI_TABS.map(t => [t.key, 100]));
+eq(mriStageProgress({ ...full100, profile: 55 }).text, '1 - 55%', 'on the first tab until it is full, whatever the later ones hold');
+eq(mriStageProgress({ profile: 100, diagnosis: 15, committee: 100 }).text, '2 - 15%', 'a full first tab moves it to the second');
+eq(mriStageProgress({ ...full100, sites: 0 }).text, '5 - 0%', 'an empty tab holds it there');
+eq(mriStageProgress({ ...full100, closePlan: 60 }).text, '7 - 60%', 'the last tab');
+eq(mriStageProgress(full100), { number: 7, key: 'closePlan', label: 'Close Plan', pct: 100, complete: true, text: '7 - 100%' }, 'all seven full');
+eq(mriStageProgress({}).text, '1 - 0%', 'nothing at all');
+eq(mriStageProgress(tabProgress({ form, profile: m.values, committee: dms, sites: [] })).number, 1, 'read straight from the tab figures');
 
 eq(dateSerial('2026-12-15'), 46371, 'a date as its spreadsheet day number');
 eq(dateSerial('next week'), null, 'not a date');

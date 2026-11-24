@@ -365,6 +365,26 @@ export function tabProgress({ form = {}, profile = {}, committee = [], sites = [
   };
 }
 
+/**
+ * Where a company stands across the seven tabs, as the Account MRI table's
+ * Progress column shows it: the first tab (1 to 7, in MRI_TABS order) that
+ * is not yet at 100, and how far along that one is. Tabs are worked in
+ * order, so a later tab that is already full does not move the stage past
+ * an earlier one with gaps. With every tab full it is the last tab at 100.
+ *
+ * Returns { number, key, label, pct, complete, text } where `text` is the
+ * cell, "1 - 55%".
+ */
+export function mriStageProgress(progress = {}) {
+  const pctOf = key => Math.max(0, Math.min(100, Math.round(Number(progress?.[key]) || 0)));
+  let at = MRI_TABS.findIndex(t => pctOf(t.key) < 100);
+  const complete = at < 0;
+  if (complete) at = MRI_TABS.length - 1;
+  const tab = MRI_TABS[at];
+  const pct = complete ? 100 : pctOf(tab.key);
+  return { number: at + 1, key: tab.key, label: tab.label, pct, complete, text: `${at + 1} - ${pct}%` };
+}
+
 // ── Export ───────────────────────────────────────────────────────────────
 // "2026-12-15" as the day number a spreadsheet stores a date as, or null.
 export function dateSerial(iso) {

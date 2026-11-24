@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MRI_FILLED_FIELDS, accountMriProfile, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug } from '../../utils/accountMriForm';
+import { MRI_TABS, mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { isPrimaryPoc } from '../../utils/attendeeRoles';
@@ -82,6 +82,12 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
     });
     const trackerCommittee = buyingCommitteeRows(contacts.filter(isDecisionMakerContact));
     const form = (savedForms || {})[mriSlug(r.company)] || null;
+    const committeeShown = committeeRows(form?.committee, trackerCommittee);
+    const sites = siteUtilityRows((siteLists || {})[siteListSlug(record.company)]);
+    const profile = mergeProfile(trackerProfile, form?.profile).values;
+    // The same per-tab figures the popup's tab bar shows, and the stage
+    // they put the company at.
+    const progress = tabProgress({ form: form || {}, profile, committee: committeeShown, sites });
     return {
       id: r.id,
       company: r.company,
@@ -90,9 +96,11 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
       form,
       trackerProfile,
       trackerCommittee,
-      committee: committeeRows(form?.committee, trackerCommittee).filter(c => c.name || c.email),
-      sites: siteUtilityRows((siteLists || {})[siteListSlug(record.company)]),
-      profile: mergeProfile(trackerProfile, form?.profile).values,
+      committee: committeeShown.filter(c => c.name || c.email),
+      sites,
+      profile,
+      progress,
+      stage: mriStageProgress(progress),
     };
   }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, settings?.companyContactLinks, settings?.companyContactExclusions]);
 
@@ -120,6 +128,25 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
           title="Open the Account MRI for this company"
           style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: r.listed ? 700 : 600, color: r.listed ? LISTED_NAME_INK : '#1D4ED8', cursor: 'pointer', textAlign: 'left' }}
         >{r.company}</button>
+      ),
+    },
+    {
+      key: 'progress', label: 'Progress', defaultWidth: 110,
+      headerTitle: 'How complete the Account MRI is: the tab the company is on (1 to 7) and how much of that tab is filled in. It moves to the next tab once the current one reaches 100%, and reads 7 - 100% when all seven are complete. Hover a cell for every tab.',
+      // Stage first, then how far through it, so a sort ranks 2 - 15% above 1 - 90%.
+      getSortValue: r => r.stage.number * 1000 + r.stage.pct,
+      getFilterValue: r => r.stage.text,
+      exportValue: r => r.stage.text,
+      render: r => (
+        <span
+          title={[`On tab ${r.stage.number}, ${r.stage.label}`, ...MRI_TABS.map((t, i) => `${i + 1} ${t.label}: ${r.progress[t.key]}%`)].join('\n')}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: r.stage.complete ? '#047857' : '#334155' }}
+        >
+          {r.stage.text}
+          <span aria-hidden="true" style={{ width: 32, height: 5, borderRadius: 3, background: '#E2E8F0', overflow: 'hidden', display: 'inline-block' }}>
+            <span style={{ display: 'block', width: `${r.stage.pct}%`, height: '100%', background: r.stage.complete ? '#059669' : '#2563EB' }} />
+          </span>
+        </span>
       ),
     },
     ...FIELD_COLUMNS.map(f => ({
