@@ -72,6 +72,7 @@ import { withDefaultCdm } from '../../utils/defaultCdm';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { nameFromEmail } from '../../utils/nameFromEmail';
 import { splitFullName } from '../../utils/splitFullName';
+import { firstNameAsLastNameWarning } from '../../utils/firstNameAsLastName';
 import { computeListFlags, useComplianceFlagSource, COMPLIANCE_FLAG_MARK } from '../../utils/listFlags';
 import { FrameworkFlagPill } from '../common/FrameworkFlagPill';
 import { complianceFlaggedFrameworks } from '../../utils/complianceFrameworkFlags.js';
@@ -3058,7 +3059,40 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               behind would have the box showing one name while the fields
               under it hold another. */}
           <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => { setFullNameDraft(null); set('firstname', e.target.value); }} /></div>
-          <div><label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => { setFullNameDraft(null); set('lastname', e.target.value); }} /></div>
+          <div>
+            <label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => { setFullNameDraft(null); set('lastname', e.target.value); }} />
+            {/* A typical first name in the Last Name box is most often the
+                two names the wrong way round (utils/firstNameAsLastName.js).
+                A warning with a way to fix it, never a block: some people
+                really are called that. */}
+            {(() => {
+              const warn = firstNameAsLastNameWarning(f.firstname, f.lastname);
+              if (!warn) return null;
+              return (
+                <div
+                  data-first-name-as-last
+                  role="status"
+                  style={{ marginTop: 4, padding: '0.3rem 0.55rem', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.7rem', color: '#78350F', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem 0.4rem' }}
+                >
+                  <span>
+                    <span aria-hidden="true">⚠️ </span>
+                    <strong>&quot;{warn.lastname}&quot;</strong> is usually a first name.{' '}
+                    {warn.firstAlsoGiven
+                      ? 'Check the last name is right.'
+                      : warn.canSwap ? 'The names may be the wrong way round.' : 'Check it belongs in Last Name.'}
+                  </span>
+                  {warn.canSwap && !warn.firstAlsoGiven && (
+                    <button
+                      type="button"
+                      onClick={() => { setFullNameDraft(null); set('firstname', warn.lastname); set('lastname', warn.firstname); }}
+                      title={`Make the first name "${warn.lastname}" and the last name "${warn.firstname}"`}
+                      style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', border: '1px solid #FDE68A', borderRadius: '999px', background: '#fff', color: '#78350F', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+                    >Swap to {warn.lastname} {warn.firstname}</button>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
           {(() => {
             // The whole name, both ways round. With no draft the box mirrors
             // the two fields, which is what it has always done; type or paste
