@@ -3,7 +3,7 @@
 import { register } from 'node:module';
 register('./stubs/loader.mjs', import.meta.url);
 const { isBounceNotice, bouncedAddresses, bounceReason } = await import('../api/_lib/bounceAddress.js');
-const { fetchForwardedBounces, bounceForwardAddress, forwardedText } = await import('../api/_lib/bounceInbox.js');
+const { fetchForwardedBounces, bounceForwardAddress, forwardedText, bounceLabels } = await import('../api/_lib/bounceInbox.js');
 
 let passed = 0, failed = 0;
 function eq(a, e, name) {
@@ -78,6 +78,43 @@ let missing = '';
 try { await fetchForwardedBounces({ user: 'app@gmail.com', pass: 'x', connect: async () => { throw new Error('label not found'); } }); } catch (e) { missing = e.message; }
 eq(/doesn't exist yet in app@gmail.com.*app\+bounces@gmail.com/.test(missing), true, 'a missing label says how to set it up');
 eq(forwardedText({ html: '<p>The following message to &lt;a@b.com&gt; was undeliverable.</p>' }).includes('<a@b.com>'), true, 'an HTML-only forward is read as text');
+
+// Mimecast's older notice and Exchange Online's wording.
+const postmaster = `This is a delivery failure notification message indicating that an email you addressed to email address :
+-- jsmith@acme.com
+
+could not be delivered. The problem appears to be :
+-- Recipient email address is possibly incorrect
+
+Additional information follows :
+-- 5.4.1 Recipient address rejected: Access denied.`;
+eq(isBounceNotice({ subject: '[Postmaster] Email Delivery Failure', from: 'daniel.baldauf@se.com' }), true, '"[Postmaster] Email Delivery Failure" is a bounce by its subject');
+eq(bouncedAddresses(postmaster, { exclude: me }), ['jsmith@acme.com'], 'the address after "addressed to email address : --"');
+eq(bouncedAddresses(postmaster.replace('-- jsmith@acme.com', '-- jsmith@acme.com<mailto:jsmith@acme.com>'), { exclude: me }), ['jsmith@acme.com'], 'and forwarded from Outlook');
+eq(bounceReason(postmaster), 'Recipient email address is possibly incorrect', 'the "problem appears to be" reason');
+eq(bouncedAddresses("Your message to jdoe@acme.com couldn't be delivered.\njdoe wasn't found at acme.com."), ['jdoe@acme.com'], 'Exchange Online "Your message to x couldn\'t be delivered"');
+
+// Two labels: both are read, a message under both counts once, and what
+// was passed over is counted rather than dropped silently.
+eq(bounceLabels({}), ['bounce-notices', 'Schneider Emails'], 'reads bounce-notices and Schneider Emails by default');
+eq(bounceLabels({ BOUNCE_LABEL: ' a , b,a ' }), ['a', 'b'], 'BOUNCE_LABEL names the labels, comma-separated');
+const fwdPostmaster = { from: 'daniel.baldauf@se.com', date: Date.parse('2026-11-24T16:50:00Z'), subject: 'FW: [Postmaster] Email Delivery Failure', messageId: 'd', text: postmaster };
+const fwdOdd = { from: 'daniel.baldauf@se.com', date: Date.parse('2026-11-24T16:51:00Z'), subject: "FW: Your message couldn't be delivered", messageId: 'e', text: 'Something new that names nobody.' };
+const fwdInvite = { from: 'daniel.baldauf@se.com', date: Date.parse('2026-11-24T16:56:00Z'), subject: 'FW: Capital Planning Webinar Invite', messageId: 'f', text: 'Hi all, see below.' };
+const boxes = { 'bounce-notices': [fwdNationwide, stranger], 'Schneider Emails': [fwdNationwide, fwdPostmaster, fwdOdd, fwdInvite] };
+const openedTwo = [];
+const connectTwo = async (o) => {
+  if (!boxes[o.label]) throw new Error(`label "${o.label}" not found`);
+  openedTwo.push(o.label);
+  return { async *messages() { yield* boxes[o.label]; }, async close() {} };
+};
+const two = await fetchForwardedBounces({ user: 'app@gmail.com', pass: 'x', labels: ['bounce-notices', 'Schneider Emails'], allowed: ['daniel.baldauf@se.com'], connect: connectTwo });
+eq(openedTwo, ['bounce-notices', 'Schneider Emails'], 'both labels are opened');
+eq(two.bounces.map(b => b.address), ['harveyw@nationwide.com', 'jsmith@acme.com'], 'a notice under both labels is read once, one only under Schneider Emails is found');
+eq([two.read, two.skipped], [4, 1], 'forwards read and other senders skipped are counted');
+eq(two.unread, ["Your message couldn't be delivered"], 'a notice naming no address is reported, an ordinary forward is not');
+const oneMissing = await fetchForwardedBounces({ user: 'app@gmail.com', pass: 'x', labels: ['nope', 'Schneider Emails'], allowed: ['daniel.baldauf@se.com'], connect: connectTwo });
+eq([oneMissing.labels, oneMissing.missing, oneMissing.bounces.length], [['Schneider Emails'], ['nope'], 2], 'a missing label is passed over while another opens');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

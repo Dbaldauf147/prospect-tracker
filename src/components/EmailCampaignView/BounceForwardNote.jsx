@@ -49,8 +49,23 @@ export function BounceForwardNote() {
       {scan?.at && (
         <span style={{ color: scan.ok ? 'var(--color-text-muted)' : '#B91C1C' }} title={scan.error || ''}>
           {scan.ok
-            ? `Checked ${ago(scan.at)}: ${scan.found} bounced address${scan.found === 1 ? '' : 'es'} in the last forwards.`
+            ? `Checked ${ago(scan.at)}: ${scan.found} bounced address${scan.found === 1 ? '' : 'es'} in ${scan.read ?? 'the last'} forward${scan.read === 1 ? '' : 's'}${scan.label ? ` (${scan.label})` : ''}.`
             : `Last check failed: ${scan.error}`}
+        </span>
+      )}
+      {scan?.ok && scan.unread?.length > 0 && (
+        <span data-bounce-unread style={{ color: '#B45309' }} title={scan.unread.join('\n')}>
+          {`${scan.unread.length} notice${scan.unread.length === 1 ? '' : 's'} named no address the app could read.`}
+        </span>
+      )}
+      {scan?.ok && scan.skipped > 0 && (
+        <span style={{ color: 'var(--color-text-muted)' }} title="Only notices forwarded from your work address are read.">
+          {`${scan.skipped} from other senders skipped.`}
+        </span>
+      )}
+      {scan?.ok && scan.missing?.length > 0 && (
+        <span style={{ color: '#B45309' }}>
+          {`Label not found: ${scan.missing.join(', ')}.`}
         </span>
       )}
     </div>

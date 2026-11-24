@@ -4,14 +4,14 @@
 // for the browser to flag as bad emails (src/utils/bounceScan.js). Also says
 // where to forward them, so the page can show the address.
 //   -> { bounces: [{ address, at, subject, reason, messageId }], read,
-//        forwardTo, label }
+//        skipped, unread, labels, missing, forwardTo, label }
 import { withAuth } from './_lib/http.js';
-import { fetchForwardedBounces, bounceForwardAddress, bounceLabel } from './_lib/bounceInbox.js';
+import { fetchForwardedBounces, bounceForwardAddress, bounceLabels } from './_lib/bounceInbox.js';
 
 async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const forwardTo = bounceForwardAddress();
-  const label = bounceLabel();
+  const label = bounceLabels().join(', ');
   const days = Number(req.query?.days);
   try {
     const out = await fetchForwardedBounces({ days: Number.isFinite(days) && days > 0 ? days : 30 });

@@ -24,7 +24,11 @@ export function bounceScanDue(now = Date.now(), everyMs = EVERY_MS) {
   return !Number.isFinite(last) || last <= 0 || now - last >= everyMs;
 }
 
-/** The last scan's outcome: { at, ok, found, error, forwardTo, label } or null. */
+/**
+ * The last scan's outcome, or null: { at, ok, found, error, forwardTo, label,
+ * read, skipped, unread, missing } (the last four as /api/bounce-inbox
+ * counts them).
+ */
 export function lastBounceScan() {
   try { return JSON.parse(userLsGet(RESULT_KEY) || 'null'); } catch { return null; }
 }
@@ -48,7 +52,13 @@ export async function scanForBounces(updateSettings) {
     userLsSet(LAST_KEY, String(Date.now()));
     const bounces = Array.isArray(body.bounces) ? body.bounces : [];
     if (bounces.length && updateSettings) await updateSettings(badEmailsUpdate(bounces));
-    return remember({ ...base, ok: true, found: new Set(bounces.map(b => b.address)).size, error: '' });
+    return remember({
+      ...base, ok: true, found: new Set(bounces.map(b => b.address)).size, error: '',
+      read: Number(body.read) || 0,
+      skipped: Number(body.skipped) || 0,
+      unread: Array.isArray(body.unread) ? body.unread : [],
+      missing: Array.isArray(body.missing) ? body.missing : [],
+    });
   } catch (err) {
     return remember({ at: new Date().toISOString(), ok: false, found: 0, error: err?.message || String(err), forwardTo: '', label: '' });
   }
