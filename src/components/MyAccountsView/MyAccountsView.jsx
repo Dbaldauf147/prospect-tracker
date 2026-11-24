@@ -3978,7 +3978,7 @@ Fix that now?
   // Strategic Accounts subtab - the Tier 2 accounts, plus this CDM's
   // companies the Strategic Accounts list names (on My Accounts or not,
   // Tier 1 included). A Tier 1 account the list does not name is left
-  // off. Honours the search box. Inactive accounts (Old Client, Hold Off,
+  // off, and the list's NAM Strategic Account rows do not count. Honours the search box. Inactive accounts (Old Client, Hold Off,
   // Lost - Not Sold) always show here, whatever the inactive toggle on the
   // other subtabs is set to: a strategic account that has gone quiet is
   // still one to know about, and the Status column says which it is.
