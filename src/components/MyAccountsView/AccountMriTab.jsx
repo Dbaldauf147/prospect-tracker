@@ -20,16 +20,22 @@ import { contractsSummary, dealsForCompany } from '../../utils/clientContracts';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import { DataTable } from '../common/DataTable';
+import { LISTED_ROW_STYLE, LISTED_COMPANY_CELL, LISTED_NAME_INK } from './strategicListedStyle';
 import templateUrl from '../../assets/account-mri-intake-template.xlsx?url';
 
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
+// Company is pinned here, and a pinned cell's own edge shadow would be lost
+// to the red bar's, so the listed cell carries both.
+const LISTED_PINNED_COMPANY_CELL = { boxShadow: `${LISTED_COMPANY_CELL.boxShadow}, 2px 0 4px rgba(0,0,0,0.06)` };
 // Account name is the Company column itself.
 const FIELD_COLUMNS = MRI_FILLED_FIELDS.filter(f => f.key !== 'accountName');
 const WIDE = new Set(['mainContact', 'competitors', 'background', 'services', 'upsell']);
 // The key a company's site list is saved under, as the company popup makes it.
 const siteListSlug = company => String(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
 
-export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings, onSelect }) {
+// `isListed(row)` says whether the Strategic Accounts list names the row's
+// company; those rows are drawn in the list's red, as on the Accounts view.
+export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updateSettings, onSelect }) {
   // The Deals subtab's agreements and its client-name mapping, which the
   // Fee, Set-up and Contract term rows read. Re-read when either changes.
   const [deals, setDeals] = useState(() => ({ list: loadDealsList().data || [], map: loadDealClientMap() }));
@@ -63,6 +69,7 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
       id: r.id,
       company: r.company,
       record: r.record,
+      listed: !!isListed?.(r),
       committee: buyingCommitteeRows(contacts.filter(isDecisionMakerContact)),
       sites: siteUtilityRows((siteLists || {})[siteListSlug(record.company)]),
       profile: accountMriProfile({
@@ -72,7 +79,7 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
         contracts: companyDeals.length ? contractsSummary(companyDeals) : null,
       }),
     };
-  }), [rows, taggedContacts, siteLists, deals, settings?.companyContactLinks, settings?.companyContactExclusions]);
+  }), [rows, isListed, taggedContacts, siteLists, deals, settings?.companyContactLinks, settings?.companyContactExclusions]);
 
   const columns = useMemo(() => [
     {
@@ -80,14 +87,15 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
       getSortValue: r => r.company.toLowerCase(),
       getFilterValue: r => r.company,
       exportValue: r => r.company,
+      cellStyle: r => (r.listed ? LISTED_PINNED_COMPANY_CELL : undefined),
       render: r => (r.record && onSelect ? (
         <button
           type="button"
           onClick={() => onSelect(r.record)}
           title="Open the company"
-          style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: '#1D4ED8', cursor: 'pointer', textAlign: 'left' }}
+          style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: r.listed ? 700 : 600, color: r.listed ? LISTED_NAME_INK : '#1D4ED8', cursor: 'pointer', textAlign: 'left' }}
         >{r.company}</button>
-      ) : <span style={{ fontWeight: 600 }}>{r.company}</span>),
+      ) : <span style={{ fontWeight: r.listed ? 700 : 600, color: r.listed ? LISTED_NAME_INK : undefined }}>{r.company}</span>),
     },
     ...FIELD_COLUMNS.map(f => ({
       key: f.key,
@@ -187,6 +195,7 @@ export function AccountMriTab({ rows, hubspotContacts, settings, updateSettings,
           exportFileName="My Accounts Account MRI"
           columns={columns}
           rows={mriRows}
+          rowStyle={r => (r.listed ? LISTED_ROW_STYLE : undefined)}
           defaultSort={{ key: 'company', direction: 'asc' }}
           alwaysVisible={['company']}
           emptyMessage="No accounts match"
