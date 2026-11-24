@@ -14,9 +14,9 @@
 //
 // Imported with extensions so this loads under plain Node for the tests.
 import { isPrimaryPoc } from './attendeeRoles.js';
-import { serviceStatusBucket } from './serviceStatusColors.js';
-import { asDate, asNumber, isInactiveAgreement } from './dealsFormat.js';
 import { isActiveSiteStatus, pickSiteStatusColumn } from './siteStatus.js';
+import { asDate, asNumber, isInactiveAgreement } from './dealsFormat.js';
+import { scopeServiceStatuses } from './scopeServiceStatus.js';
 
 // The service the template's UBM row reads.
 export const UBM_SERVICE = 'Bill payment';
@@ -50,7 +50,7 @@ export const MRI_PROFILE_FIELDS = [
   { row: 28, key: 'ubm', label: 'UBM', source: 'Bill payment (service)' },
   { row: 29, key: 'contractTerm', label: 'Contract term', source: 'Soonest Expiration' },
   { row: 30, key: 'earlyOut', label: 'Early out', source: '' },
-  { row: 31, key: 'upsell', label: 'Potential upsell opportunities', source: 'Services (Qualifying) and CDM' },
+  { row: 31, key: 'upsell', label: 'Potential upsell opportunities', source: 'Services (Qualifying, Renewal) and CDM' },
 ];
 
 // The rows the tool fills: those with a tracker field behind them.
@@ -118,49 +118,78 @@ export function mainContactText(contacts) {
   return out.join('; ');
 }
 
-// A service's bucket on the template. The "Services in scope" cell lists
-// every service explored on the company card: Sold, the ones still in
-// flight (Exploring, Qualifying, Quoting, Quoted, Verbal ...) with their
-// status, and Not Sold. The in-flight ones are also the open opportunities
-// the "Potential upsell opportunities" cell reads. N/A and never-explored
-// services are in neither. Each list is A to Z.
-function serviceBuckets(servicesExplored) {
-  const names = { sold: [], inProgress: [], notSold: [] };
-  const statuses = {};
-  for (const [name, status] of Object.entries(servicesExplored || {})) {
-    const list = names[serviceStatusBucket(status)];
-    if (list && text(name)) {
-      list.push(text(name));
-      statuses[text(name)] = text(status);
-    }
+/**
+ * Every service's status on one company as its Services board shows it:
+ * the manual status set on the card, else the stage of an opp on the
+ * account naming the service (the board's "(auto)"), service -> status.
+ * Most Sold and Not Sold rows on that board come from opps, so reading only
+ * the card's manual statuses misses them. Services with no status are left
+ * out.
+ *
+ *   services  the board's service names (buildServiceBoard's items)
+ */
+export function accountServiceStatuses({ company, servicesExplored, oppRows, services = [], serviceOverrides = {} } = {}) {
+  const seen = new Set();
+  const names = [];
+  for (const n of [...services, ...Object.keys(servicesExplored || {})]) {
+    const k = text(n).toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    names.push(text(n));
   }
-  for (const list of Object.values(names)) list.sort((x, y) => x.localeCompare(y));
-  return { ...names, statuses };
+  const out = {};
+  const readings = scopeServiceStatuses({
+    services: names, account: company, oppRows, manualStatuses: servicesExplored, serviceOverrides,
+  });
+  for (const [name, r] of readings) if (r.status) out[name] = r.status;
+  return out;
+}
+
+// The statuses the "Potential upsell opportunities" cell reads: services
+// still being qualified, and ones up for renewal.
+export const UPSELL_STATUSES = ['Qualifying', 'Renewal'];
+
+// The services in each bucket the template reads, A to Z. `servicesExplored`
+// is service -> status as the company card's Services board shows it (see
+// accountServiceStatuses): Sold and Not Sold are the "Services in scope"
+// cell, Qualifying and Renewal the "Potential upsell opportunities" cell.
+function servicesWith(servicesExplored, statuses) {
+  const want = new Set(statuses.map(s => s.toLowerCase()));
+  const out = [];
+  for (const [name, status] of Object.entries(servicesExplored || {})) {
+    if (text(name) && want.has(text(status).toLowerCase())) out.push(text(name));
+  }
+  return out.sort((x, y) => x.localeCompare(y));
 }
 
 /**
- * The "Services in scope" cell: a "Sold:" line, an "Explored:" line (each
- * service with its status) and a "Not Sold:" line, each listing its
- * services ("None" when it has none). '' when no service has been explored.
+ * The "Services in scope" cell: a "Sold:" line and a "Not Sold:" line, each
+ * listing its services ("None" when it has none). '' when no service is
+ * either.
  */
 export function servicesInScope(servicesExplored) {
-  const { sold, inProgress, notSold, statuses } = serviceBuckets(servicesExplored);
-  if (!sold.length && !inProgress.length && !notSold.length) return '';
-  const explored = inProgress.map(n => `${n} (${statuses[n]})`);
-  return `Sold: ${sold.join(', ') || 'None'}\nExplored: ${explored.join(', ') || 'None'}\nNot Sold: ${notSold.join(', ') || 'None'}`;
+  const sold = servicesWith(servicesExplored, ['Sold']);
+  const notSold = servicesWith(servicesExplored, ['Not Sold']);
+  if (!sold.length && !notSold.length) return '';
+  return `Sold: ${sold.join(', ') || 'None'}\nNot Sold: ${notSold.join(', ') || 'None'}`;
 }
 
 /**
- * The "Potential upsell opportunities & who is responsible" cell: the
- * services being qualified, then the account's salesperson as the one
- * responsible (the tracker keeps no owner per service). '' when nothing is
- * being qualified.
+ * The "Potential upsell opportunities & who is responsible" cell: a line per
+ * status (Qualifying, Renewal) that has services, then the account's
+ * salesperson as the one responsible (the tracker keeps no owner per
+ * service). '' when no service has either status.
  */
 export function upsellOpportunities(servicesExplored, responsible = '') {
-  const { inProgress } = serviceBuckets(servicesExplored);
-  if (!inProgress.length) return '';
+  const lines = [];
+  for (const status of UPSELL_STATUSES) {
+    const names = servicesWith(servicesExplored, [status]);
+    if (names.length) lines.push(`${status}: ${names.join(', ')}`);
+  }
+  if (!lines.length) return '';
   const who = text(responsible);
-  return `Qualifying: ${inProgress.join(', ')}${who ? `\nResponsible: ${who}` : ''}`;
+  if (who) lines.push(`Responsible: ${who}`);
+  return lines.join('\n');
 }
 
 const money = n => (n == null || !Number.isFinite(Number(n)) ? '' : `$${Math.round(Number(n)).toLocaleString('en-US')}`);
@@ -169,10 +198,10 @@ const dateText = d => (d instanceof Date && !Number.isNaN(d.getTime())
   : '');
 
 // What the UBM row reads: "In scope" once Bill payment is Sold, else the
-// service's status as the company card has it (Qualifying, Not Sold ...).
+// service's status as the Services board has it (Qualifying, Not Sold ...).
 export function ubmScope(servicesExplored) {
   const status = text((servicesExplored || {})[UBM_SERVICE]).replace(/^-$/, '');
-  return serviceStatusBucket(status) === 'sold' ? 'In scope' : status;
+  return status.toLowerCase() === 'sold' ? 'In scope' : status;
 }
 
 // A deal date as a day. An Excel serial or a bare "2026-12-31" parses as
@@ -258,9 +287,13 @@ export function contractFields(deals, { known = true } = {}) {
  *              isn't loaded
  *   contracts  contractsSummary() of them, the older input: used only when
  *              `deals` isn't given
+ *   serviceStatuses  service -> status as the Services board shows it
+ *              (accountServiceStatuses); the record's own manual statuses
+ *              when not given
  */
-export function accountMriProfile({ record, tier = '', contacts = [], deals = null, dealsKnown = true, contracts = null, entryDate = '' } = {}) {
+export function accountMriProfile({ record, tier = '', contacts = [], deals = null, dealsKnown = true, contracts = null, entryDate = '', serviceStatuses = null } = {}) {
   const p = record || {};
+  const services = serviceStatuses || p.servicesExplored || {};
   const status = text(p.status);
   const sites = Number(String(p.numberOfSites ?? '').replace(/,/g, ''));
   const competitors = [plainMentions(p.competitorsNotes)];
@@ -297,12 +330,12 @@ export function accountMriProfile({ record, tier = '', contacts = [], deals = nu
     currentProvider: competitors.filter(Boolean).join('; '),
     competitors: competitors.filter(Boolean).join('; '),
     background: text(p.notes),
-    services: servicesInScope(p.servicesExplored),
+    services: servicesInScope(services),
     fee: contract.fee,
     setup: contract.setup,
-    ubm: ubmScope(p.servicesExplored),
+    ubm: ubmScope(services),
     contractTerm: contract.contractTerm,
-    upsell: upsellOpportunities(p.servicesExplored, p.cdm),
+    upsell: upsellOpportunities(services, p.cdm),
   };
 }
 
