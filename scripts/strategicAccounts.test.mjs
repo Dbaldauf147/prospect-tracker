@@ -28,6 +28,12 @@ eq(strategicMatches(rows, 'Brookfield'), [], 'a partial name is not flagged');
 eq(strategicMatches(rows, 'Brookfield', { 'name::brookfield asset management': 'Brookfield' }), [{ name: 'Brookfield Asset Management', owners: ['Sam Lee'], mapped: true }], 'a row mapped here matches whatever its name');
 eq(strategicMatches(rows, 'Blackstone', { 'name::blackstone': 'Blackstone Real Estate' }), [], 'a row mapped to another company is not this one');
 eq(strategicMatches(rows, 'Blackstone', {}, { 'name::blackstone': true }), [], 'a dismissed row is not flagged');
+// Mapped on the list page's My Accounts / Portfolio Companies columns rather than in Table View.
+eq(strategicMatches(rows, 'Brookfield', {}, {}, [{ 'name::brookfield asset management': 'Brookfield' }]), [{ name: 'Brookfield Asset Management', owners: ['Sam Lee'], mapped: true }], 'a My Accounts mapping counts as a mapping');
+eq(strategicMatches(rows, 'Brookfield Asset Management', {}, {}, [{ 'name::brookfield asset management': 'Brookfield' }]), [], 'and the row stops answering to its own name');
+eq(strategicMatches(rows, 'Brookfield', {}, { 'name::brookfield asset management': true }, [{}, { 'name::brookfield asset management': 'Brookfield' }]), [{ name: 'Brookfield Asset Management', owners: ['Sam Lee'], mapped: true }], 'a column mapping outlives a Table View dismissal');
+eq(['Blackstone RE', 'Blackstone Credit'].map(c => strategicMatches(rows, c, { 'name::blackstone': 'Blackstone RE' }, {}, [{ 'name::blackstone': 'Blackstone Credit' }]).length), [1, 1], 'a row mapped to two companies answers to both');
+eq(strategicMatches(rows, 'Blackstone', {}, {}, [{ 'name::blackstone': { company: 'x' } }, undefined]).length, 1, 'a malformed column mapping is ignored');
 eq(strategicMatches(rows, 'Hines'), [{ name: 'Hines', owners: ['Pat Kim', 'Lee Park', 'Ana Ruiz'], mapped: false }], 'duplicate rows merge owners across every owner column');
 eq(strategicMatches(rows, 'Prologis'), [{ name: 'Prologis', owners: [], mapped: false }], 'a row with no owner still matches');
 eq(strategicMatches([], 'Hines'), [], 'empty list');

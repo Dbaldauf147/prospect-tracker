@@ -68,6 +68,10 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
     listRows || [],
     readListField(settings, STRATEGIC_STORAGE_KEY, 'mapping'),
     readListField(settings, STRATEGIC_STORAGE_KEY, 'dismissed'),
+    [
+      readListField(settings, STRATEGIC_STORAGE_KEY, 'myAccountMapping'),
+      readListField(settings, STRATEGIC_STORAGE_KEY, 'portfolioMapping'),
+    ],
   ), [listRows, settings]);
 
   const allRows = useMemo(() => strategicAccountRows({

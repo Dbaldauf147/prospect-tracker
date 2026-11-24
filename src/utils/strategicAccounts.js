@@ -3,7 +3,8 @@
 // of the company modal so nobody prospects a strategic account without
 // knowing whose it is.
 //
-// A row is this company when its Table View mapping points here, or, with
+// A row is this company when a mapping made on the list page points here
+// (Table View, or the My Accounts / Portfolio Companies columns), or, with
 // no mapping at all, when its name normalises to exactly this company's.
 // A row mapped to some other company, or dismissed on the list page, is
 // left alone: somebody already decided it is not this one. Fuzzy matches
@@ -62,10 +63,12 @@ export function rowOwners(row, headers) {
 /**
  * The list read once, for asking about many companies: returns
  * `company => [{ name, owners: string[], mapped: boolean }]`, deduped by
- * name. A row answers to the company its Table View mapping names, else
- * (unless dismissed) to the one its own name normalises to.
+ * name. A row answers to the company its Table View mapping names, and to
+ * any it is mapped to in `otherMappings` (the list page's My Accounts and
+ * Portfolio Companies columns); with none of those, and unless dismissed,
+ * to the one its own name normalises to.
  */
-export function strategicLookup(rows, mapping = {}, dismissed = {}) {
+export function strategicLookup(rows, mapping = {}, dismissed = {}, otherMappings = []) {
   const none = () => [];
   if (!Array.isArray(rows) || rows.length === 0) return none;
   const nameKey = strategicNameKey(rows);
@@ -77,20 +80,23 @@ export function strategicLookup(rows, mapping = {}, dismissed = {}) {
     const name = String(row?.[nameKey] || '').trim();
     const key = listMatchKey(name);
     if (!key) continue;
-    const mappedTo = mapping[key] || '';
-    if (!mappedTo && dismissed[key]) continue;
-    const target = normalizeCompany(mappedTo || name);
-    if (!target) continue;
-    if (!byCompany.has(target)) byCompany.set(target, new Map());
-    const byKey = byCompany.get(target);
-    const prev = byKey.get(key);
+    const mappedTo = [mapping, ...otherMappings]
+      .map(m => m?.[key])
+      .filter(v => typeof v === 'string' && v.trim());
+    if (!mappedTo.length && dismissed[key]) continue;
+    const targets = new Set((mappedTo.length ? mappedTo : [name]).map(normalizeCompany).filter(Boolean));
     const rowOwnerList = rowOwners(row, owners);
-    if (prev) {
-      for (const o of rowOwnerList) {
-        if (!prev.owners.some(p => p.toLowerCase() === o.toLowerCase())) prev.owners.push(o);
+    for (const target of targets) {
+      if (!byCompany.has(target)) byCompany.set(target, new Map());
+      const byKey = byCompany.get(target);
+      const prev = byKey.get(key);
+      if (prev) {
+        for (const o of rowOwnerList) {
+          if (!prev.owners.some(p => p.toLowerCase() === o.toLowerCase())) prev.owners.push(o);
+        }
+      } else {
+        byKey.set(key, { name, owners: [...rowOwnerList], mapped: mappedTo.length > 0 });
       }
-    } else {
-      byKey.set(key, { name, owners: rowOwnerList, mapped: !!mappedTo });
     }
   }
   return (company) => {
@@ -103,8 +109,8 @@ export function strategicLookup(rows, mapping = {}, dismissed = {}) {
  * Strategic Accounts rows that are `company`.
  * Returns [{ name, owners: string[], mapped: boolean }], deduped by name.
  */
-export function strategicMatches(rows, company, mapping = {}, dismissed = {}) {
-  return strategicLookup(rows, mapping, dismissed)(company);
+export function strategicMatches(rows, company, mapping = {}, dismissed = {}, otherMappings = []) {
+  return strategicLookup(rows, mapping, dismissed, otherMappings)(company);
 }
 
 // Tier 1 on its own does not put an account on the subtab. A Tier 1 account
