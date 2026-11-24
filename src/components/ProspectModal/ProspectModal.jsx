@@ -130,6 +130,7 @@ import { SiteListExportMenu } from './SiteListExportMenu';
 import { requestMasterAnalysisHandoff } from '../../utils/utilityLookupHandoff';
 import PortfolioTransactions from './PortfolioTransactions';
 import { PortfolioCompanyLinkPicker } from './PortfolioCompanyLinkPicker';
+import { PortfolioCompanySearch } from './PortfolioCompanySearch';
 import { siteListFacts as computeSiteListFacts, siteListScreeningRows, formatSqft } from '../../utils/siteListFacts';
 import { annualSavingsFromWorkbook } from '../../utils/analysisWorkbookFigures';
 import { toggleContactInEvents, addContactToNewEvent, titleOnlyAttendeesForCompany } from '../../utils/eventsStore';
@@ -13921,6 +13922,34 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     return pinned ? rest : { ...rest, pinned: true };
                   }));
                 }
+                // One new row from the type-ahead above the table: a Table
+                // View pick lands already mapped to that record (and this
+                // firm goes onto its PE Owner, as "+ Link" does); free text
+                // lands as a plain named row. Stamped and pinned on top like
+                // addRow, so it shows up where the user is looking.
+                function addSearchedRow(companyName, target) {
+                  const used = new Set(rows.map(r => r.addedManuallyAt).filter(Boolean));
+                  let stamp = Date.now();
+                  while (used.has(stamp)) stamp += 1;
+                  const row = { addedManuallyAt: stamp, companyName, status: '', sector: '', subsector: '', subsectorScore: '', strategy: '', hqCity: '', hqCountry: '', energyGwh: '', estElectricity: '', estNaturalGas: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' };
+                  if (target?.id) row.linkedProspectId = target.id;
+                  set('portfolioCompanies', [...rows, row]);
+                  setPortfolioNewStamps(prev => [...prev, stamp]);
+                  if (target?.id) {
+                    const nextOwner = withThisFirmAsOwner(target.peOwner);
+                    if (nextOwner !== (target.peOwner || '')) {
+                      try { onUpdateProspect?.(target.id, { peOwner: nextOwner }); }
+                      catch (err) { console.error('Portfolio search: peOwner update failed', target.id, err); }
+                    }
+                  }
+                }
+                // Table View records this table already points at, so the
+                // search can mark them rather than add them twice.
+                const portfolioLinkedIds = new Set();
+                for (const r of rows) {
+                  const hit = findPortfolioProspect(r, prospectByName, prospectById);
+                  if (hit?.id) portfolioLinkedIds.add(hit.id);
+                }
                 function addRow() {
                   // `addedManuallyAt` is both a record of the hand-entry and
                   // the row's identity for pinning - nudged forward on the
@@ -14382,6 +14411,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         onClick={addRow}
                         style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)' }}
                       >+ Add Row</button>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', alignItems: 'center' }}>
+                      <PortfolioCompanySearch
+                        prospects={(prospects || []).filter(p => p.id !== prospect?.id)}
+                        linkedIds={portfolioLinkedIds}
+                        onPickProspect={p => addSearchedRow(String(p.company || '').trim(), p)}
+                        onAddName={name => addSearchedRow(name, null)}
+                      />
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.5rem', alignItems: 'center' }}>
                       <button
