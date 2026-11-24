@@ -118,13 +118,16 @@ function looksLikeMeta(line) {
 // any, as [{ text, href }]: plain text loses the URL, so a source line is
 // matched back to its link by its text.
 // The email's current layout is one table (PE Firm, Date of Sale, Company
-// Purchased, HQ of Purchased Company, Seller of that Company), which copies
-// as one tab-separated line per deal. Those rows are read first; whatever is
+// Purchased, Seller of that Company), which copies as one tab-separated line
+// per deal. Emails sent before the HQ column was dropped have it as a fifth
+// cell between the company and the seller, and still paste. Those rows are read first; whatever is
 // left is read the older way, so a paste from an older email still works.
 function tableRowDeal(line, linkFor) {
   const cells = line.split('\t').map((s) => s.replace(/\u00a0/g, ' ').trim());
-  if (cells.length < 5 || !DATE_LINE.test(cells[1]) || !cells[2]) return null;
-  const [firm, date, asset, hq, seller] = cells;
+  if (cells.length < 4 || !DATE_LINE.test(cells[1]) || !cells[2]) return null;
+  const [firm, date, asset] = cells;
+  const hq = cells.length >= 5 ? cells[3] : '';
+  const seller = cells.length >= 5 ? cells[4] : cells[3];
   // A row whose seller is the firm itself is that firm's sale; the buyer is
   // not in the table, so the counterparty is left for the reader to fill in.
   const a = firm.toLowerCase();

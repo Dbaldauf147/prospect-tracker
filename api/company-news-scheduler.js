@@ -92,6 +92,7 @@ export default async function handler(req, res) {
         to: s.recipients,
         subject: s.subject || digest.defaultSubject,
         html: digest.html,
+        attachments: digest.attachments,
         replyTo: s.ownerEmail,
       });
 

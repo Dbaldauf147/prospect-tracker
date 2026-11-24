@@ -166,7 +166,6 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
       "counterparty": "the seller on an acquisition, the buyer on a disposition, or empty string",
       "dealType": for an acquisition one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition"; for a disposition one of "Exit", "Divestiture", "Asset sale", "Carve-out",
       "sector": "short sector label for the target, e.g. Industrial Services, or empty string",
-      "targetHq": "where the target is headquartered, as "City, ST" for the United States or "City, Country" elsewhere, when the headline says or you are confident; else empty string",
       "sites": "site/facility count or footprint if the headline reports one, else empty string",
       "value": "reported deal value if disclosed, e.g. \\"$450M\\", else empty string",
       "summary": "one sentence, max 220 characters, on what was bought or sold and why"
@@ -409,7 +408,6 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
       "counterparty": "the seller on an acquisition, the buyer on a disposition, or empty string",
       "dealType": for an acquisition one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition"; for a disposition one of "Exit", "Divestiture", "Asset sale", "Carve-out",
       "sector": "short sector label for the target",
-      "targetHq": "where the target is headquartered, as "City, ST" or "City, Country", or empty string if not established",
       "sites": "site/facility count or footprint if reported, else empty string",
       "value": "reported deal value if disclosed, else empty string",
       "summary": "one sentence, max 220 characters",
@@ -510,7 +508,6 @@ function baseDeal(d) {
     counterparty: str(d.counterparty, 200),
     dealType: DEAL_TYPES[kind].includes(dealType) ? dealType : (kind === 'Disposition' ? 'Divestiture' : 'Acquisition'),
     sector: str(d.sector, 80),
-    targetHq: str(d.targetHq, 120),
     sites: str(d.sites, 60),
     value: str(d.value, 40),
     summary: str(d.summary, 220),
@@ -731,18 +728,19 @@ function escapeHtml(s) {
 
 // ---- The email: one table ---------------------------------------------------
 //
-// One row per deal, five columns, nothing else in the body: who the tracked
-// firm is, when the deal was announced, the company that changed hands,
-// where that company is based, and who sold it. On an acquisition the
-// seller is the other side of the deal; on a disposition it is the tracked
-// firm (or the vehicle of its that sold).
+// One row per deal, four columns, nothing else in the body: who the tracked
+// firm is, when the deal was announced, the company that changed hands, and
+// who sold it. On an acquisition the seller is the other side of the deal;
+// on a disposition it is the tracked firm (or the vehicle of its that sold).
+// The same table goes out as an Excel attachment.
 
 const TH = 'padding:8px 10px;border-bottom:2px solid #009530;text-align:left;color:#0F172A;font-size:12px;font-weight:700;white-space:nowrap';
 const TD = 'padding:8px 10px;border-bottom:1px solid #E2E8F0;vertical-align:top;color:#334155;font-size:13px';
 
-export const NEWS_TABLE_COLUMNS = ['PE Firm', 'Date of Sale', 'Company Purchased', 'HQ of Purchased Company', 'Seller of that Company'];
+export const NEWS_TABLE_COLUMNS = ['PE Firm', 'Date of Sale', 'Company Purchased', 'Seller of that Company'];
 
-// The deals of every result as table rows, newest first.
+// The deals of every result as table rows: by firm A to Z, and newest first
+// within a firm.
 export function dealTableRows(results) {
   const rows = [];
   for (const r of results || []) {
@@ -751,13 +749,14 @@ export function dealTableRows(results) {
         firm: r.company,
         date: d.announcedOn,
         company: d.target,
-        hq: d.targetHq || '',
         seller: d.kind === 'Disposition' ? (d.buyer || r.company) : (d.counterparty || ''),
         sourceUrl: d.sourceUrl || '',
       });
     }
   }
-  rows.sort((a, b) => String(b.date).localeCompare(String(a.date)) || a.firm.localeCompare(b.firm));
+  rows.sort((a, b) => a.firm.localeCompare(b.firm, 'en', { sensitivity: 'base' })
+    || String(b.date).localeCompare(String(a.date))
+    || a.company.localeCompare(b.company));
   return rows;
 }
 
@@ -774,7 +773,6 @@ function dealTable(results) {
           <td style="${TD}">${escapeHtml(row.firm)}</td>
           <td style="${TD};white-space:nowrap">${escapeHtml(row.date)}</td>
           <td style="${TD};font-weight:700;color:#0F172A">${nameCell(row)}</td>
-          <td style="${TD}">${escapeHtml(row.hq)}</td>
           <td style="${TD}">${escapeHtml(row.seller)}</td>
         </tr>`).join('');
   return `
@@ -784,69 +782,38 @@ function dealTable(results) {
     </table>`;
 }
 
-// ---- Where each purchased company is based ----------------------------------
+// ---- The same table as an Excel file ----------------------------------------
 //
-// A headline says who bought whom, almost never where the target is. So the
-// HQ column is looked up: one question to Claude for every deal in the run
-// that has no HQ yet, answered from what it knows, blank where it is not
-// sure. Strictly best effort: no key, an error, a slow answer or a bad reply
-// all leave the column blank and the digest otherwise untouched.
-const HQ_SYSTEM_PROMPT = `You are given a numbered list of companies that were recently bought or sold, each with the buyer or seller named for context. For each one give the location of its headquarters as "City, ST" for the United States or "City, Country" elsewhere.
+// Attached to the email so the deals can be filtered and kept without
+// copying them out of the message. Same four columns, same order of rows;
+// the company's name carries the link to its article, as it does in the body.
+export async function newsWorkbook(results) {
+  const mod = await import('xlsx');
+  const XLSX = mod.default || mod;
+  const rows = dealTableRows(results);
+  const ws = XLSX.utils.aoa_to_sheet([
+    NEWS_TABLE_COLUMNS,
+    ...rows.map((r) => [r.firm, r.date, r.company, r.seller]),
+  ]);
+  rows.forEach((r, i) => {
+    const cell = ws[XLSX.utils.encode_cell({ r: i + 1, c: 2 })];
+    if (cell && /^https?:\/\//i.test(r.sourceUrl)) cell.l = { Target: r.sourceUrl };
+  });
+  const width = (c, pick) => Math.min(60, Math.max(c.length, ...rows.map((r) => String(pick(r) || '').length)) + 2);
+  ws['!cols'] = [
+    { wch: width(NEWS_TABLE_COLUMNS[0], (r) => r.firm) },
+    { wch: 14 },
+    { wch: width(NEWS_TABLE_COLUMNS[2], (r) => r.company) },
+    { wch: width(NEWS_TABLE_COLUMNS[3], (r) => r.seller) },
+  ];
+  if (rows.length) ws['!autofilter'] = { ref: ws['!ref'] };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Deals');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
 
-Answer only where you are confident which company is meant and where it is based. Otherwise answer with an empty string. Never guess, and never give the buyer's or seller's location in place of the company's.
-
-Return ONLY a JSON object (no prose, no markdown fences) of this exact shape, with one entry per number given:
-{"hq": {"0": "Dallas, TX", "1": ""}}`;
-
-const HQ_MAX_DEALS = 60;
-
-export async function fillTargetHqs(results, { timeoutMs = 25_000, fetchImpl = fetch } = {}) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return 0;
-  const wanted = [];
-  for (const r of results || []) {
-    for (const d of r.deals || []) {
-      if (!d.targetHq && d.target && wanted.length < HQ_MAX_DEALS) wanted.push({ deal: d, firm: r.company });
-    }
-  }
-  if (!wanted.length) return 0;
-
-  const list = wanted.map(({ deal, firm }, i) => {
-    const context = [
-      deal.kind === 'Disposition' ? `sold by ${deal.buyer || firm}` : `bought by ${deal.buyer || firm}`,
-      deal.sector,
-    ].filter(Boolean).join(', ');
-    return `${i}. ${deal.target} (${context})`;
-  }).join('\n');
-
-  try {
-    const resp = await fetchImpl('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model: 'claude-opus-5',
-        max_tokens: 8000,
-        output_config: { effort: 'low' },
-        system: HQ_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: `Companies:\n${list}\n\nReturn the JSON object as specified.` }],
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!resp.ok) return 0;
-    const data = await resp.json();
-    const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-    const match = text.match(/\{[\s\S]*\}/);
-    const hq = match ? JSON.parse(match[0])?.hq : null;
-    if (!hq || typeof hq !== 'object') return 0;
-    let filled = 0;
-    wanted.forEach(({ deal }, i) => {
-      const v = str(hq[i], 120);
-      if (v) { deal.targetHq = v; filled += 1; }
-    });
-    return filled;
-  } catch {
-    return 0;
-  }
+export function newsWorkbookFilename(since, until) {
+  return `Acquisition news ${isoDate(since)} to ${isoDate(until)}.xlsx`;
 }
 
 export function buildNewsEmailHtml(results, { since, until, message, newsletters, logged } = {}) {
@@ -939,7 +906,7 @@ export function buildNewsEmailHtml(results, { since, until, message, newsletters
             : ''}
         ${logged ? `<div style="margin-bottom:6px">${logged} new deal${logged === 1 ? ' was' : 's were'} added to ${logged === 1 ? 'its company’s' : 'the companies’'} Acquisitions &amp; Dispositions log on the Portfolio tab.</div>` : ''}
         Companies are tracked by ticking “Track acquisition news” on the company popup in Prospect Tracker.
-        Each company name links to the article the deal was read from. Deals come from public news feed headlines and can be incomplete, and the HQ is looked up rather than read from the article (blank when not known) - always confirm against the source before acting.
+        Each company name links to the article the deal was read from. The table is attached as an Excel file. Deals come from public news feed headlines and can be incomplete - always confirm against the source before acting.
       </div>
     </div>`;
 }
@@ -951,8 +918,8 @@ export function newsSubject(results, since, until) {
     : `Acquisition news - no deals (${isoDate(since)} → ${isoDate(until)})`;
 }
 
-export async function sendCompanyNewsEmail({ to, subject, html, replyTo }) {
-  return sendEmail({ to, subject, html, replyTo });
+export async function sendCompanyNewsEmail({ to, subject, html, replyTo, attachments }) {
+  return sendEmail({ to, subject, html, replyTo, attachments: attachments?.length ? attachments : undefined });
 }
 
 // One end-to-end digest: load the tracked companies, research them, build
@@ -1114,9 +1081,6 @@ export async function buildDigest(db, uid, email, {
   });
   const deals = results.reduce((n, r) => n + r.deals.length, 0);
   const nextStartIndex = nextCursor(startIndex, results);
-  // The HQ column. Skipped on a halted run: the same account-wide failure
-  // would stop this call too.
-  if (deals > 0 && !results.some((r) => r.halted)) await fillTargetHqs(results);
 
   // Onto the company records before anything else can return early: a deal
   // found is worth keeping whether or not this run ends up sending.
@@ -1127,6 +1091,21 @@ export async function buildDigest(db, uid, email, {
   // quiet fortnight", not "don't tell me the research stopped working".
   if (deals === 0 && skipWhenEmpty && !halted) {
     return { empty: true, reason: 'no-deals', companies: companies.length, deals: 0, html: null, nextStartIndex };
+  }
+
+  // The table again as a spreadsheet. A file that cannot be built must not
+  // cost the digest itself, so it goes out without one.
+  let attachments = [];
+  if (deals > 0) {
+    try {
+      attachments = [{
+        filename: newsWorkbookFilename(since, until),
+        content: await newsWorkbook(results),
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }];
+    } catch (err) {
+      console.error('company news: workbook failed', err);
+    }
   }
 
   return {
@@ -1146,6 +1125,7 @@ export async function buildDigest(db, uid, email, {
     results,
     nextStartIndex,
     html: buildNewsEmailHtml(results, { since, until, message, newsletters: news, logged: log.logged }),
+    attachments,
     defaultSubject: newsSubject(results, since, until),
   };
 }
