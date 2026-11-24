@@ -1206,10 +1206,27 @@ function resolvePortfolioStatus(row, byName, byId) {
   if (!name || !byName || byName.size === 0) return fallback();
   const exact = byName.get(name.toLowerCase());
   if (exact) return { status: exact.status, from: exact.company, outsideNa: false };
-  for (const entry of byName.values()) {
-    if (entry.status && companiesMatch(entry.company, name)) return { status: entry.status, from: entry.company, outsideNa: false };
-  }
+  const hit = fuzzyScanCached(byName, name, entry => entry.status && companiesMatch(entry.company, name));
+  if (hit) return { status: hit.status, from: hit.company, outsideNa: false };
   return fallback();
+}
+
+// The fuzzy half of the two lookups below walks every tracker record, and
+// the Portfolio Companies table asks it for each of its rows several times
+// a render. The answer only changes when the records do, and every change
+// to them builds a new byName map, so the result is kept per map: a fresh
+// map starts an empty cache and the old one is let go with it.
+const FUZZY_SCAN_CACHE = new WeakMap();
+function fuzzyScanCached(byName, name, test) {
+  let cache = FUZZY_SCAN_CACHE.get(byName);
+  if (!cache) { cache = new Map(); FUZZY_SCAN_CACHE.set(byName, cache); }
+  if (cache.has(name)) return cache.get(name);
+  let found = null;
+  for (const entry of byName.values()) {
+    if (test(entry)) { found = entry; break; }
+  }
+  cache.set(name, found);
+  return found;
 }
 
 // The tracker record a portfolio company row refers to, or null when the
@@ -1234,10 +1251,7 @@ function findPortfolioProspect(row, byName, byId) {
   if (!name || !byName || byName.size === 0) return null;
   const exact = byName.get(name.toLowerCase());
   if (exact) return exact;
-  for (const p of byName.values()) {
-    if (companiesMatch(p.company, name)) return p;
-  }
-  return null;
+  return fuzzyScanCached(byName, name, p => companiesMatch(p.company, name));
 }
 
 
@@ -14134,16 +14148,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   return [...names].sort((a, b) => a.localeCompare(b));
                 })();
 
+                // Lower-cased and split once, not once per row (see
+                // raSuggestionPool below).
+                const targetSuggestionPool = targetAccountNames.map(name => {
+                  const n = name.toLowerCase();
+                  return { name, n, first: n.split(/[^a-z0-9]+/)[0] };
+                });
                 function findTargetSuggestions(companyName) {
                   const lower = (companyName || '').toLowerCase().trim();
                   if (!lower) return targetAccountNames.slice(0, 8);
                   const scored = [];
-                  for (const name of targetAccountNames) {
-                    const n = name.toLowerCase();
+                  const firstLower = lower.split(/[^a-z0-9]+/)[0];
+                  for (const { name, n, first: firstN } of targetSuggestionPool) {
                     if (n === lower) { scored.push({ name, score: 100 }); continue; }
                     if (n.includes(lower) || lower.includes(n)) { scored.push({ name, score: 80 }); continue; }
-                    const firstLower = lower.split(/[^a-z0-9]+/)[0];
-                    const firstN = n.split(/[^a-z0-9]+/)[0];
                     if (firstLower && firstLower.length >= 4 && firstLower === firstN) {
                       scored.push({ name, score: 60 });
                     }
@@ -14251,6 +14269,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   }
                   return [...starts, ...includes].slice(0, limit);
                 }
+                // Every name the RA Client suggestions draw from, lower-cased
+                // and split once here rather than once per table row: doing it
+                // inside findRaSuggestions re-ran it for all ~100 rows on every
+                // keystroke anywhere in the popup.
+                const raSuggestionPool = [
+                  ...raClientsData.map(ra => raClientName(ra)).filter(Boolean),
+                  ...Array.from(internalClientStatusByLower.values()).map(v => v.name),
+                ].map(display => {
+                  const name = display.toLowerCase();
+                  return { display, name, first: name.split(/[^a-z0-9]+/)[0] };
+                });
                 function findRaSuggestions(companyName) {
                   const lower = (companyName || '').toLowerCase().trim();
                   if (!lower) return [];
@@ -14262,16 +14291,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     seenLower.add(key);
                     scored.push({ name: display, score: baseScore });
                   }
-                  const pool = [
-                    ...raClientsData.map(ra => raClientName(ra)).filter(Boolean),
-                    ...Array.from(internalClientStatusByLower.values()).map(v => v.name),
-                  ];
-                  for (const display of pool) {
-                    const name = display.toLowerCase();
+                  const firstLower = lower.split(/[^a-z0-9]+/)[0];
+                  for (const { display, name, first: firstName } of raSuggestionPool) {
                     if (name === lower) { consider(display, 100); continue; }
                     if (name.includes(lower) || lower.includes(name)) { consider(display, 80); continue; }
-                    const firstLower = lower.split(/[^a-z0-9]+/)[0];
-                    const firstName = name.split(/[^a-z0-9]+/)[0];
                     if (firstLower && firstLower.length >= 4 && firstLower === firstName) {
                       consider(display, 60);
                     }

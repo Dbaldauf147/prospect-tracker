@@ -26,45 +26,74 @@ export function exactCompanyKey(s) {
     .trim();
 }
 
-export function companiesMatch(a, b) {
-  const fullA = (a || '').toLowerCase().trim();
-  const fullB = (b || '').toLowerCase().trim();
-  if (!fullA || !fullB) return false;
-  if (fullA === fullB) return true;
-  // The fuzzy checks below read the names without their bracketed notes:
+// Everything companiesMatch reads off one name, worked out once per
+// distinct string and kept. The Portfolio Companies table compares each of
+// its ~100 rows against every tracker record (thousands), several times a
+// render; re-running the NFKD normalize and the regexes on the same tracker
+// names over and over was most of the popup's lag. The comparison itself
+// below is unchanged, it just reads these instead of recomputing them.
+const flatten = (s) => String(s || '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim()
+  .replace(/\s+/g, ' ');
+const squish = (s) => s.replace(/\s+/g, ' ').trim();
+const stripSuffixes = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+const tokensOf = (s) => s.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+
+const PREP_CACHE = new Map();
+const PREP_CACHE_MAX = 50000;
+function prepName(raw) {
+  const key = raw || '';
+  let hit = PREP_CACHE.get(key);
+  if (hit) return hit;
+  const full = key.toLowerCase().trim();
+  // The fuzzy checks read the names without their bracketed notes:
   // "Rehlko (a Platinum Equity Co.)" contains "Platinum Equity" only in a
   // note about its owner, and matching on it put every Platinum Equity opp
   // on Rehlko's card. One-word brackets ("(JLL)") are still matched as
   // aliases at the end.
-  const na = withoutParenNotes(fullA);
-  const nb = withoutParenNotes(fullB);
-  // Ultra-tolerant equality. Normalizes Unicode (NFKD), drops
-  // diacritics, replaces every non-letter/digit with a single
-  // space, collapses whitespace, then compares. Catches the case
-  // where one side has a non-breaking space, smart-quote paren,
-  // or different punctuation that breaks ===.
-  const flatten = (s) => String(s || '')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
-  const fa = flatten(na);
-  const fb = flatten(nb);
-  if (fa && fb && fa === fb) return true;
+  const n = full ? withoutParenNotes(full) : '';
+  let tokens = null;
+  let aliases = null;
+  hit = {
+    full,
+    n,
+    // Ultra-tolerant equality. Normalizes Unicode (NFKD), drops
+    // diacritics, replaces every non-letter/digit with a single
+    // space, collapses whitespace. Catches a non-breaking space,
+    // smart-quote paren, or different punctuation that breaks ===.
+    flat: full ? flatten(n) : '',
+    flatFull: full ? flatten(full) : '',
+    squished: full ? squish(n) : '',
+    stripped: full ? stripSuffixes(n) : '',
+    get tokens() { return tokens || (tokens = tokensOf(n)); },
+    get aliases() { return aliases || (aliases = parenAliases(full)); },
+  };
+  if (PREP_CACHE.size >= PREP_CACHE_MAX) PREP_CACHE.clear();
+  PREP_CACHE.set(key, hit);
+  return hit;
+}
+
+export function companiesMatch(a, b) {
+  const A = prepName(a);
+  const B = prepName(b);
+  if (!A.full || !B.full) return false;
+  if (A.full === B.full) return true;
+  if (A.flat && B.flat && A.flat === B.flat) return true;
   // Equality still counts with the brackets in: "Acme (US)" is "Acme US".
-  if (flatten(fullA) === flatten(fullB)) return true;
-  // Whitespace-collapsed equality on the original lower-trimmed
-  // strings — catches copy/paste variants with double spaces.
-  const squish = (s) => s.replace(/\s+/g, ' ').trim();
-  if (squish(na) === squish(nb)) return true;
-  const longer = na.length >= nb.length ? na : nb;
-  const shorter = na.length >= nb.length ? nb : na;
-  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
-  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
-  const sa = strip(na);
-  const sb = strip(nb);
+  if (A.flatFull === B.flatFull) return true;
+  // Whitespace-collapsed equality, catches copy/paste variants with
+  // double spaces.
+  if (A.squished === B.squished) return true;
+  const aLonger = A.n.length >= B.n.length;
+  const L = aLonger ? A : B;
+  const S = aLonger ? B : A;
+  if (S.n.length >= 4 && S.n.length >= L.n.length * 0.6 && L.n.includes(S.n)) return true;
+  const sa = A.stripped;
+  const sb = B.stripped;
   if (sa === sb) return true;
   const sLonger = sa.length >= sb.length ? sa : sb;
   const sShorter = sa.length >= sb.length ? sb : sa;
@@ -73,11 +102,9 @@ export function companiesMatch(a, b) {
   // "(TIAA) Teachers Insurance and Annuity Association of America"
   // and "JLL" vs "Jones Lang LaSalle (JLL)": a one-word bracket is
   // an alias (parenAliases), a longer one is a note and doesn't count.
-  const tokensOf = (s) => s.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
-  const sTokens = tokensOf(shorter);
+  const sTokens = S.tokens;
   if (sTokens.length === 1 && sTokens[0].length >= 3) {
-    const longerFull = na.length >= nb.length ? fullA : fullB;
-    if ([...tokensOf(longer), ...parenAliases(longerFull)].includes(sTokens[0])) return true;
+    if (L.tokens.includes(sTokens[0]) || L.aliases.includes(sTokens[0])) return true;
   }
   return false;
 }
