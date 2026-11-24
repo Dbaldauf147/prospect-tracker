@@ -16,6 +16,7 @@
     { "collectionGroup": "userSettings", "fieldPath": "contactTagReview" },
     { "collectionGroup": "userSettings", "fieldPath": "listMappings" },
     { "collectionGroup": "userSettings", "fieldPath": "companyResearch" },
-    { "collectionGroup": "userSettings", "fieldPath": "contactLocalFields" }
+    { "collectionGroup": "userSettings", "fieldPath": "contactLocalFields" },
+    { "collectionGroup": "userSettings", "fieldPath": "accountMri" }
   ]
 }

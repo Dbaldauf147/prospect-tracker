@@ -41,6 +41,7 @@ export const ENCODED_SETTINGS_KEYS = [
   'listMappings',
   'companyResearch',
   'contactLocalFields',
+  'accountMri',
 ];
 
 /** The subcollection of the settings document the maps live in. */

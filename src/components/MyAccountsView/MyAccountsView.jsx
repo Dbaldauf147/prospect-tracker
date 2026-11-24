@@ -1109,7 +1109,7 @@ const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold'])
 // counts as inactive too: hidden by default, listed on the Inactive card.
 const isInactive = (a) => INACTIVE_STATUSES.has(reportingStatus(a));
 
-export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, onFindDuplicates, onDedupe, targetAccountsData, settings, updateSettings, cdmName, mode }) {
+export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, onFindDuplicates, onDedupe, targetAccountsData, settings, updateSettings, updateSettingsPath, cdmName, mode }) {
   const { user, isAdmin } = useAuth();
   const savedView = settings?.viewFilters?.myAccounts;
   const [search, setSearch] = useState(savedView?.search || '');
@@ -3995,6 +3995,7 @@ Fix that now?
           hubspotContacts={hubspotCache?.contacts}
           settings={settings}
           updateSettings={updateSettings}
+          updateSettingsPath={updateSettingsPath}
           onSelect={onSelect}
           filterBar={(
             <input

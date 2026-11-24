@@ -1,0 +1,452 @@
+// The Account MRI popup (My Accounts > Strategic Accounts > Account MRI):
+// the intake template's seven tabs as a form. This file is the form's
+// shape, its scoring, and how what is typed into it reaches the template
+// export. The tracker's own answers come from utils/accountMri.js, the same
+// mapping the export has always used; what is typed here is saved per
+// company under settings.accountMri and laid over them.
+//
+// Every list, row number and threshold below is the template's own
+// (src/assets/account-mri-intake-template.xlsx, its Lists tab and
+// formulas); scripts/accountMriForm.test.mjs holds them to it.
+//
+// Imported with extensions so this loads under plain Node for the tests.
+import { MRI_PROFILE_FIELDS } from './accountMri.js';
+
+export const MRI_LISTS = {
+  tier: ['Not set', 'Tier I', 'Tier II', 'Tier III'],
+  yesNo: ['Yes', 'No'],
+  yesNoTbd: ['Yes', 'No', 'TBD'],
+  // The dash in the last stage is the template's own en dash.
+  stage: ['Prospect', 'Discovery', 'Qualify', 'Proposal', 'Negotiation', 'Customer – Expand'],
+  stageCap: [0.25, 0.5, 0.5, 0.6, 0.8, 0.8],
+  level: ['Absent', 'Low', 'Moderate', 'Strong'],
+  footprint: ['Not yet served', 'Competitor-held', 'SE partial', 'SE incumbent'],
+  bodySystem: ['Brain', 'Heart', 'Lungs', 'Nervous System', 'Skeleton', 'Immune System', 'Bloodstream'],
+  buyingRole: ['Technical Buyer', 'Business Stakeholder', 'Budget Holder', 'Procurement', 'Other', 'Unknown'],
+  support: ['Advocate (Champion)', 'Supporter (Favors Us)', 'Neutral (Non-Committal)', 'Resister (Favors Competitor)', 'Adversary (Anti-Champion)', 'Unknown'],
+  decisionRole: ['Decider', 'Influencer', 'None', 'Unknown'],
+  relationship: ['0 - No Relationship', '1 - Very Weak', '2 - Weak', '3 - Neutral', '4 - Strong', '5 - Very Strong'],
+  agree: ['Unknown', 'Strongly disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly agree'],
+  advantage: ['Unknown', 'Clear disadvantage', 'Small disadvantage', 'Parity', 'Small advantage', 'Clear advantage'],
+};
+
+export const MRI_TABS = [
+  { key: 'profile', label: 'Profile & Background' },
+  { key: 'diagnosis', label: 'Diagnosis' },
+  { key: 'committee', label: 'Buying Committee' },
+  { key: 'opportunity', label: 'Opportunity' },
+  { key: 'sites', label: 'Sites & Utilities' },
+  { key: 'dealHealth', label: 'Deal Health' },
+  { key: 'closePlan', label: 'Close Plan' },
+];
+
+// ── Tab 1 ────────────────────────────────────────────────────────────────
+// How each row of tab 1 is asked for. Rows and keys are MRI_PROFILE_FIELDS;
+// this only adds the control and where it sits.
+const PROFILE_INPUT = {
+  tier: { type: 'select', list: 'tier' },
+  existingClient: { type: 'select', list: 'yesNo' },
+  stage: { type: 'select', list: 'stage' },
+  assignedSince: { type: 'date' },
+  hq: { placeholder: 'City, State' },
+  revenueB: { type: 'number' },
+  sites: { type: 'number' },
+  energySpend: { type: 'number' },
+  background: { type: 'textarea' },
+  services: { type: 'textarea' },
+  earlyOut: { type: 'select', list: 'yesNo' },
+  upsell: { type: 'textarea' },
+};
+const PROFILE_LABEL = {
+  accountName: 'Account name',
+  mainContact: 'Main point of contact · email / phone',
+  upsell: 'Potential upsell opportunities & who is responsible',
+};
+const PROFILE_SECTION = [
+  { key: 'account', title: 'Account profile', from: 5, to: 17 },
+  { key: 'background', title: 'Client background', hint: 'from Opportunity Plan › Client-Prospect Info', from: 19, to: 23 },
+  { key: 'commercials', title: 'Commercials & scope', from: 25, to: 31 },
+];
+export const PROFILE_SECTIONS = PROFILE_SECTION.map(s => ({
+  key: s.key,
+  title: s.title,
+  hint: s.hint || '',
+  fields: MRI_PROFILE_FIELDS.filter(f => f.row >= s.from && f.row <= s.to).map(f => ({
+    key: f.key,
+    label: PROFILE_LABEL[f.key] || f.label,
+    source: f.source,
+    type: 'text',
+    ...PROFILE_INPUT[f.key],
+  })),
+}));
+
+const isBlank = v => v == null || String(v).trim() === '';
+
+/**
+ * Tab 1 as the popup shows it: what was typed where something was, else
+ * the tracker's answer. Returns { values, typed } where `typed[key]` says
+ * the value is the user's own rather than the tracker's.
+ */
+export function mergeProfile(tracker = {}, saved = {}) {
+  const values = {};
+  const typed = {};
+  for (const f of MRI_PROFILE_FIELDS) {
+    const own = saved?.[f.key];
+    if (own !== undefined) { values[f.key] = own; typed[f.key] = true; } else values[f.key] = tracker?.[f.key] ?? '';
+  }
+  return { values, typed };
+}
+
+// ── Tab 2 ────────────────────────────────────────────────────────────────
+// Seven body systems, four vital signs each, on rows 4 to 31 in this order;
+// the per-system summary (footprint, intel notes) is on rows 35 to 41.
+const SYSTEMS = [
+  ['brain', 'Brain', 'Corporate Strategy', ['Public climate / net-zero commitment', 'Exec / board ownership of sustainability', 'Strategic transformation underway', 'Roadmap gap (ambition without a plan)']],
+  ['heart', 'Heart', 'Financial Priorities', ['Margin / cost pressure', 'Energy is a material cost line', 'Budget volatility exposure', 'Procurement sophistication gap']],
+  ['lungs', 'Lungs', 'Energy & Emissions', ['Energy-intensive operations', 'Scope 1 & 2 emissions scale', 'Renewable procurement gap', 'Scope 3 / supplier pressure']],
+  ['nervous', 'Nervous System', 'Data & Digital Infrastructure', ['Data fragmentation', 'Manual reporting burden', 'Meter / interval data gaps', 'Integration readiness (ERP / IT)']],
+  ['skeleton', 'Skeleton', 'Real Estate Footprint', ['Footprint scale (sites / sq ft)', 'Aging assets / deferred capex', 'Electrification potential', 'Geographic spread']],
+  ['immune', 'Immune System', 'Risk & Compliance', ['Regulatory disclosure exposure', 'Investor / customer ESG scrutiny', 'Climate / physical risk', 'Grid & resilience risk']],
+  ['blood', 'Bloodstream', 'Capital Allocation', ['Capex budget availability', 'Payback hurdle flexibility', 'AP / bill-payment complexity', 'Appetite for OPEX / as-a-service']],
+];
+export const BODY_SYSTEMS = SYSTEMS.map(([key, name, focus, signs], i) => ({
+  key,
+  name,
+  focus,
+  summaryRow: 35 + i,
+  signs: signs.map((label, j) => ({ key: `${key}.${j}`, label, row: 4 + i * 4 + j })),
+}));
+export const RAW_INTEL_CELL = 'A46';
+
+/**
+ * One body system's reading: `sum` of its four ratings (Absent 0 to Strong
+ * 3, the template's "Signal score (of 12)"), `rated` how many are rated,
+ * and `pct` that sum as a share of 12, the card's headline number.
+ */
+export function systemScore(system, signals = {}) {
+  let sum = 0;
+  let rated = 0;
+  for (const s of system.signs) {
+    const at = MRI_LISTS.level.indexOf(signals[s.key]);
+    if (at < 0) continue;
+    rated += 1;
+    sum += at;
+  }
+  return { sum, rated, pct: Math.round((sum / (system.signs.length * 3)) * 100) };
+}
+
+// ── Tab 4 ────────────────────────────────────────────────────────────────
+// `type` is the control and, for the export, how the cell is written: a
+// date as a date, percent as a fraction, money as a number.
+export const OPPORTUNITY_SECTIONS = [
+  {
+    title: 'Opportunity background',
+    hint: 'from Opportunity Plan › Opportunity Background',
+    fields: [
+      { row: 5, key: 'name', label: 'Opportunity name' },
+      { row: 6, key: 'owner', label: 'Opportunity owner' },
+      { row: 7, key: 'planStarted', label: 'Date plan started', type: 'date' },
+      { row: 11, key: 'workingSince', label: 'Working on it since', type: 'date' },
+      { row: 14, key: 'targetClose', label: 'Target close date', type: 'date' },
+      { row: 15, key: 'odds', label: 'Current % odds to close', type: 'percent' },
+      { row: 16, key: 'revenue', label: 'Revenue amount ($)', type: 'money' },
+      { row: 12, key: 'cameFrom', label: 'It came about from...' },
+      { row: 8, key: 'nature', label: 'The nature of the opportunity is...', type: 'textarea' },
+      { row: 9, key: 'desiredResult', label: "Client's desired result / outcome", type: 'textarea' },
+      { row: 10, key: 'successCriteria', label: 'Success criteria / required return (ROI)', type: 'textarea' },
+      { row: 13, key: 'milestones', label: 'Upcoming key milestones & deliverables', type: 'textarea' },
+      { row: 17, key: 'barrier', label: 'Most significant selling barrier or challenge', type: 'textarea' },
+    ],
+  },
+  {
+    title: 'Value drivers & solution alignment',
+    fields: [
+      { row: 19, key: 'valueDrivers', label: 'Client situation, the solution offered, and why adopting it makes sense', type: 'textarea', tall: true },
+    ],
+  },
+  {
+    title: 'Enterprise efficiency',
+    hint: 'from Opportunity Plan › Addl Enterprise Efficiency Info',
+    fields: [
+      { row: 21, key: 'geography', label: 'Geography / perimeter' },
+      { row: 22, key: 'programValue', label: 'Potential program value ($)', type: 'money' },
+      { row: 24, key: 'proofOfConcept', label: 'Proof of concept required?', type: 'select', list: 'yesNoTbd' },
+      { row: 25, key: 'expansionPath', label: 'Path to program expansion' },
+      { row: 23, key: 'projectList', label: 'Potential project list (micro-grid, controls, EMIS...)', type: 'textarea' },
+      { row: 26, key: 'keysSchneider', label: 'Keys to success: Schneider', type: 'textarea' },
+      { row: 27, key: 'keysClient', label: 'Keys to success: Client', type: 'textarea' },
+      { row: 28, key: 'challengesSchneider', label: 'Challenges: Schneider', type: 'textarea' },
+      { row: 29, key: 'challengesClient', label: 'Challenges: Client', type: 'textarea' },
+    ],
+  },
+  {
+    title: 'Resources · time, people & money',
+    fields: [
+      { row: 31, key: 'time', label: 'Time: when does the client want results?', type: 'textarea' },
+      { row: 32, key: 'timeValidated', label: 'Time: client validated?', type: 'select', list: 'yesNo' },
+      { row: 33, key: 'people', label: 'People: resources the client will commit', type: 'textarea' },
+      { row: 34, key: 'peopleValidated', label: 'People: client validated?', type: 'select', list: 'yesNo' },
+      { row: 35, key: 'money', label: 'Money: investment the client sees as appropriate', type: 'textarea' },
+      { row: 36, key: 'moneyValidated', label: 'Money: client validated?', type: 'select', list: 'yesNo' },
+    ],
+  },
+];
+export const OPPORTUNITY_FIELDS = OPPORTUNITY_SECTIONS.flatMap(s => s.fields);
+
+// ── Tab 6 ────────────────────────────────────────────────────────────────
+export const BUY_STATEMENTS = [
+  { row: 5, key: 'businessCase', label: 'Strong business case', meaning: 'Key stakeholders articulated and verified prioritized business issues with quantifiable evidence; constraints are manageable.' },
+  { row: 6, key: 'resources', label: 'Resources: time, people & money', meaning: 'Client has realistic expectations on time; division of labor is reasonable; we are in range on economics.' },
+  { row: 7, key: 'process', label: 'Defined decision process & criteria', meaning: 'We understand the steps, decisions, timing and people; we have criteria from each decision maker.' },
+  { row: 8, key: 'reason', label: 'Compelling reason to act', meaning: 'Economic, regulatory or environmental drivers exist and align with the client strategy.' },
+  { row: 9, key: 'relationships', label: 'Relationships with decision-makers', meaning: 'We have met and have green relationships with key decision makers; no red relationship can veto.' },
+];
+export const OURS_STATEMENTS = [
+  { row: 14, key: 'technical', label: 'Technical solution vs. competitors', meaning: 'Our technical solution is unique in a way the client values; competitors cannot meet requirements.' },
+  { row: 15, key: 'business', label: 'Business solution vs. competitors', meaning: 'Meets stated business requirements; we are reasonable to do business with; no unmanageable T&Cs.' },
+  { row: 16, key: 'relationship', label: 'Relationship strength vs. competitors', meaning: 'Our relationships with decision makers are superior to the competition.' },
+  { row: 17, key: 'extra', label: 'Extra advantage', meaning: 'We have unique advantages the client values that are difficult for competitors to address.' },
+];
+
+// Win probability by level: rows are "will they buy ours" (HIGH, MED, LOW),
+// columns "will they buy" (LOW, MED, HIGH).
+export const WIN_LEVELS = ['LOW', 'MED', 'HIGH'];
+export const WIN_MATRIX = { HIGH: [0.3, 0.6, 0.8], MED: [0.25, 0.5, 0.6], LOW: [0.15, 0.25, 0.3] };
+
+function ratingBlock(statements, list, ratings, { high, med, floor }) {
+  const scores = statements.map(s => Math.max(0, list.indexOf(ratings?.[s.key])));
+  const total = scores.reduce((a, b) => a + b, 0);
+  const rated = statements.filter(s => list.includes(ratings?.[s.key])).length;
+  let level = 'LOW';
+  if (total >= high) level = scores.some(n => n < floor) ? 'MED' : 'HIGH';
+  else if (total >= med) level = 'MED';
+  return { scores, total, rated, level, max: statements.length * 5 };
+}
+
+/**
+ * The Sales Probability Index as the template works it: both totals and
+ * levels, the win probability the two levels meet at (0 until both blocks
+ * have a score), and the most the current stage allows (null when the
+ * stage is not one of the template's).
+ */
+export function dealHealthScore(dealHealth = {}, stage = '') {
+  const buy = ratingBlock(BUY_STATEMENTS, MRI_LISTS.agree, dealHealth.buy, { high: 19, med: 12, floor: 3 });
+  const ours = ratingBlock(OURS_STATEMENTS, MRI_LISTS.advantage, dealHealth.ours, { high: 15, med: 10, floor: 2 });
+  const winProbability = buy.total === 0 || ours.total === 0 ? 0 : WIN_MATRIX[ours.level][WIN_LEVELS.indexOf(buy.level)];
+  const at = MRI_LISTS.stage.indexOf(String(stage || '').trim());
+  return { buy, ours, winProbability, stageCap: at < 0 ? null : MRI_LISTS.stageCap[at] };
+}
+
+// ── The list tables ──────────────────────────────────────────────────────
+// Where each table's entry rows sit on its sheet (the row above `startRow`
+// is the template's grey example, which stays) and what each column holds.
+// `width` is the column's share of the popup's table.
+const sheet = n => `xl/worksheets/sheet${n}.xml`;
+export const MRI_TABLES = {
+  committee: {
+    path: sheet(3), startRow: 6, endRow: 30,
+    columns: [
+      { col: 'A', key: 'name', label: 'Name', width: 150 },
+      { col: 'B', key: 'title', label: 'Title', width: 150 },
+      { col: 'C', key: 'email', label: 'Email', width: 150 },
+      { col: 'D', key: 'phone', label: 'Phone', width: 130 },
+      { col: 'E', key: 'bodySystem', label: 'Body system', list: 'bodySystem', width: 125 },
+      { col: 'F', key: 'buyingRole', label: 'Buying role', list: 'buyingRole', width: 150 },
+      { col: 'G', key: 'support', label: 'Level of support', list: 'support', width: 185 },
+      { col: 'H', key: 'decisionRole', label: 'Decision role', list: 'decisionRole', width: 110 },
+      { col: 'I', key: 'relationship', label: 'Relationship', list: 'relationship', width: 150 },
+      { col: 'J', key: 'relOwner', label: 'Rel. owner', width: 140 },
+    ],
+  },
+  pursuitTeam: {
+    path: sheet(3), startRow: 35, endRow: 44,
+    columns: [
+      { col: 'A', key: 'name', label: 'Name', width: 240 },
+      { col: 'B', key: 'role', label: 'Role', width: 240 },
+    ],
+  },
+  evidence: {
+    path: sheet(4), startRow: 41, endRow: 55,
+    columns: [
+      { col: 'A', key: 'issue', label: '1. Issue: client problem to solve / result to achieve', width: 300 },
+      { col: 'B', key: 'evidence', label: '2. Evidence: current vs. future state', width: 300 },
+      { col: 'C', key: 'impact', label: '3. Impact ($)', width: 170 },
+      { col: 'D', key: 'importance', label: 'Importance 1–10', type: 'number', width: 110 },
+      { col: 'E', key: 'validated', label: 'Client validated?', list: 'yesNo', width: 120 },
+    ],
+  },
+  decisionGrid: {
+    path: sheet(6), startRow: 33, endRow: 44,
+    columns: [
+      { col: 'A', key: 'step', label: 'Step', type: 'number', width: 60 },
+      { col: 'B', key: 'decision', label: 'Decision(s)', width: 220 },
+      { col: 'C', key: 'when', label: 'When?', width: 120 },
+      { col: 'D', key: 'who', label: 'Who is involved?', width: 190 },
+      { col: 'E', key: 'criteria', label: 'Criteria / beliefs for deciding', width: 300 },
+      { col: 'F', key: 'validated', label: 'Validated?', list: 'yesNo', width: 100 },
+    ],
+  },
+  yellowLights: {
+    path: sheet(6), startRow: 49, endRow: 60,
+    columns: [
+      { col: 'B', key: 'light', label: 'What yellow light has (or might) arise?', width: 360 },
+      { col: 'C', key: 'resolve', label: 'How will we resolve it?', width: 360 },
+      { col: 'D', key: 'resolved', label: 'Resolved?', list: 'yesNo', width: 100 },
+    ],
+  },
+  closePlan: {
+    path: sheet(7), startRow: 5, endRow: 34,
+    columns: [
+      { col: 'A', key: 'what', label: 'What?', width: 250 },
+      { col: 'B', key: 'when', label: 'When?', type: 'date', width: 140 },
+      { col: 'C', key: 'who', label: 'Who is responsible?', width: 170 },
+      { col: 'D', key: 'endInMind', label: 'End in mind', width: 230 },
+      { col: 'E', key: 'results', label: 'Results', width: 230 },
+      { col: 'F', key: 'done', label: 'Done', list: 'yesNo', width: 90 },
+    ],
+  },
+};
+
+const rowHasText = (row, columns) => columns.some(c => !isBlank(row?.[c.key]));
+
+/**
+ * The buying committee the popup shows: the saved list once somebody has
+ * edited it, else the tracker's decision makers (which is what the export
+ * wrote before the popup existed).
+ */
+export function committeeRows(saved, trackerRows = []) {
+  return Array.isArray(saved) ? saved : trackerRows;
+}
+
+/**
+ * `rows` with any tracker decision maker it does not already hold added at
+ * the end, matched on email, else on name. For pulling in people tagged
+ * since the committee was first edited.
+ */
+export function addMissingDecisionMakers(rows, trackerRows = []) {
+  const idOf = r => String(r?.email || r?.name || '').trim().toLowerCase();
+  const have = new Set((rows || []).map(idOf).filter(Boolean));
+  const out = [...(rows || [])];
+  for (const r of trackerRows) {
+    const id = idOf(r);
+    if (!id || have.has(id)) continue;
+    have.add(id);
+    out.push({ ...r });
+  }
+  return out;
+}
+
+// ── Progress ─────────────────────────────────────────────────────────────
+const share = (done, of) => (of > 0 ? Math.round((done / of) * 100) : 0);
+
+/**
+ * How far along each tab is, 0 to 100, keyed as MRI_TABS: the share of
+ * its fields filled (ratings rated, on Diagnosis and Deal Health; steps
+ * done, on Close Plan). The two list tabs are done once they hold a row.
+ *
+ *   form       what is saved for the company (settings.accountMri[slug])
+ *   profile    tab 1 as shown (mergeProfile(...).values)
+ *   committee  tab 3 as shown
+ *   sites      tab 5 rows
+ */
+export function tabProgress({ form = {}, profile = {}, committee = [], sites = [] } = {}) {
+  const signals = form.diagnosis?.signals || {};
+  const ratedSigns = BODY_SYSTEMS.reduce((n, s) => n + systemScore(s, signals).rated, 0);
+  const deal = dealHealthScore(form.dealHealth);
+  const steps = (form.closePlan || []).filter(r => rowHasText(r, MRI_TABLES.closePlan.columns));
+  return {
+    profile: share(MRI_PROFILE_FIELDS.filter(f => !isBlank(profile[f.key])).length, MRI_PROFILE_FIELDS.length),
+    diagnosis: share(ratedSigns, BODY_SYSTEMS.length * 4),
+    committee: committee.some(r => rowHasText(r, MRI_TABLES.committee.columns)) ? 100 : 0,
+    opportunity: share(OPPORTUNITY_FIELDS.filter(f => !isBlank(form.opportunity?.[f.key])).length, OPPORTUNITY_FIELDS.length),
+    sites: sites.length ? 100 : 0,
+    dealHealth: share(deal.buy.rated + deal.ours.rated, BUY_STATEMENTS.length + OURS_STATEMENTS.length),
+    closePlan: share(steps.filter(r => r.done === 'Yes').length, steps.length),
+  };
+}
+
+// ── Export ───────────────────────────────────────────────────────────────
+// "2026-12-15" as the day number a spreadsheet stores a date as, or null.
+export function dateSerial(iso) {
+  const m = String(iso || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const days = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000 + 25569;
+  return Number.isFinite(days) ? days : null;
+}
+const amount = v => {
+  const n = Number(String(v ?? '').replace(/[$,%\s]/g, ''));
+  return Number.isFinite(n) ? n : null;
+};
+
+// A typed value as the cell it becomes: { value, number }. A value that
+// will not read as its type goes across as the text it is.
+function cellFor(value, type) {
+  if (isBlank(value)) return null;
+  if (type === 'date') {
+    const n = dateSerial(value);
+    return n == null ? { value: String(value) } : { value: n, number: true };
+  }
+  if (type === 'percent') {
+    const n = amount(value);
+    return n == null ? { value: String(value) } : { value: n / 100, number: true };
+  }
+  if (type === 'money' || type === 'number') {
+    const n = amount(value);
+    return n == null ? { value: String(value) } : { value: n, number: true };
+  }
+  return { value: String(value) };
+}
+
+/**
+ * Everything typed into the popup beyond tabs 1, 3 and 5, as what
+ * fillAccountMriWorkbook writes: `cells` (single cells by sheet) and
+ * `tables` (the list tables, lowest on each sheet first, so a table that
+ * grows does not move one still to be written).
+ */
+export function mriFormExport(form = {}) {
+  const cells = {};
+  const put = (path, ref, value, type) => {
+    const cell = cellFor(value, type);
+    if (cell) (cells[path] ||= []).push({ ref, ...cell });
+  };
+  const d = form.diagnosis || {};
+  for (const system of BODY_SYSTEMS) {
+    for (const s of system.signs) put(sheet(2), `D${s.row}`, d.signals?.[s.key]);
+    put(sheet(2), `D${system.summaryRow}`, d.footprint?.[system.key]);
+    put(sheet(2), `E${system.summaryRow}`, d.notes?.[system.key]);
+  }
+  put(sheet(2), RAW_INTEL_CELL, d.rawIntel);
+  for (const f of OPPORTUNITY_FIELDS) put(sheet(4), `B${f.row}`, form.opportunity?.[f.key], f.type);
+  for (const s of BUY_STATEMENTS) put(sheet(6), `D${s.row}`, form.dealHealth?.buy?.[s.key]);
+  for (const s of OURS_STATEMENTS) put(sheet(6), `D${s.row}`, form.dealHealth?.ours?.[s.key]);
+
+  const table = (def, rows) => ({
+    path: def.path,
+    startRow: def.startRow,
+    endRow: def.endRow,
+    columns: def.columns.map(c => ({ col: c.col, key: c.key, number: c.type === 'number' || c.type === 'date' })),
+    rows: (rows || []).filter(r => rowHasText(r, def.columns)).map(r => {
+      const out = {};
+      for (const c of def.columns) {
+        const cell = cellFor(r[c.key], c.type);
+        if (cell) out[c.key] = cell.value;
+      }
+      return out;
+    }),
+  });
+  return {
+    cells,
+    tables: [
+      table(MRI_TABLES.pursuitTeam, form.pursuitTeam),
+      table(MRI_TABLES.evidence, form.evidence),
+      table(MRI_TABLES.yellowLights, form.dealHealth?.yellowLights),
+      table(MRI_TABLES.decisionGrid, form.dealHealth?.decisionGrid),
+      table(MRI_TABLES.closePlan, form.closePlan),
+    ],
+  };
+}
+
+/** The key a company's Account MRI is saved under in settings.accountMri. */
+export function mriSlug(company) {
+  return String(company || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
