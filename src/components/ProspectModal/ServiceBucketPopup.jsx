@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { SERVICE_STATUSES } from '../../data/enums';
+import { EDIT_SERVICE_STATUSES } from '../../utils/serviceStatusList';
 
 export default function ServiceBucketPopup({
   name,
@@ -16,6 +17,8 @@ export default function ServiceBucketPopup({
   manualOf,
   effectiveOf,
   colorOf,
+  statuses = SERVICE_STATUSES,
+  onEditStatuses = null,
   counted,
   countLocked,
   onApply,
@@ -107,11 +110,15 @@ export default function ServiceBucketPopup({
               <span style={{ fontSize: '0.75rem' }}>Set all to</span>
               <select
                 value={status}
-                onChange={(e) => setStatus(e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value === EDIT_SERVICE_STATUSES) { onEditStatuses?.(); return; }
+                  setStatus(e.target.value);
+                }}
                 aria-label="Status for every service in this bucket"
                 style={{ fontSize: '0.75rem', padding: '0.25rem 0.3rem', border: '1px solid var(--color-border, #CBD5E1)', borderRadius: 4, fontFamily: 'inherit' }}
               >
-                {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>)}
+                {statuses.map(s => <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>)}
+                {onEditStatuses && <option value={EDIT_SERVICE_STATUSES}>Edit statuses...</option>}
               </select>
               <button
                 type="button"
