@@ -84,6 +84,8 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, ta
     return [...new Set(buildServiceBoard(settings || {}, solutions).flatMap(c => c.items || []))];
   }, [settings]);
   const serviceOverrides = settings?.serviceOverrides;
+  const hiddenServices = settings?.hiddenServices;
+  const serviceRenames = settings?.serviceRenames;
   const oppsByAccount = useMemo(() => {
     const map = new Map();
     for (const o of oppsRecords || []) {
@@ -111,6 +113,8 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, ta
       oppRows: companyOpps,
       services: serviceNames,
       serviceOverrides: serviceOverrides || {},
+      hidden: hiddenServices,
+      renames: serviceRenames,
     });
     const companyDeals = dealsForCompany(deals.list, deals.map, record.company, record.aliases);
     // What the tracker says, then what the popup has saved over it.
@@ -150,7 +154,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, ta
       profile,
       stage,
     };
-  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, settings?.companyContactLinks, settings?.companyContactExclusions]);
+  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, settings?.companyContactLinks, settings?.companyContactExclusions]);
 
   // The company whose Account MRI popup is open.
   const [openId, setOpenId] = useState(null);
