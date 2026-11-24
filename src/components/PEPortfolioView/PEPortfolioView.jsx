@@ -2956,7 +2956,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
     return out;
   }, [firms, listFlagsByCompany, raClientsOnly]);
 
-  const columns = useMemo(() => [
+  const allColumns = useMemo(() => [
     { key: 'peFirm', label: 'PE Firm', defaultWidth: 190, sticky: true, render: (r) => (
       <button
         type="button"
@@ -3006,6 +3006,17 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
     { key: 'pcDescription', label: 'PC Description', defaultWidth: 320 },
     { key: 'notes', label: 'Notes', defaultWidth: 220 },
   ], [firms, onSelectProspect]);
+  // On the RA Clients sub-tab the RA client a PC is tagged to, and its
+  // Client Manager, are what the tab is about, so they start beside the
+  // company name instead of off to the right. That tab has its own
+  // tableId, so this is only its default order; a drag there still wins.
+  const columns = useMemo(() => {
+    if (!raClientsOnly) return allColumns;
+    const lead = ['raClientMatch', 'clientManager'];
+    const rest = allColumns.filter(c => !lead.includes(c.key));
+    const at = rest.findIndex(c => c.key === 'companyName') + 1;
+    return [...rest.slice(0, at), ...lead.map(k => allColumns.find(c => c.key === k)), ...rest.slice(at)];
+  }, [allColumns, raClientsOnly]);
 
   const filtered = useMemo(() => {
     let out = rows;
