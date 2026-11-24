@@ -197,6 +197,7 @@ export function strategicAccountRows({ accounts = [], prospects = [], lookup, is
         type: source.type || '',
         cdm: source.cdm || '',
         record: byId.get(source.id) || null,
+        targetNames: Array.isArray(source.targetNames) ? source.targetNames : [],
       };
       out.set(id, row);
     }
