@@ -10,9 +10,17 @@
 // the template; it lives in utils/accountMri.js, where the workbook is
 // filled too. The export needs the table narrowed to a single company (the
 // search box or any column filter), since the template holds one account.
+//
+// Clicking a company opens its Account MRI popup (AccountMriModal): the
+// template's seven tabs as a form, saved per company under
+// settings.accountMri. What is saved there is laid over the tracker's
+// answers in this table and in the export.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MRI_FILLED_FIELDS, accountMriProfile, buyingCommitteeRows, siteUtilityRows, fillAccountMriWorkbook, mriFileName } from '../../utils/accountMri';
+import { MRI_FILLED_FIELDS, accountMriProfile, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug } from '../../utils/accountMriForm';
+import { downloadAccountMri } from '../../utils/accountMriDownload';
+import { AccountMriModal } from './AccountMriModal';
 import { isPrimaryPoc } from '../../utils/attendeeRoles';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { companyRosterContacts } from '../../utils/companyRoster';
@@ -21,7 +29,6 @@ import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import { DataTable } from '../common/DataTable';
 import { LISTED_ROW_STYLE, LISTED_COMPANY_CELL, LISTED_NAME_INK } from './strategicListedStyle';
-import templateUrl from '../../assets/account-mri-intake-template.xlsx?url';
 
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
 // Company is pinned here, and a pinned cell's own edge shadow would be lost
@@ -35,7 +42,7 @@ const siteListSlug = company => String(company || '').toLowerCase().replace(/[^a
 
 // `isListed(row)` says whether the Strategic Accounts list names the row's
 // company; those rows are drawn in the list's red, as on the Accounts view.
-export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updateSettings, onSelect }) {
+export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updateSettings, updateSettingsPath, onSelect }) {
   // The Deals subtab's agreements and its client-name mapping, which the
   // Fee, Set-up and Contract term rows read. Re-read when either changes.
   const [deals, setDeals] = useState(() => ({ list: loadDealsList().data || [], map: loadDealClientMap() }));
@@ -57,6 +64,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
     [hubspotContacts],
   );
   const siteLists = settings?.companySiteLists;
+  const savedForms = settings?.accountMri;
 
   const mriRows = useMemo(() => rows.map(r => {
     const record = r.record || { company: r.company, status: r.status, cdm: r.cdm };
@@ -65,21 +73,38 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
       exclusions: settings?.companyContactExclusions,
     });
     const companyDeals = dealsForCompany(deals.list, deals.map, record.company, record.aliases);
+    // What the tracker says, then what the popup has saved over it.
+    const trackerProfile = accountMriProfile({
+      record,
+      tier: r.tier,
+      contacts,
+      contracts: companyDeals.length ? contractsSummary(companyDeals) : null,
+    });
+    const trackerCommittee = buyingCommitteeRows(contacts.filter(isDecisionMakerContact));
+    const form = (savedForms || {})[mriSlug(r.company)] || null;
     return {
       id: r.id,
       company: r.company,
       record: r.record,
       listed: !!isListed?.(r),
-      committee: buyingCommitteeRows(contacts.filter(isDecisionMakerContact)),
+      form,
+      trackerProfile,
+      trackerCommittee,
+      committee: committeeRows(form?.committee, trackerCommittee).filter(c => c.name || c.email),
       sites: siteUtilityRows((siteLists || {})[siteListSlug(record.company)]),
-      profile: accountMriProfile({
-        record,
-        tier: r.tier,
-        contacts,
-        contracts: companyDeals.length ? contractsSummary(companyDeals) : null,
-      }),
+      profile: mergeProfile(trackerProfile, form?.profile).values,
     };
-  }), [rows, isListed, taggedContacts, siteLists, deals, settings?.companyContactLinks, settings?.companyContactExclusions]);
+  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, settings?.companyContactLinks, settings?.companyContactExclusions]);
+
+  // The company whose Account MRI popup is open.
+  const [openId, setOpenId] = useState(null);
+  const openRow = openId == null ? null : (mriRows.find(r => r.id === openId) || null);
+  const saveForm = useCallback((company, next) => {
+    const slug = mriSlug(company);
+    if (!slug) return;
+    if (updateSettingsPath) updateSettingsPath({ [`accountMri.${slug}`]: next });
+    else updateSettings?.({ accountMri: { ...(settings?.accountMri || {}), [slug]: next } });
+  }, [updateSettingsPath, updateSettings, settings?.accountMri]);
 
   const columns = useMemo(() => [
     {
@@ -88,20 +113,20 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
       getFilterValue: r => r.company,
       exportValue: r => r.company,
       cellStyle: r => (r.listed ? LISTED_PINNED_COMPANY_CELL : undefined),
-      render: r => (r.record && onSelect ? (
+      render: r => (
         <button
           type="button"
-          onClick={() => onSelect(r.record)}
-          title="Open the company"
+          onClick={() => setOpenId(r.id)}
+          title="Open the Account MRI for this company"
           style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: r.listed ? 700 : 600, color: r.listed ? LISTED_NAME_INK : '#1D4ED8', cursor: 'pointer', textAlign: 'left' }}
         >{r.company}</button>
-      ) : <span style={{ fontWeight: r.listed ? 700 : 600, color: r.listed ? LISTED_NAME_INK : undefined }}>{r.company}</span>),
+      ),
     },
     ...FIELD_COLUMNS.map(f => ({
       key: f.key,
       label: f.label,
       defaultWidth: WIDE.has(f.key) ? 260 : 150,
-      headerTitle: `Template row "${f.label}", filled from the tracker's ${f.source}.`,
+      headerTitle: `Template row "${f.label}", filled from the tracker's ${f.source} unless the Account MRI popup has its own value.`,
       getSortValue: r => {
         const v = r.profile[f.key];
         if (v == null || v === '') return null;
@@ -117,7 +142,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
     })),
     {
       key: 'decisionMakers', label: 'Decision Makers', defaultWidth: 150,
-      headerTitle: 'Contacts at the company tagged Decision Maker. The export lists them on tab 3, Buying Committee.',
+      headerTitle: 'The buying committee: the contacts tagged Decision Maker, or the list kept in the Account MRI popup once it has been edited. The export lists them on tab 3.',
       getSortValue: r => r.committee.length,
       getFilterValue: r => r.committee.map(c => c.name).join(', '),
       exportValue: r => r.committee.map(c => c.name).join(', '),
@@ -133,7 +158,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
       exportValue: r => r.sites.length || '',
       render: r => (r.sites.length ? <span style={{ color: '#475569' }}>{r.sites.length.toLocaleString()}</span> : blank),
     },
-  ], [onSelect]);
+  ], []);
 
   // What the table is showing after its own column filters: the export is
   // offered once that is exactly one company.
@@ -147,23 +172,13 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
     setBusy(true);
     setError('');
     try {
-      const [{ default: JSZip }, res] = await Promise.all([import('jszip'), fetch(templateUrl)]);
-      if (!res.ok) throw new Error(`The template could not be loaded (${res.status}).`);
-      const zip = await JSZip.loadAsync(await res.arrayBuffer());
-      await fillAccountMriWorkbook(zip, { profile: one.profile, committee: one.committee, sites: one.sites });
-      const blob = await zip.generateAsync({
-        type: 'blob',
-        compression: 'DEFLATE',
-        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      await downloadAccountMri({
+        company: one.company,
+        profile: one.profile,
+        committee: one.committee,
+        sites: one.sites,
+        extra: one.form ? mriFormExport(one.form) : null,
       });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = mriFileName(one.company);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
       setError(err?.message || 'The export failed.');
     } finally {
@@ -175,7 +190,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
     key: 'mri-export',
     label: busy ? 'Exporting...' : 'Export Account MRI',
     title: one
-      ? `Download the Account MRI intake template filled in for ${one.company}: tab 1, its decision makers on tab 3 and its site list on tab 5.`
+      ? `Download the Account MRI intake template filled in for ${one.company}: tab 1, its buying committee on tab 3, its site list on tab 5, and whatever its Account MRI popup holds for the other tabs.`
       : 'Filter the table to one company (the search box or any column filter) to export its Account MRI template.',
     disabled: !one || busy,
     onClick: exportOne,
@@ -186,7 +201,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
       <div style={{ fontSize: '0.72rem', color: one ? '#047857' : '#64748B' }}>
         {one
           ? `Ready to export ${one.company}: tab 1, ${one.committee.length} decision maker${one.committee.length === 1 ? '' : 's'} on tab 3 and ${one.sites.length.toLocaleString()} site${one.sites.length === 1 ? '' : 's'} on tab 5.`
-          : 'The Account MRI intake template: tab 1 (Profile & Background) one column per row the tracker fills, plus the decision makers for tab 3 and the saved site list for tab 5. Filter to one company to export its template.'}
+          : 'The Account MRI intake template: tab 1 (Profile & Background) one column per row the tracker fills, plus the decision makers for tab 3 and the saved site list for tab 5. Click a company to open its Account MRI and work all seven tabs; filter to one company to export its template.'}
         {error && <span style={{ color: '#B91C1C', marginLeft: 8 }}>{error}</span>}
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
@@ -205,6 +220,18 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
           onFilteredRowsChange={setShown}
         />
       </div>
+      {openRow && (
+        <AccountMriModal
+          key={openRow.id}
+          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites }}
+          form={openRow.form}
+          onSave={next => saveForm(openRow.company, next)}
+          onClose={() => setOpenId(null)}
+          onOpenCompany={openRow.record && onSelect ? () => onSelect(openRow.record) : null}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      )}
     </>
   );
 }

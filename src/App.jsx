@@ -870,6 +870,7 @@ function App() {
               targetAccountsData={targetAccountsData}
               settings={settings}
               updateSettings={updateSettings}
+              updateSettingsPath={updateSettingsPath}
               cdmName={cdmName}
             />
           ) : view === 'table' ? (

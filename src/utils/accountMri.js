@@ -33,11 +33,11 @@ export const MRI_PROFILE_FIELDS = [
   { row: 10, key: 'tier', label: 'Tier', source: 'Tier' },
   { row: 11, key: 'existingClient', label: 'Existing client', source: 'Client?' },
   { row: 12, key: 'stage', label: 'Stage', source: 'Status' },
-  { row: 13, key: 'assignedSince', label: 'Assigned since', source: '' },
+  { row: 13, key: 'assignedSince', label: 'Assigned since', source: '', kind: 'date' },
   { row: 14, key: 'hq', label: 'HQ', source: 'HQ Region' },
   { row: 15, key: 'revenueB', label: 'Revenue ($B)', source: 'Revenue', kind: 'number' },
   { row: 16, key: 'sites', label: '# Sites', source: 'Sites', kind: 'number' },
-  { row: 17, key: 'energySpend', label: 'Energy spend ($M/yr)', source: '' },
+  { row: 17, key: 'energySpend', label: 'Energy spend ($M/yr)', source: '', kind: 'number' },
   { row: 19, key: 'mainContact', label: 'Main point of contact', source: 'Primary Point of Contact' },
   { row: 20, key: 'revenueText', label: 'Annual revenue / profit', source: 'Revenue' },
   { row: 21, key: 'currentProvider', label: 'Current provider', source: '' },
@@ -211,6 +211,11 @@ const xmlEscape = s => String(s)
   .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+function isoDateSerial(value) {
+  const m = String(value).trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000 + 25569 : null;
+}
+
 // `xml` (a whole sheet, or one row of it) with cell `ref` holding `value`,
 // keeping the cell's own style. Throws when the cell is not there, which
 // means the template was replaced by one laid out differently.
@@ -237,8 +242,12 @@ export function fillProfileSheet(sheetXml, profile, { column = 'C' } = {}) {
     const value = profile?.[f.key];
     if (value == null || value === '') continue;
     const ref = `${column}${f.row}`;
-    xml = setCell(xml, ref, value, f.kind === 'number');
-    if (f.kind !== 'number') xml = fitRowHeight(xml, f.row, value);
+    // A date the popup took ("2026-11-23") is stored as the day number the
+    // cell's date format reads; anything else in that row goes across as text.
+    const day = f.kind === 'date' ? isoDateSerial(value) : null;
+    const numeric = f.kind === 'number' || day != null;
+    xml = setCell(xml, ref, day ?? value, numeric);
+    if (!numeric) xml = fitRowHeight(xml, f.row, value);
     written.push(ref);
   }
   return { xml, written };
@@ -268,7 +277,12 @@ export const MRI_COMMITTEE_TABLE = {
   path: 'xl/worksheets/sheet3.xml',
   startRow: 6,
   endRow: 30,
-  columns: [{ col: 'A', key: 'name' }, { col: 'B', key: 'title' }, { col: 'C', key: 'email' }, { col: 'D', key: 'phone' }],
+  // E to J are the popup's own dropdowns; the tracker has nothing for them.
+  columns: [
+    { col: 'A', key: 'name' }, { col: 'B', key: 'title' }, { col: 'C', key: 'email' }, { col: 'D', key: 'phone' },
+    { col: 'E', key: 'bodySystem' }, { col: 'F', key: 'buyingRole' }, { col: 'G', key: 'support' },
+    { col: 'H', key: 'decisionRole' }, { col: 'I', key: 'relationship' }, { col: 'J', key: 'relOwner' },
+  ],
 };
 export const MRI_SITES_TABLE = {
   path: 'xl/worksheets/sheet5.xml',
@@ -420,8 +434,14 @@ export function siteUtilityRows(entry) {
  * `profile`, tab 3 from `committee`, tab 5 from `sites`. Edits `zip` in
  * place and returns what was written. The workbook is marked to recalculate
  * when opened, so tab 5's totals read the sites just written.
+ *
+ * `extra` is what the Account MRI popup holds for the other tabs
+ * (accountMriForm.mriFormExport): `cells` as { sheet path: [{ ref, value,
+ * number }] } and `tables` as fillTableSheet tables each with its `rows`.
+ * They are written first, so the committee growing past its entry rows
+ * does not move a cell still to be written.
  */
-export async function fillAccountMriWorkbook(zip, { profile = {}, committee = [], sites = [] } = {}) {
+export async function fillAccountMriWorkbook(zip, { profile = {}, committee = [], sites = [], extra = null } = {}) {
   const edit = async (path, fn) => {
     const file = zip.file(path);
     if (!file) throw new Error(`The Account MRI template has no ${path}.`);
@@ -429,6 +449,20 @@ export async function fillAccountMriWorkbook(zip, { profile = {}, committee = []
     zip.file(path, result.xml);
     return result;
   };
+  let extraCells = 0;
+  for (const [path, cells] of Object.entries(extra?.cells || {})) {
+    await edit(path, (xml) => {
+      let next = xml;
+      for (const c of cells) next = setCell(next, c.ref, c.value, !!c.number);
+      extraCells += cells.length;
+      return { xml: next };
+    });
+  }
+  let extraRows = 0;
+  for (const table of extra?.tables || []) {
+    const t = await edit(table.path, xml => fillTableSheet(xml, table, table.rows));
+    extraRows += t.written;
+  }
   const p = await edit(MRI_PROFILE_SHEET_PATH, xml => fillProfileSheet(xml, profile));
   const c = await edit(MRI_COMMITTEE_TABLE.path, xml => fillTableSheet(xml, MRI_COMMITTEE_TABLE, committee));
   const s = await edit(MRI_SITES_TABLE.path, xml => {
@@ -445,7 +479,7 @@ export async function fillAccountMriWorkbook(zip, { profile = {}, committee = []
   await edit('xl/workbook.xml', xml => ({
     xml: /fullCalcOnLoad/.test(xml) ? xml : xml.replace(/<calcPr\b/, '<calcPr fullCalcOnLoad="1"'),
   }));
-  return { profileCells: p.written.length, committeeRows: c.written, siteRows: s.written };
+  return { profileCells: p.written.length, committeeRows: c.written, siteRows: s.written, ...(extra ? { extraCells, extraRows } : {}) };
 }
 
 // The tab's own part of the workbook.
