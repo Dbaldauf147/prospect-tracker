@@ -55,6 +55,18 @@ eq(
   { 'Bill payment': 'Sold', IDM: 'Renewal', Audits: 'Not Sold' },
   'manual status, else the stage of an opp on the account naming the service',
 );
+eq(
+  accountServiceStatuses({
+    company: 'Northwind',
+    servicesExplored: { 'Building Advisor': 'Not Sold', Audits: 'Not Sold', Hidden: 'Sold' },
+    oppRows: [{ Account: 'Northwind', Stage: 'Sold', Scope: 'Bill payment' }],
+    services: ['Bill payment', 'Audits', 'Hidden'],
+    hidden: ['Hidden'],
+    renames: { Audits: 'Site audits' },
+  }),
+  { 'Bill payment': 'Sold', 'Site audits': 'Not Sold' },
+  'only the rows the board shows: no retired names, no hidden services, the board\'s own labels',
+);
 eq(servicesInScope({}), '', 'no services');
 eq(
   mainContactText([
