@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs';
 import {
   MRI_PROFILE_FIELDS, MRI_PROFILE_SHEET_PATH, accountMriProfile, fillProfileSheet,
   fillTableSheet, fillAccountMriWorkbook, buyingCommitteeRows, siteUtilityRows, MRI_COMMITTEE_TABLE, MRI_SITES_TABLE,
-  revenueInBillions, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, mainContactText, mriFileName,
+  revenueInBillions, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, mainContactText, mriFileName,
 } from '../src/utils/accountMri.js';
 
 let passed = 0, failed = 0;
@@ -33,13 +33,27 @@ eq(mriStage('Hold Off'), 'Hold Off', 'other statuses go across as they are');
 
 eq(plainMentions('@![Engie] on @[Bill payment]\nand Enel X'), 'Engie on Bill payment; and Enel X', 'mention chips read as names');
 const board = { 'Bill payment': 'Sold', IDM: 'Qualifying', 'API/ETL': 'N/A', X: '-', A: 'Sold', RECs: 'Not Sold', Audits: 'Exploring' };
-eq(servicesInScope(board), 'Sold: A, Bill payment\nExplored: Audits (Exploring), IDM (Qualifying)\nNot Sold: RECs', 'sold, explored with status, not sold, a line each, A to Z');
-eq(servicesInScope({ RECs: 'Not Sold' }), 'Sold: None\nExplored: None\nNot Sold: RECs', 'an empty bucket says None');
-eq(servicesInScope({ IDM: 'Qualifying', 'API/ETL': 'N/A', X: '-' }), 'Sold: None\nExplored: IDM (Qualifying)\nNot Sold: None', 'only explored');
-eq(servicesInScope({ 'API/ETL': 'N/A', X: '-' }), '', 'nothing explored');
-eq(upsellOpportunities(board, 'Dana Reyes'), 'Qualifying: Audits, IDM\nResponsible: Dana Reyes', 'services in flight, then the salesperson');
-eq(upsellOpportunities(board), 'Qualifying: Audits, IDM', 'no salesperson, no responsible line');
-eq(upsellOpportunities({ A: 'Sold', RECs: 'Not Sold' }, 'Dana Reyes'), '', 'nothing being qualified');
+eq(servicesInScope(board), 'Sold: A, Bill payment\nNot Sold: RECs', 'sold and not sold, a line each, A to Z');
+eq(servicesInScope({ RECs: 'Not Sold' }), 'Sold: None\nNot Sold: RECs', 'an empty bucket says None');
+eq(servicesInScope({ IDM: 'Qualifying', 'API/ETL': 'N/A', X: '-' }), '', 'in-flight services are not in scope');
+eq(upsellOpportunities({ ...board, ESG: 'Renewal', UCA: 'Renewal' }, 'Dana Reyes'), 'Qualifying: IDM\nRenewal: ESG, UCA\nResponsible: Dana Reyes', 'qualifying, then renewal, then the salesperson');
+eq(upsellOpportunities(board), 'Qualifying: IDM', 'no salesperson, no responsible line');
+eq(upsellOpportunities({ Audits: 'Exploring', Q: 'Quoted' }, 'Dana Reyes'), '', 'other in-flight statuses are not upsell');
+eq(upsellOpportunities({ A: 'Sold', RECs: 'Not Sold' }, 'Dana Reyes'), '', 'nothing qualifying or renewing');
+eq(
+  accountServiceStatuses({
+    company: 'Northwind',
+    servicesExplored: { idm: 'Renewal', UCA: '-' },
+    oppRows: [
+      { Account: 'Northwind', Stage: 'Sold', Scope: 'Bill payment, IDM' },
+      { Account: 'Northwind', Stage: 'Not Sold', Scope: 'Audits' },
+      { Account: 'Other Co', Stage: 'Sold', Scope: 'UCA' },
+    ],
+    services: ['Bill payment', 'IDM', 'Audits', 'UCA'],
+  }),
+  { 'Bill payment': 'Sold', IDM: 'Renewal', Audits: 'Not Sold' },
+  'manual status, else the stage of an opp on the account naming the service',
+);
 eq(servicesInScope({}), '', 'no services');
 eq(
   mainContactText([
@@ -71,9 +85,10 @@ eq(profile.currentProvider, 'Engie; Enel X', 'current provider is the competitor
 eq(profile.fee, '$450,000 / yr', 'fee');
 eq(profile.setup, '$60,000 one-time', 'setup');
 eq(profile.ubm, 'Sold', 'ubm');
-eq(profile.services, 'Sold: Bill payment\nExplored: IDM (Qualifying)\nNot Sold: None', 'services in scope');
+eq(profile.services, 'Sold: Bill payment\nNot Sold: None', 'services in scope');
 eq(profile.upsell, 'Qualifying: IDM\nResponsible: Alex Morgan', 'upsell names the salesperson');
 eq(profile.contractTerm, 'Expires Mar 31, 2027', 'contract term');
+eq(accountMriProfile({ record: { company: 'X', servicesExplored: { IDM: 'Sold' } }, serviceStatuses: { Audits: 'Not Sold', 'Bill payment': 'Sold' } }).services, 'Sold: Bill payment\nNot Sold: Audits', 'board statuses win over the manual ones');
 eq(profile.assignedSince, '2025-03-14', 'assigned since is the Target Accounts entry date');
 eq(accountMriProfile({ record: { company: 'X' } }).existingClient, '', 'no status, no client answer');
 eq(accountMriProfile({ record: { company: 'X', status: 'Qualifying' } }).existingClient, 'No', 'not a client');
