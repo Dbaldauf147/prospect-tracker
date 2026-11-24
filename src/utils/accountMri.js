@@ -147,14 +147,24 @@ export function mainContactText(contacts) {
  * the card's manual statuses misses them. Services with no status are left
  * out.
  *
- *   services  the board's service names (buildServiceBoard's items)
+ * Only the rows the board shows are read: a status saved under a name the
+ * board no longer lists (a retired or renamed service) is not on the board,
+ * so it is not in the MRI either, and a hidden service is left out the same
+ * way. Each service is keyed by the name the board shows (serviceRenames).
+ *
+ *   services  the board's service names (buildServiceBoard's items); with
+ *             none given, the card's own manual statuses are read instead
+ *   hidden    settings.hiddenServices
+ *   renames   settings.serviceRenames
  */
-export function accountServiceStatuses({ company, servicesExplored, oppRows, services = [], serviceOverrides = {} } = {}) {
+export function accountServiceStatuses({ company, servicesExplored, oppRows, services = [], serviceOverrides = {}, hidden = [], renames = {} } = {}) {
+  const hide = new Set((hidden || []).map(n => text(n).toLowerCase()));
   const seen = new Set();
   const names = [];
-  for (const n of [...services, ...Object.keys(servicesExplored || {})]) {
+  const source = services.length ? services : Object.keys(servicesExplored || {});
+  for (const n of source) {
     const k = text(n).toLowerCase();
-    if (!k || seen.has(k)) continue;
+    if (!k || seen.has(k) || hide.has(k)) continue;
     seen.add(k);
     names.push(text(n));
   }
@@ -162,7 +172,7 @@ export function accountServiceStatuses({ company, servicesExplored, oppRows, ser
   const readings = scopeServiceStatuses({
     services: names, account: company, oppRows, manualStatuses: servicesExplored, serviceOverrides,
   });
-  for (const [name, r] of readings) if (r.status) out[name] = r.status;
+  for (const [name, r] of readings) if (r.status) out[text(renames?.[name]) || name] = r.status;
   return out;
 }
 
