@@ -388,6 +388,25 @@ export function dateSerial(iso) {
   const days = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000 + 25569;
   return Number.isFinite(days) ? days : null;
 }
+/**
+ * A money box's text as it should read: a dollar sign and thousands
+ * commas ("1350000" -> "$1,350,000"), keeping a decimal point and up to two
+ * cents digits as they are typed. Anything that isn't a digit, the first
+ * point or a leading minus is dropped; no digits at all reads as blank.
+ * amount() strips the "$" and commas back off, so the export is unchanged.
+ */
+export function formatMoneyInput(raw) {
+  const s = String(raw ?? '').trim();
+  const negative = s.startsWith('-');
+  const cleaned = s.replace(/[^\d.]/g, '');
+  const dot = cleaned.indexOf('.');
+  const whole = (dot === -1 ? cleaned : cleaned.slice(0, dot)).replace(/^0+(?=\d)/, '');
+  const cents = dot === -1 ? null : cleaned.slice(dot + 1).replace(/\./g, '').slice(0, 2);
+  if (!whole && cents == null) return '';
+  const grouped = (whole || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${negative ? '-' : ''}$${grouped}${cents == null ? '' : `.${cents}`}`;
+}
+
 const amount = v => {
   const n = Number(String(v ?? '').replace(/[$,%\s]/g, ''));
   return Number.isFinite(n) ? n : null;

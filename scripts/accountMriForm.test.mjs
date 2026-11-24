@@ -10,7 +10,7 @@ import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_FIELDS, BUY_STATEMENTS, OURS_STATEMENTS, WIN_MATRIX,
   MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
   mriStageProgress,
-  mriFormExport, dateSerial, mriSlug,
+  mriFormExport, dateSerial, mriSlug, formatMoneyInput,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -129,7 +129,7 @@ const full = {
     rawIntel: 'From the 10-K: net zero by 2030.',
   },
   pursuitTeam: [{ name: 'Dana Reyes', role: 'Account lead' }, {}],
-  opportunity: { name: 'Enterprise UBM', planStarted: '2026-09-01', odds: '40', revenue: '1,350,000', proofOfConcept: 'TBD', valueDrivers: 'Line one\nLine two' },
+  opportunity: { name: 'Enterprise UBM', planStarted: '2026-09-01', odds: '40', revenue: '$1,350,000', proofOfConcept: 'TBD', valueDrivers: 'Line one\nLine two' },
   evidence: [{ issue: 'Late fees', evidence: '3% late', impact: '$280k / yr', importance: '8', validated: 'Yes' }],
   dealHealth: {
     buy: { businessCase: 'Agree' },
@@ -167,6 +167,14 @@ eq([o(6).getCell('D5').value, o(6).getCell('D17').value, o(6).getCell('D6').valu
 eq([o(6).getCell('A33').value, o(6).getCell('B33').value, o(6).getCell('B46').value, o(6).getCell('F46').value], [1, 'Decision 1', 'Decision 14', 'No'], 'tab 6: decision grid, past its entry rows');
 eq([o(6).getCell('B50').value, o(6).getCell('B51').value, o(6).getCell('C51').value, o(6).getCell('D51').value], ['CFO has not seen the business case', 'CFO has not seen it', 'Readout in January', 'No'], 'tab 6: yellow lights moved down with their example row');
 eq([o(7).getCell('A5').value, iso(o(7).getCell('B5').value), o(7).getCell('C5').value, o(7).getCell('F5').value], ['Pricing workshop', '2026-12-15', 'Dana Reyes', 'No'], 'tab 7: close plan');
+
+// Money boxes read as dollars with commas as they are typed.
+eq(
+  ['1350000', '$1,350,000', '1234.5', '1234.567', '.5', '0', '007', '-2500', 'abc', '', null, '12a3'].map(formatMoneyInput),
+  ['$1,350,000', '$1,350,000', '$1,234.5', '$1,234.56', '$0.5', '$0', '$7', '-$2,500', '', '', '', '$123'],
+  'money input formatting',
+);
+eq(mriFormExport({ opportunity: { programValue: formatMoneyInput('2500000') } }).cells, mriFormExport({ opportunity: { programValue: '2500000' } }).cells, 'a formatted money value exports as the same number');
 
 // Nothing typed changes nothing beyond what the export always wrote.
 const bare = await JSZip.loadAsync(templateBytes);
