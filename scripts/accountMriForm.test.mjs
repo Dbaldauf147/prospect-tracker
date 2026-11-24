@@ -9,6 +9,7 @@ import { fillAccountMriWorkbook, MRI_PROFILE_FIELDS, MRI_COMMITTEE_TABLE } from 
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_FIELDS, BUY_STATEMENTS, OURS_STATEMENTS, WIN_MATRIX,
   MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
+  mriStageProgress,
   mriFormExport, dateSerial, mriSlug,
 } from '../src/utils/accountMriForm.js';
 
@@ -108,6 +109,11 @@ eq(tabProgress({ form, profile: m.values, committee: dms, sites: [] }), {
   profile: Math.round((5 / MRI_PROFILE_FIELDS.length) * 100), diagnosis: 7, committee: 100, opportunity: Math.round((2 / OPPORTUNITY_FIELDS.length) * 100), sites: 0, dealHealth: 11, closePlan: 50,
 }, 'progress per tab');
 eq(tabProgress({}).closePlan, 0, 'nothing saved');
+eq(mriStageProgress(tabProgress({})).text, '1 - 0%', 'stage progress: nothing saved is stage 1');
+eq(mriStageProgress({ profile: 55 }).text, '1 - 55%', 'stage progress: first unfinished tab');
+eq(mriStageProgress({ profile: 100, diagnosis: 15, committee: 100 }).text, '2 - 15%', 'stage progress: moves on once a tab is done');
+eq(mriStageProgress({ profile: 100, diagnosis: 100, committee: 100, opportunity: 100, sites: 100, dealHealth: 100, closePlan: 40 }).text, '7 - 40%', 'stage progress: last tab');
+eq(mriStageProgress(Object.fromEntries(MRI_TABS.map(t => [t.key, 100])))?.text, '7 - 100%', 'stage progress: all done');
 
 eq(dateSerial('2026-12-15'), 46371, 'a date as its spreadsheet day number');
 eq(dateSerial('next week'), null, 'not a date');
