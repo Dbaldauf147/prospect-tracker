@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs';
 import {
   MRI_PROFILE_FIELDS, MRI_PROFILE_SHEET_PATH, accountMriProfile, fillProfileSheet,
   fillTableSheet, fillAccountMriWorkbook, buyingCommitteeRows, siteUtilityRows, MRI_COMMITTEE_TABLE, MRI_SITES_TABLE,
-  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, mainContactText, mriFileName,
+  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, isPortfolioCompanyContact, mainContactText, mriFileName,
 } from '../src/utils/accountMri.js';
 
 let passed = 0, failed = 0;
@@ -89,6 +89,24 @@ eq(profile.services, 'Sold: Bill payment\nNot Sold: None', 'services in scope');
 eq(profile.upsell, 'Qualifying: IDM\nResponsible: Alex Morgan', 'upsell names the salesperson');
 eq(profile.contractTerm, 'Expires Mar 31, 2027', 'contract term');
 eq(accountMriProfile({ record: { company: 'X', servicesExplored: { IDM: 'Sold' } }, serviceStatuses: { Audits: 'Not Sold', 'Bill payment': 'Sold' } }).services, 'Sold: Bill payment\nNot Sold: Audits', 'board statuses win over the manual ones');
+{
+  const firm = {
+    company: 'Brookfield Asset Management', aliases: 'BAM\nBrookfield AM',
+    portfolioCompanies: [{ companyName: 'Brookfield Properties' }, { companyName: 'Brookfield Asset Management Renewables' }, { companyName: '' }],
+  };
+  eq(isPortfolioCompanyContact({ company: 'Brookfield Properties' }, firm), true, 'a portfolio company contact');
+  eq(isPortfolioCompanyContact({ company: 'Brookfield Asset Management Renewables Inc' }, firm), true, 'a portfolio company, spelled differently');
+  eq(isPortfolioCompanyContact({ company: 'Brookfield Asset Management' }, firm), false, 'the company itself, even though a holding is named like it');
+  eq(isPortfolioCompanyContact({ company: 'BAM' }, firm), false, 'an alias of the company');
+  eq(isPortfolioCompanyContact({ company: '' }, firm), false, 'no Company text');
+  eq(isPortfolioCompanyContact({ company: 'Brookfield Properties' }, { company: 'X' }), false, 'no portfolio companies');
+  const poc = (firstname, company) => ({ firstname, lastname: 'Lee', company, dans_tags: 'Primary Point of Contact' });
+  eq(
+    accountMriProfile({ record: firm, contacts: [poc('Pat', 'Brookfield Properties'), poc('Sam', 'Brookfield Asset Management')] }).mainContact,
+    'Sam Lee',
+    'main contact skips the portfolio company\'s primary point of contact',
+  );
+}
 eq(profile.assignedSince, '2025-03-14', 'assigned since is the Target Accounts entry date');
 eq(ubmScope({ 'Bill payment': 'Qualifying' }), 'Qualifying', 'ubm in flight keeps its status');
 eq(ubmScope({ 'Bill payment': '-' }), '', 'ubm unexplored');

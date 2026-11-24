@@ -17,6 +17,8 @@ import { isPrimaryPoc } from './attendeeRoles.js';
 import { isActiveSiteStatus, pickSiteStatusColumn } from './siteStatus.js';
 import { asDate, asNumber, isInactiveAgreement } from './dealsFormat.js';
 import { scopeServiceStatuses } from './scopeServiceStatus.js';
+import { companiesMatch } from './listFlags.js';
+import { exactCompanyKey } from './companyRoster.js';
 
 // The service the template's UBM row reads.
 export const UBM_SERVICE = 'Bill payment';
@@ -105,6 +107,25 @@ export function plainMentions(raw) {
 
 function contactName(c) {
   return `${text(c?.firstname)} ${text(c?.lastname)}`.trim();
+}
+
+/**
+ * Whether `contact` works at one of `record`'s portfolio companies rather
+ * than at the company itself. The roster's fuzzy name match can pull those
+ * people onto the parent (a holding named close to its owner), and the
+ * account's main point of contact has to be someone at the account. A
+ * Company text that is exactly the company's own name, or one of its
+ * aliases, always counts as the company's.
+ */
+export function isPortfolioCompanyContact(contact, record) {
+  const company = text(contact?.company);
+  if (!company) return false;
+  const own = [record?.company, ...String(record?.aliases || '').split(/[\n;,]+/),
+    ...String(record?.hubspotCompanyNames || '').split(/[\n;,]+/)]
+    .map(exactCompanyKey).filter(Boolean);
+  if (own.includes(exactCompanyKey(company))) return false;
+  const holdings = Array.isArray(record?.portfolioCompanies) ? record.portfolioCompanies : [];
+  return holdings.some(h => text(h?.companyName) && companiesMatch(company, text(h.companyName)));
 }
 
 /** "Name · email · phone" for each contact tagged Primary Point of Contact. */
@@ -323,7 +344,8 @@ export function accountMriProfile({ record, tier = '', contacts = [], deals = nu
     hq: text(p.hqRegion),
     revenueB: revenueInBillions(p.revenue),
     sites: Number.isFinite(sites) && sites > 0 ? sites : null,
-    mainContact: mainContactText(contacts),
+    // Someone at a portfolio company is never this account's main contact.
+    mainContact: mainContactText(contacts.filter(c => !isPortfolioCompanyContact(c, p))),
     revenueText: text(p.revenue),
     // The competitor on the account is who they buy from today, so it fills
     // Current provider too until somebody types something else there.
