@@ -117,30 +117,36 @@ export function mainContactText(contacts) {
   return out.join('; ');
 }
 
-// A service's bucket on the template: Sold and Not Sold go in the "Services
-// in scope" cell, and every status still in flight (Exploring, Qualifying,
-// Quoting, Quoted, Verbal ...) is an open opportunity, which goes in the
-// "Potential upsell opportunities" cell. N/A and never-explored services
-// are in neither. Each list is A to Z.
+// A service's bucket on the template. The "Services in scope" cell lists
+// every service explored on the company card: Sold, the ones still in
+// flight (Exploring, Qualifying, Quoting, Quoted, Verbal ...) with their
+// status, and Not Sold. The in-flight ones are also the open opportunities
+// the "Potential upsell opportunities" cell reads. N/A and never-explored
+// services are in neither. Each list is A to Z.
 function serviceBuckets(servicesExplored) {
   const names = { sold: [], inProgress: [], notSold: [] };
+  const statuses = {};
   for (const [name, status] of Object.entries(servicesExplored || {})) {
     const list = names[serviceStatusBucket(status)];
-    if (list && text(name)) list.push(text(name));
+    if (list && text(name)) {
+      list.push(text(name));
+      statuses[text(name)] = text(status);
+    }
   }
   for (const list of Object.values(names)) list.sort((x, y) => x.localeCompare(y));
-  return names;
+  return { ...names, statuses };
 }
 
 /**
- * The "Services in scope" cell: a "Sold:" line and a "Not Sold:" line, each
- * listing its services ("None" when it has none). '' when no service is
- * either.
+ * The "Services in scope" cell: a "Sold:" line, an "Explored:" line (each
+ * service with its status) and a "Not Sold:" line, each listing its
+ * services ("None" when it has none). '' when no service has been explored.
  */
 export function servicesInScope(servicesExplored) {
-  const { sold, notSold } = serviceBuckets(servicesExplored);
-  if (!sold.length && !notSold.length) return '';
-  return `Sold: ${sold.join(', ') || 'None'}\nNot Sold: ${notSold.join(', ') || 'None'}`;
+  const { sold, inProgress, notSold, statuses } = serviceBuckets(servicesExplored);
+  if (!sold.length && !inProgress.length && !notSold.length) return '';
+  const explored = inProgress.map(n => `${n} (${statuses[n]})`);
+  return `Sold: ${sold.join(', ') || 'None'}\nExplored: ${explored.join(', ') || 'None'}\nNot Sold: ${notSold.join(', ') || 'None'}`;
 }
 
 /**
