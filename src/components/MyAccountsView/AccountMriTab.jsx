@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MRI_FILLED_FIELDS, accountMriProfile, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { isPrimaryPoc } from '../../utils/attendeeRoles';
@@ -82,6 +82,16 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
     });
     const trackerCommittee = buyingCommitteeRows(contacts.filter(isDecisionMakerContact));
     const form = (savedForms || {})[mriSlug(r.company)] || null;
+    const profile = mergeProfile(trackerProfile, form?.profile).values;
+    const sites = siteUtilityRows((siteLists || {})[siteListSlug(record.company)]);
+    // The same per-tab progress the popup's tab strip shows, so this column
+    // and the popup always agree.
+    const stage = mriStageProgress(tabProgress({
+      form: form || {},
+      profile,
+      committee: committeeRows(form?.committee, trackerCommittee),
+      sites,
+    }));
     return {
       id: r.id,
       company: r.company,
@@ -91,8 +101,9 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
       trackerProfile,
       trackerCommittee,
       committee: committeeRows(form?.committee, trackerCommittee).filter(c => c.name || c.email),
-      sites: siteUtilityRows((siteLists || {})[siteListSlug(record.company)]),
-      profile: mergeProfile(trackerProfile, form?.profile).values,
+      sites,
+      profile,
+      stage,
     };
   }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, settings?.companyContactLinks, settings?.companyContactExclusions]);
 
@@ -121,6 +132,24 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
           style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: r.listed ? 700 : 600, color: r.listed ? LISTED_NAME_INK : '#1D4ED8', cursor: 'pointer', textAlign: 'left' }}
         >{r.company}</button>
       ),
+    },
+    {
+      key: 'mriProgress', label: 'MRI Progress', defaultWidth: 160,
+      headerTitle: 'How far the Account MRI has got: the first of its seven tabs that is not complete yet, and how much of that tab is filled. 7 - 100% is every tab done.',
+      getSortValue: r => r.stage.stage * 1000 + r.stage.pct,
+      getFilterValue: r => r.stage.text,
+      exportValue: r => r.stage.text,
+      render: (r) => {
+        const done = r.stage.stage === 7 && r.stage.pct >= 100;
+        return (
+          <span title={`Tab ${r.stage.stage}, ${r.stage.label}: ${r.stage.pct}% filled`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontWeight: 600, color: done ? '#047857' : '#334155', whiteSpace: 'nowrap' }}>{r.stage.text}</span>
+            <span style={{ flex: 1, minWidth: 24, height: 5, borderRadius: 3, background: '#E2E8F0', overflow: 'hidden' }}>
+              <span style={{ display: 'block', height: '100%', width: `${((r.stage.stage - 1) * 100 + r.stage.pct) / 7}%`, background: done ? '#059669' : '#64748B' }} />
+            </span>
+          </span>
+        );
+      },
     },
     ...FIELD_COLUMNS.map(f => ({
       key: f.key,
