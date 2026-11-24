@@ -59,6 +59,20 @@ export function campaignPauseUntil(nowMs = Date.now(), days = CAMPAIGN_PAUSE_DAY
   return new Date(nowMs + days * DAY_MS).toISOString();
 }
 
+/**
+ * When a pause that runs until a picked date should lift: the start of that
+ * day ('YYYY-MM-DD', local time), as an ISO string for `pausedUntil`, so the
+ * campaign is back on the morning of the date chosen. Null when the day is
+ * not a date, is today or earlier, or is past CAMPAIGN_PAUSE_MAX_DAYS.
+ */
+export function campaignPauseUntilDay(day, nowMs = Date.now()) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day || ''));
+  if (!m) return null;
+  const at = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+  if (!(at > nowMs) || at > nowMs + CAMPAIGN_PAUSE_MAX_DAYS * DAY_MS) return null;
+  return new Date(at).toISOString();
+}
+
 // Local 'YYYY-MM-DD' for a moment, the form planned send dates are stored in.
 function localDay(nowMs) {
   const d = new Date(nowMs);
