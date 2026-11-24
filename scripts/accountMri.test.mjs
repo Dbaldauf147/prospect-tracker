@@ -66,6 +66,7 @@ eq(profile.tier, 'Tier II', 'profile tier');
 eq(profile.existingClient, 'Yes', 'profile client');
 eq(profile.sites, 1038, 'profile sites');
 eq(profile.competitors, 'Engie; Enel X', 'competitors, firm not repeated');
+eq(profile.currentProvider, 'Engie; Enel X', 'current provider is the competitors');
 eq(profile.fee, '$450,000 / yr', 'fee');
 eq(profile.setup, '$60,000 one-time', 'setup');
 eq(profile.ubm, 'Sold', 'ubm');
@@ -148,7 +149,7 @@ const bigCommittee = many(28, i => ({ name: `Person ${String(i).padStart(2, '0')
 const bigSites = many(205, i => ({ name: `Site ${i}`, country: 'USA', location: 'Austin, TX', function: 'Office', elec: 1000, elecUnits: 'kWh', fuel: i === 0 ? null : 10, fuelUnits: i === 0 ? '' : 'Dth' }));
 const zip2 = await JSZip.loadAsync(buf);
 const result = await fillAccountMriWorkbook(zip2, { profile, committee: bigCommittee, sites: bigSites });
-eq(result, { profileCells: 19, committeeRows: 28, siteRows: 205 }, 'workbook fill result');
+eq(result, { profileCells: 20, committeeRows: 28, siteRows: 205 }, 'workbook fill result');
 const sheet3 = await zip2.file(MRI_COMMITTEE_TABLE.path).async('string');
 eq(sheet3.includes('<xm:sqref>E6:E33</xm:sqref>'), true, 'dropdowns stretched over the added rows');
 const sheet5 = await zip2.file(MRI_SITES_TABLE.path).async('string');
