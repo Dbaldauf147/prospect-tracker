@@ -33,7 +33,7 @@ export const MRI_PROFILE_FIELDS = [
   { row: 10, key: 'tier', label: 'Tier', source: 'Tier' },
   { row: 11, key: 'existingClient', label: 'Existing client', source: 'Client?' },
   { row: 12, key: 'stage', label: 'Stage', source: 'Status' },
-  { row: 13, key: 'assignedSince', label: 'Assigned since', source: '', kind: 'date' },
+  { row: 13, key: 'assignedSince', label: 'Assigned since', source: 'Target Accounts List entry date', kind: 'date' },
   { row: 14, key: 'hq', label: 'HQ', source: 'HQ Region' },
   { row: 15, key: 'revenueB', label: 'Revenue ($B)', source: 'Revenue', kind: 'number' },
   { row: 16, key: 'sites', label: '# Sites', source: 'Sites', kind: 'number' },
@@ -177,7 +177,7 @@ const dateText = d => (d instanceof Date && !Number.isNaN(d.getTime())
  *   contacts   the company's contacts (only the tagged ones are read)
  *   contracts  contractsSummary() of the company's agreements, or null
  */
-export function accountMriProfile({ record, tier = '', contacts = [], contracts = null } = {}) {
+export function accountMriProfile({ record, tier = '', contacts = [], contracts = null, entryDate = '' } = {}) {
   const p = record || {};
   const status = text(p.status);
   const sites = Number(String(p.numberOfSites ?? '').replace(/,/g, ''));
@@ -195,6 +195,7 @@ export function accountMriProfile({ record, tier = '', contacts = [], contracts 
     tier: mriTier(tier || p.tier),
     existingClient: status ? (status.toLowerCase() === 'client' ? 'Yes' : 'No') : '',
     stage: mriStage(status),
+    assignedSince: text(entryDate),
     hq: text(p.hqRegion),
     revenueB: revenueInBillions(p.revenue),
     sites: Number.isFinite(sites) && sites > 0 ? sites : null,

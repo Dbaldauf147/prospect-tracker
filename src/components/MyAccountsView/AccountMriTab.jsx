@@ -21,6 +21,8 @@ import { MRI_FILLED_FIELDS, accountMriProfile, buyingCommitteeRows, siteUtilityR
 import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
+import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
+import { mappedTargetNames } from '../../utils/targetAccountMatch';
 import { isPrimaryPoc } from '../../utils/attendeeRoles';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { companyRosterContacts } from '../../utils/companyRoster';
@@ -42,7 +44,7 @@ const siteListSlug = company => String(company || '').toLowerCase().replace(/[^a
 
 // `isListed(row)` says whether the Strategic Accounts list names the row's
 // company; those rows are drawn in the list's red, as on the Accounts view.
-export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updateSettings, updateSettingsPath, onSelect }) {
+export function AccountMriTab({ rows, isListed, hubspotContacts, targetAccountsData, settings, updateSettings, updateSettingsPath, onSelect }) {
   // The Deals subtab's agreements and its client-name mapping, which the
   // Fee, Set-up and Contract term rows read. Re-read when either changes.
   const [deals, setDeals] = useState(() => ({ list: loadDealsList().data || [], map: loadDealClientMap() }));
@@ -63,6 +65,9 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
     () => (hubspotContacts || []).filter(c => isPrimaryPoc(c) || isDecisionMakerContact(c)),
     [hubspotContacts],
   );
+  // Each company's entry date on the Target Accounts List, for "Assigned since".
+  const entryDates = useMemo(() => targetEntryDates(targetAccountsData), [targetAccountsData]);
+  const targetMap = settings?.targetMap;
   const siteLists = settings?.companySiteLists;
   const savedForms = settings?.accountMri;
 
@@ -79,6 +84,10 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
       tier: r.tier,
       contacts,
       contracts: companyDeals.length ? contractsSummary(companyDeals) : null,
+      entryDate: entryDateFor(entryDates, {
+        targetNames: r.targetNames?.length ? r.targetNames : mappedTargetNames({ targetMap }, r.record?.id),
+        company: record.company,
+      }),
     });
     const trackerCommittee = buyingCommitteeRows(contacts.filter(isDecisionMakerContact));
     const form = (savedForms || {})[mriSlug(r.company)] || null;
@@ -105,7 +114,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, settings, updat
       profile,
       stage,
     };
-  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, settings?.companyContactLinks, settings?.companyContactExclusions]);
+  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, settings?.companyContactLinks, settings?.companyContactExclusions]);
 
   // The company whose Account MRI popup is open.
   const [openId, setOpenId] = useState(null);

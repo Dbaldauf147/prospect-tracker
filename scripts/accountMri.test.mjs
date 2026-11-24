@@ -61,6 +61,7 @@ const profile = accountMriProfile({
   tier: 'Tier 2',
   contacts: [{ firstname: 'Jamie', lastname: 'Lee', dans_tags: 'Primary Point of Contact' }],
   contracts: { recurring: 450000.4, setup: 60000, soonestEnd: new Date(2027, 2, 31) },
+  entryDate: '2025-03-14',
 });
 eq(profile.tier, 'Tier II', 'profile tier');
 eq(profile.existingClient, 'Yes', 'profile client');
@@ -73,6 +74,7 @@ eq(profile.ubm, 'Sold', 'ubm');
 eq(profile.services, 'Sold: Bill payment\nExplored: IDM (Qualifying)\nNot Sold: None', 'services in scope');
 eq(profile.upsell, 'Qualifying: IDM\nResponsible: Alex Morgan', 'upsell names the salesperson');
 eq(profile.contractTerm, 'Expires Mar 31, 2027', 'contract term');
+eq(profile.assignedSince, '2025-03-14', 'assigned since is the Target Accounts entry date');
 eq(accountMriProfile({ record: { company: 'X' } }).existingClient, '', 'no status, no client answer');
 eq(accountMriProfile({ record: { company: 'X', status: 'Qualifying' } }).existingClient, 'No', 'not a client');
 
@@ -98,11 +100,11 @@ eq(cell('C7'), 'Alex Morgan', 'C7 salesperson replaces the template value');
 eq(cell('C8'), 'Keith McHugh', 'C8 team left as the template has it');
 eq(cell('C10'), 'Tier II', 'C10 tier');
 eq(cell('C11'), 'Yes', 'C11 existing client');
+eq(cell('C13') instanceof Date ? cell('C13').toISOString().slice(0, 10) : cell('C13'), '2025-03-14', 'C13 assigned since is a date');
 eq(cell('C15'), 4.2, 'C15 revenue is a number');
 eq(cell('C16'), 1038, 'C16 sites is a number');
 eq(cell('C23'), 'Line one\nLine two', 'C23 keeps line breaks');
 eq(cell('C30'), 'No', 'C30 early out left as the template has it');
-eq(cell('C13'), null, 'C13 assigned since left blank');
 eq(cell('A5'), 'Account name', 'labels untouched');
 eq(cell('B5'), 'Company', 'column B untouched');
 eq(ws.getCell('C5').style.fill?.fgColor?.argb, ws.getCell('C21').style.fill?.fgColor?.argb, 'filled cell keeps the entry style');
@@ -149,7 +151,7 @@ const bigCommittee = many(28, i => ({ name: `Person ${String(i).padStart(2, '0')
 const bigSites = many(205, i => ({ name: `Site ${i}`, country: 'USA', location: 'Austin, TX', function: 'Office', elec: 1000, elecUnits: 'kWh', fuel: i === 0 ? null : 10, fuelUnits: i === 0 ? '' : 'Dth' }));
 const zip2 = await JSZip.loadAsync(buf);
 const result = await fillAccountMriWorkbook(zip2, { profile, committee: bigCommittee, sites: bigSites });
-eq(result, { profileCells: 20, committeeRows: 28, siteRows: 205 }, 'workbook fill result');
+eq(result, { profileCells: 21, committeeRows: 28, siteRows: 205 }, 'workbook fill result');
 const sheet3 = await zip2.file(MRI_COMMITTEE_TABLE.path).async('string');
 eq(sheet3.includes('<xm:sqref>E6:E33</xm:sqref>'), true, 'dropdowns stretched over the added rows');
 const sheet5 = await zip2.file(MRI_SITES_TABLE.path).async('string');
