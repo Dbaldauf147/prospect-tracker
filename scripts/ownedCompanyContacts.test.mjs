@@ -1,7 +1,7 @@
 // The collapsed "contacts at owned companies" table on the company card:
 // which people it lists and which owned company it puts them under. Run:
 //   node scripts/ownedCompanyContacts.test.mjs
-import { ownedCompanyList, ownedCompanyContacts, ownedCompanyFor } from '../src/utils/ownedCompanyContacts.js';
+import { ownedCompanyList, ownedCompanyContacts, ownedCompanyFor, recordOwnedCompanies } from '../src/utils/ownedCompanyContacts.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -81,6 +81,21 @@ eq(ownedCompanyContacts(contacts, []), [], 'no owned companies, no rows');
   eq(at('Brookfield (Self Storage)', '6'), 'Brookfield (Self Storage)', 'linked by hand to the parent, Company pinned to its division: moves');
   eq(at('Brookfield Asset Management', '7'), 'Westinghouse', 'linked to both: the holding wins');
   eq(at(''), null, 'no Company text: stays');
+}
+
+// ── What a record owns, for screens with no card open (Account MRI) ──
+{
+  const record = { id: 'bam', company: 'Brookfield Asset Management',
+    portfolioCompanies: [{ companyName: 'Westinghouse' }, { companyName: 'Old name', linkedProspectId: 'oak' }] };
+  const settings = { divisionsMap: { bam: [{ id: 'ss', company: 'Brookfield (Self Storage)' }], ss: [{ id: 'text:ssw', company: 'Self Storage West' }] } };
+  const prospects = [record, { id: 'ss', company: 'Brookfield (Self Storage)' }, { id: 'oak', company: 'Oaktree Capital' }];
+  eq(recordOwnedCompanies(record, settings, prospects).map(o => `${o.kind}:${o.name}`),
+    ['division:Brookfield (Self Storage)', 'division:Self Storage West', 'holding:Westinghouse', 'holding:Oaktree Capital'],
+    'divisions (sub-divisions too), then holdings, a mapped row by its record\'s name');
+  const owned = recordOwnedCompanies(record, settings, prospects);
+  eq(ownedCompanyFor({ id: 'w', company: 'Brookfield (Self Storage)' }, owned,
+    { self: record.company, links: { 'brookfield asset management': ['w'] } })?.name,
+    'Brookfield (Self Storage)', 'a division person linked to the parent is not the parent\'s');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -193,6 +193,7 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
       {view === 'mri' ? (
         <AccountMriTab
           rows={rows}
+          prospects={prospects}
           isListed={onList}
           hubspotContacts={hubspotContacts}
           oppsRecords={oppsRecords}
