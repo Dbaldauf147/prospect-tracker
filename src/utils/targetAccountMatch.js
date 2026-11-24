@@ -144,6 +144,27 @@ export function mappedTargetNames(settings, prospectId) {
 }
 
 /**
+ * The other companies mapped to the same Targets list row as this one: a
+ * row is one account, so two cards tied to it is worth a warning. Returns
+ * the prospects (from `prospects`) other than `prospectId` whose mapping
+ * names `targetName`, matched without case, A to Z by company. A mapping
+ * left behind by a deleted company has no card to point at and is skipped.
+ */
+export function othersMappedToTarget(settings, targetName, prospectId, prospects) {
+  const want = String(targetName || '').trim().toLowerCase();
+  if (!want) return [];
+  const byId = new Map((prospects || []).map(p => [String(p?.id), p]));
+  const out = [];
+  for (const id of Object.keys(settings?.targetMap || {})) {
+    if (String(id) === String(prospectId)) continue;
+    const p = byId.get(String(id));
+    if (!p) continue;
+    if (mappedTargetNames(settings, id).some(n => n.toLowerCase() === want)) out.push(p);
+  }
+  return out.sort((x, y) => String(x.company || '').localeCompare(String(y.company || '')));
+}
+
+/**
  * The mapped row against the card: which of CDM, Tier and Vertical
  * disagree. Each flag is null when they agree or the row says nothing,
  * else { row, card, apply } where `apply` is what to set the card to.

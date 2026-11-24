@@ -3,7 +3,7 @@
 //   node scripts/targetAccountMatch.test.mjs
 import {
   targetAccountRows, nameSimilarity, suggestTargetMatches, mappedTargetNames, targetRowFlags, sameWord,
-  targetSuggestionsForAccounts, targetAcceptPatch,
+  targetSuggestionsForAccounts, targetAcceptPatch, othersMappedToTarget,
 } from '../src/utils/targetAccountMatch.js';
 
 let passed = 0, failed = 0;
@@ -123,6 +123,18 @@ check('no row, no flags', targetRowFlags(null, {}), { cdm: null, tier: null, ver
     targetAcceptPatch(list[1], { cdm: 'Dan Baldauf', tier: 'Tier 1', vertical: 'Office' }), {});
   check('the CDM is spelled as the dropdown spells it',
     targetAcceptPatch(list[0], { cdm: '', tier: 'Tier 2', vertical: 'Chemicals' }, { canonicalCdm: () => 'Samuel Ouimet' }), { cdm: 'Samuel Ouimet' });
+}
+
+// two companies mapped to one Targets list row
+{
+  const prospects = [{ id: 'a', company: 'Foundation Partners' }, { id: 'b', company: 'Foundation Partners Group' }, { id: 'c', company: 'Acme' }, { id: 'e', company: 'Aardvark' }];
+  const settings = { targetMap: { a: ['Foundation Partners'], b: 'foundation partners', c: ['Acme Corp'], d: ['Foundation Partners'], e: ['Other', 'Foundation Partners'] } };
+  check('the other companies on the same row, A to Z, without the card itself or a deleted company',
+    othersMappedToTarget(settings, 'Foundation Partners', 'a', prospects).map(p => p.company), ['Aardvark', 'Foundation Partners Group']);
+  check('seen from the other card too',
+    othersMappedToTarget(settings, 'Foundation Partners', 'b', prospects).map(p => p.id), ['e', 'a']);
+  check('a row only this card is mapped to has no others', othersMappedToTarget(settings, 'Acme Corp', 'c', prospects), []);
+  check('no mapping at all', othersMappedToTarget({}, 'Acme Corp', 'c', prospects), []);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
