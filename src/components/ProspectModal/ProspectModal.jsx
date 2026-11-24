@@ -13204,6 +13204,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     return (
                       <ServiceStatusSourcePopup
                         label={getDisplayName(item)}
+                        company={fields.company || ''}
                         manualStatus={svcAll[item] || '-'}
                         oppStage={scopeMatchedServices.get(item) || ''}
                         autoNaText={autoNaBy ? autoNaTitle(getDisplayName(item), autoNaBy) : ''}
