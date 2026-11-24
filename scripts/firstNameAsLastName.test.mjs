@@ -1,7 +1,7 @@
 // Assertion tests for the contact popup's "first name in the Last Name box"
 // warning. Plain Node, no test framework. Run:
 //   node scripts/firstNameAsLastName.test.mjs
-import { isTypicalFirstName, firstNameAsLastNameWarning } from '../src/utils/firstNameAsLastName.js';
+import { isTypicalFirstName, firstNameAsLastNameWarning, contactNameWarning } from '../src/utils/firstNameAsLastName.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -28,6 +28,17 @@ check('an ordinary name', firstNameAsLastNameWarning('Sarah', 'Chen'), null);
 check('a two-way surname', firstNameAsLastNameWarning('Chris', 'Martin'), null);
 check('no last name', firstNameAsLastNameWarning('Sarah', ''), null);
 check('nothing at all', firstNameAsLastNameWarning(), null);
+
+// A contact as a list holds it.
+check('record fields win over the display name', contactNameWarning({ firstname: 'Krisch', lastname: 'Michael', name: 'Michael Krisch' })?.lastname, 'Michael');
+check('record fields that are fine', contactNameWarning({ firstname: 'Michael', lastname: 'Krisch', name: 'Krisch Michael' }), null);
+check('a display name alone', contactNameWarning({ name: 'Kochevar  Margaret' }),
+  { lastname: 'Margaret', firstname: 'Kochevar', firstAlsoGiven: false, canSwap: true });
+check('middle words are skipped', contactNameWarning({ name: 'Lopez de la Danny' })?.lastname, 'Danny');
+check('a one-word name', contactNameWarning({ name: 'Sarah' }), null);
+check('the names on the Draft Emails list', ['Colindres Issac', 'Collier Philip', 'Knolle Matthew', 'Kochevar Margaret', 'Krisch Michael', 'Lopez Danny', 'Jennifer McLean', 'Douglas Odeyssa', 'Duncan Russell', 'Marc Garry', 'Mark Lewis']
+  .filter(n => contactNameWarning({ name: n })), ['Colindres Issac', 'Collier Philip', 'Knolle Matthew', 'Kochevar Margaret', 'Krisch Michael', 'Lopez Danny']);
+check('no contact', contactNameWarning(null), null);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

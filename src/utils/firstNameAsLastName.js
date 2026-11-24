@@ -24,7 +24,7 @@ christina christine christopher cindy claire connor crystal cynthia dan
 daniel danielle danny dave david deborah debra denise derek diana diane
 don donald donna doris dorothy doug ed edward eileen elaine elizabeth ella
 ellen emily emma eric erica erik erin ethan evelyn gary greg gregory hannah
-heather heidi helen holly isabella jacob jacqueline jake jane janet janice
+heather heidi helen holly isaac isabella issac jacob jacqueline jake jane janet janice
 jason jeff jeffrey jen jennifer jenny jeremy jessica jill jim jimmy joan
 joanne joe joel john johnny jon jonathan josh joshua joyce judith judy julia
 julie justin karen kate katherine kathleen kathryn kathy katie kayla ken
@@ -32,7 +32,7 @@ kenneth kevin kimberly kristen kristin larry laura lauren liam linda lisa
 liz lori lucy luke margaret maria marie marilyn mark martha mary matt
 matthew megan melanie melissa michael michele michelle mike molly monica
 nancy natalie nathan nicholas nick nicole noah olivia pamela patricia paula
-peggy peter phil philip rachel rebecca rhonda rich richard rick rob robert
+peggy peter phil philip phillip rachel rebecca rhonda rich richard rick rob robert
 ron ronald ruth sam samantha samuel sandra sara sarah sean shawn sharon
 sheila sophia sophie stephanie stephen steve steven sue susan suzanne tammy
 tara teresa theresa tiffany tim timothy tina tom tommy tony valerie vanessa
@@ -63,4 +63,19 @@ export function firstNameAsLastNameWarning(firstname, lastname) {
   if (!isTypicalFirstName(last)) return null;
   const first = String(firstname ?? '').trim();
   return { lastname: last, firstname: first, firstAlsoGiven: isTypicalFirstName(first), canSwap: first.length > 0 };
+}
+
+/**
+ * The same warning for a contact as a list holds it: the HubSpot record's
+ * own First and Last Name when it has them, else the two ends of a whole
+ * `name` ("Krisch Michael" reads first "Krisch", last "Michael").
+ */
+export function contactNameWarning(contact) {
+  const c = contact || {};
+  const first = String(c.firstname ?? '').trim();
+  const last = String(c.lastname ?? '').trim();
+  if (first || last) return firstNameAsLastNameWarning(first, last);
+  const words = String(c.name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (words.length < 2) return null;
+  return firstNameAsLastNameWarning(words[0], words[words.length - 1]);
 }
