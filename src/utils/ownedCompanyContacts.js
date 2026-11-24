@@ -84,15 +84,20 @@ export function ownedCompanyContacts(contacts, owned, {
 // the parent; those people go in the owned-company table instead, so the
 // same person is never listed as the parent's staff.
 //
-// Moves: anyone linked by hand to an owned company (even if also linked to
-// this one: they are at the portfolio company).
-// Otherwise stays on the roster: anyone linked to this company by hand, and
-// anyone whose Company text is exactly this company's name or one of its
-// aliases.
-// Otherwise moves: anyone whose Company text names an owned company (the same match ownedCompanyContacts uses). A text that fuzzy
-// matches both the company and an owned company stays, unless the owned
-// one is a division whose bracket the text carries ("Brookfield (Self
-// Storage)" for "Brookfield Self Storage").
+// In order:
+//   1. Linked by hand to an owned company: moves (even if also linked to
+//      this one: they are at the portfolio company).
+//   2. Company text is exactly this company's name or one of its aliases:
+//      stays.
+//   3. Company text is exactly an owned company's name: moves, even if the
+//      contact is linked by hand to this company. The Company (often a pin
+//      typed on the contact, "Brookfield (Self Storage)") is the more
+//      specific statement of where they work; the link is usually older.
+//   4. Linked by hand to this company: stays.
+//   5. Company text fuzzy matches an owned company (the match
+//      ownedCompanyContacts uses): moves, unless it fuzzy matches this
+//      company too and the owned one is not a division whose bracket the
+//      text carries.
 //
 //   owned      from ownedCompanyList
 //   self       the company's own name
@@ -105,12 +110,14 @@ export function ownedCompanyFor(contact, owned, { self = '', ownNames = [], link
     const linked = owned.find(o => (links?.[o.name.toLowerCase()] || []).map(String).includes(id));
     if (linked) return linked;
   }
+  const text = String(contact.company || '').trim();
+  const key = text ? exactCompanyKey(text) : '';
+  if (key && [self, ...ownNames].some(n => exactCompanyKey(n) === key)) return null;
+  const exact = key ? owned.find(o => exactCompanyKey(o.name) === key) : null;
+  if (exact) return exact;
   const selfKey = String(self || '').trim().toLowerCase();
   if (id && (links?.[selfKey] || []).map(String).includes(id)) return null;
-  const text = String(contact.company || '').trim();
   if (!text) return null;
-  const key = exactCompanyKey(text);
-  if ([self, ...ownNames].some(n => exactCompanyKey(n) && exactCompanyKey(n) === key)) return null;
   const hit = owned.find(o => companiesMatch(text, o.name) && carriesDivision(text, o.name));
   if (!hit) return null;
   if (companiesMatch(text, self) && divisionQualifiers(hit.name).length === 0) return null;

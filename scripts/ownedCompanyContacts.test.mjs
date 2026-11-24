@@ -76,7 +76,9 @@ eq(ownedCompanyContacts(contacts, []), [], 'no owned companies, no rows');
   eq(at('BAM'), null, 'one of its aliases: stays');
   eq(at('Brookfield Asset Management Inc'), null, 'fuzzy match to both the company and a holding: stays');
   eq(at('Brookfield Asset Management', '5'), 'Westinghouse', 'linked by hand to a holding: moves');
-  eq(at('Westinghouse', '6'), null, 'linked by hand to the company itself: stays');
+  eq(at('Westinghouse Inc', '6'), null, 'linked by hand to the company itself, Company only fuzzy names a holding: stays');
+  eq(at('Westinghouse', '6'), 'Westinghouse', 'linked by hand to the company itself, Company is exactly a holding: moves');
+  eq(at('Brookfield (Self Storage)', '6'), 'Brookfield (Self Storage)', 'linked by hand to the parent, Company pinned to its division: moves');
   eq(at('Brookfield Asset Management', '7'), 'Westinghouse', 'linked to both: the holding wins');
   eq(at(''), null, 'no Company text: stays');
 }
