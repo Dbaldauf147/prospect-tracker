@@ -18,6 +18,7 @@ const EXTRA_SUBJECTS = [
   /^\s*(?:message|mail) (?:not delivered|delivery failed)/i,
   /^\s*undelivered mail returned to sender/i,
   /^\s*failure notice\b/i,
+  /email delivery failure/i,
 ];
 
 /** Is this message (subject, from address) a delivery-failure notice? */
@@ -32,6 +33,11 @@ const PATTERNS = [
   new RegExp(`message to\\s*<?${ADDR}>?\\s*was undeliverable`, 'gi'),
   new RegExp(`message you sent to\\s*<?${ADDR}>?\\s*(?:couldn'?t|could not|wasn'?t|was not) be(?:en)? delivered`, 'gi'),
   new RegExp(`(?:couldn'?t|could not|wasn'?t|was not) be(?:en)? delivered to\\s*<?${ADDR}`, 'gi'),
+  // Exchange Online: "Your message to x@y.com couldn't be delivered."
+  new RegExp(`your message to\\s*<?${ADDR}>?\\s*(?:couldn'?t|could not|wasn'?t|was not) be(?:en)? delivered`, 'gi'),
+  // Mimecast's "[Postmaster] Email Delivery Failure": "an email you
+  // addressed to email address : -- x@y.com could not be delivered".
+  new RegExp(`addressed to email address\\s*:?\\s*(?:-+\\s*)?<?${ADDR}`, 'gi'),
   new RegExp(`delivery has failed to these recipients or groups:\\s*(?:[^<\\n]*<)?${ADDR}`, 'gi'),
   new RegExp(`(?:final|original)-recipient:\\s*rfc822;\\s*<?${ADDR}`, 'gi'),
   new RegExp(`<${ADDR}>\\s*:?\\s*(?:recipient address rejected|user unknown|mailbox (?:unavailable|not found)|does not exist|no such user)`, 'gi'),
@@ -72,6 +78,8 @@ export function bounceReason(text) {
   let m = body.match(/reason for the problem:\s*([\s\S]{0,300})/i);
   if (m) return tidy(m[1].split(/\n\s*\n|\[|For more information/i)[0]);
   m = body.match(/couldn'?t be delivered due to:\s*([^\n]+)/i);
+  if (m) return tidy(m[1]);
+  m = body.match(/the problem appears to be\s*:\s*(?:-+\s*)?([^\n]+)/i);
   if (m) return tidy(m[1]);
   m = body.match(/\b(5\.\d\.\d+[^\n]{0,180})/);
   if (m) return tidy(m[1].split(/For more information/i)[0]);
