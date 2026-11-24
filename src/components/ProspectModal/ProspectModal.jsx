@@ -144,7 +144,7 @@ import { resolveTargetAccountCdm, matchesCdm } from '../../utils/cdmMatch';
 import { coverageFromSettings, salespeopleForVertical, isCoverageVertical } from '../../utils/salesCoverage';
 import { buildTargetTierResolver, tierMismatch, targetVerticalFor, targetVerticalAgrees, withTargetVerticalEquivalent } from '../../utils/targetTier';
 import { normalizeTierText } from '../../utils/tierText';
-import { targetAccountRows, suggestTargetMatches, mappedTargetNames, targetRowFlags } from '../../utils/targetAccountMatch';
+import { targetAccountRows, suggestTargetMatches, mappedTargetNames, othersMappedToTarget, targetRowFlags } from '../../utils/targetAccountMatch';
 import { VerticalConflictPopup } from './VerticalConflictPopup';
 import {
   buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict,
@@ -11014,6 +11014,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     </span>
                   );
                   const cardCdm = String(fields.cdm || '').trim();
+                  const alsoMapped = othersMappedToTarget(settings, row.name, prospect?.id, prospects);
                   return (
                     <div key={row.name} style={{ marginTop: 2 }}>
                       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', rowGap: 4 }}>
@@ -11097,6 +11098,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             title={`Stop flagging this: the Targets list keeps ${flags.cdm.row} and this card keeps ${cardCdm || 'no CDM'}. It comes back if either one changes.`}
                             style={{ padding: '0.1rem 0.45rem', border: '1px solid #FCA5A5', borderRadius: 4, background: '#FFFFFF', color: '#991B1B', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
                           >Ignore</button>
+                        </div>
+                      )}
+                      {alsoMapped.length > 0 && (
+                        // A Targets list row is one account: two cards
+                        // tied to it means one of them is mapped wrongly,
+                        // or the two cards are the same company twice.
+                        <div
+                          role="alert"
+                          data-target-double-mapped
+                          style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem 0.6rem', marginTop: 6, padding: '0.35rem 0.5rem', borderRadius: 4, background: '#FFFBEB', border: '1px solid #FCD34D', borderLeft: '3px solid #D97706', color: '#92400E' }}
+                        >
+                          <span>
+                            <span aria-hidden="true" style={{ marginRight: 4 }}>⚠</span>
+                            <strong>{alsoMapped.length === 1 ? 'Two companies' : `${alsoMapped.length + 1} companies`} mapped to this account:</strong>{' '}
+                            <strong>{row.name}</strong> on the Targets list is also mapped to{' '}
+                            {alsoMapped.map((p, i) => (
+                              <span key={p.id}>
+                                {i > 0 && (i === alsoMapped.length - 1 ? ' and ' : ', ')}
+                                {onSelectProspect
+                                  ? <button
+                                    type="button"
+                                    onClick={() => openProspect(p)}
+                                    title={`Open ${p.company}`}
+                                    style={{ padding: 0, border: 0, background: 'none', color: '#92400E', font: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}
+                                  >{p.company}</button>
+                                  : <strong>{p.company}</strong>}
+                              </span>
+                            ))}
+                            . Unmap the one that is not this account.
+                          </span>
                         </div>
                       )}
                       {!row.missing && !row.cdm && (
