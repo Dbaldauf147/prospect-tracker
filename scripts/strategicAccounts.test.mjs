@@ -34,7 +34,7 @@ eq(strategicMatches([], 'Hines'), [], 'empty list');
 eq(strategicNameKey([{ 'Owner Name': 'x', 'Company': 'y' }]), 'Company', 'an owner column is never the name column');
 
 // My Accounts > Strategic Accounts: Tier 2 accounts, plus the CDM's own
-// companies that the list names. Tier 1 accounts are left off, listed or not.
+// companies that the list names. A Tier 1 account is here only when the list names it.
 {
   const prospects = [
     { id: 'a', company: 'Blackstone', cdm: 'Dan', status: 'Prospect', tier: 'Tier 1' },
@@ -54,12 +54,13 @@ eq(strategicNameKey([{ 'Owner Name': 'x', 'Company': 'y' }]), 'Company', 'an own
   const lookup = strategicLookup(rows, { 'name::brookfield asset management': 'Brookfield' });
   const got = strategicAccountRows({ accounts, prospects, lookup, isCdm: c => c === 'Dan' });
   eq(got.map(r => [r.company, r.tier, r.reasons.join(' + '), r.owners.join(' + ')]), [
+    ['Blackstone', 'Tier 1', 'Strategic Accounts list', 'Jane Doe + John Roe'],
     ['Brookfield', '', 'Strategic Accounts list', 'Sam Lee'],
     ['Hines', 'Tier 3', 'Strategic Accounts list', 'Pat Kim + Lee Park + Ana Ruiz'],
     ['Zeta', 'Tier 2', 'Tier 2', ''],
-  ], 'Tier 2 and my listed companies, not a Tier 1 account (even a listed one), another CDM\'s listed company or my unlisted Tier 3');
+  ], 'Tier 2 and my listed companies (a listed Tier 1 included), not another CDM\'s listed company or my unlisted Tier 3');
   eq(got.find(r => r.company === 'Brookfield').listNames, ['Brookfield Asset Management'], 'the list row behind a mapped company is named');
-  eq(strategicAccountRows({ accounts, prospects, lookup: strategicLookup([]), isCdm: () => true }).map(r => r.company), ['Zeta'], 'no list uploaded leaves Tier 2');
+  eq(strategicAccountRows({ accounts, prospects, lookup: strategicLookup([]), isCdm: () => true }).map(r => r.company), ['Zeta'], 'no list uploaded leaves Tier 2, so an unlisted Tier 1 is off');
 }
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

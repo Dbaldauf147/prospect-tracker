@@ -1,7 +1,7 @@
 // My Accounts > Strategic Accounts: every Tier 2 account on My Accounts,
 // plus every company this CDM is on that the Strategic Accounts list
-// (Lists > Strategic Accounts) names, with who owns it there. Tier 1
-// accounts are left off, listed or not.
+// (Lists > Strategic Accounts) names, with who owns it there. A Tier 1
+// account is here only when the list names it.
 //
 // A company is "on the list" by the same rule as the red strip at the top
 // of the company popup (utils/strategicAccounts.js), so the two agree.
@@ -20,7 +20,7 @@ import { DataTable } from '../common/DataTable';
 import { AccountMriTab } from './AccountMriTab';
 
 const VIEWS = [
-  { key: 'accounts', label: 'Accounts', title: 'The strategic accounts and why each one is here. Tier 1 accounts are left off.' },
+  { key: 'accounts', label: 'Accounts', title: 'The strategic accounts and why each one is here. A Tier 1 account shows only when it is on the Strategic Accounts list.' },
   { key: 'mri', label: 'Account MRI', title: 'The same accounts as the Account MRI intake template, with an export that fills it in' },
 ];
 const VIEW_KEY = 'my-accounts-strategic-view';
@@ -122,7 +122,7 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
       },
       {
         key: 'reasons', label: 'Here Because', defaultWidth: 230,
-        headerTitle: 'Why the company is on this subtab: it is a Tier 2 account, or you are its CDM and the Strategic Accounts list names it. Tier 1 accounts are left off.',
+        headerTitle: 'Why the company is on this subtab: it is a Tier 2 account, or you are its CDM and the Strategic Accounts list names it. A Tier 1 account shows only when the list names it.',
         getSortValue: r => r.reasons.join(', ').toLowerCase(),
         getFilterValue: r => r.reasons.join(', '),
         exportValue: r => r.reasons.join(', '),
