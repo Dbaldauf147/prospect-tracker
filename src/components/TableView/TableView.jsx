@@ -9,6 +9,8 @@ import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/for
 import { STATUSES, TYPES, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { PasteAddModal } from './PasteAddModal';
+import { BulkEditBar } from './BulkEditBar';
+import { bulkEditPatch } from '../../utils/bulkEdit';
 import {
   resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar,
   orderColumns, mergeColumnOrder,
@@ -626,6 +628,83 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
   const uploadRef = useRef(null);
   const [pasteOpen, setPasteOpen] = useState(false);
 
+  // Bulk edit: the ticked rows, by id. Only rows the current filters leave
+  // on screen count, so a company ticked and then filtered away is never
+  // edited unseen.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkProgress, setBulkProgress] = useState(null); // { done, total } while applying
+  const [bulkStatus, setBulkStatus] = useState(null);
+  const selectedRows = useMemo(
+    () => prospects.filter(p => selectedIds.has(p.id)),
+    [prospects, selectedIds],
+  );
+  const allVisibleSelected = prospects.length > 0 && selectedRows.length === prospects.length;
+  const toggleSelected = useCallback((id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+    setBulkStatus(null);
+  }, []);
+  function toggleSelectAll() {
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(prospects.map(p => p.id)));
+    setBulkStatus(null);
+  }
+  // Every column the bar can set: the table's own, less Company (each
+  // row's identity) and any column removed from the table.
+  const bulkColumns = useMemo(
+    () => RESOLVED_COLUMNS.filter(c => c.key !== 'company' && !removedCols.has(c.key)),
+    [RESOLVED_COLUMNS, removedCols],
+  );
+
+  async function applyBulkEdit(col, mode, value) {
+    const rows = selectedRows;
+    if (rows.length === 0) return;
+    const work = [];
+    for (const p of rows) {
+      const out = bulkEditPatch(col, mode, value, p[col.key]);
+      if (out.error) { setBulkStatus({ type: 'error', message: out.error }); return; }
+      if (out.patch) work.push({ p, patch: out.patch });
+    }
+    const unchanged = rows.length - work.length;
+    if (work.length === 0) {
+      setBulkStatus({ type: 'success', message: `Nothing to change: all ${rows.length} already had that ${col.label}.` });
+      return;
+    }
+    const what = col.type === 'tags'
+      ? `${mode === 'remove' ? 'Remove' : 'Add'} "${value}" ${mode === 'remove' ? 'from' : 'to'} ${col.label}`
+      : String(value ?? '').trim() ? `Set ${col.label} to "${String(value).trim()}"` : `Clear ${col.label}`;
+    if (!window.confirm(`${what} on ${work.length} compan${work.length === 1 ? 'y' : 'ies'}?`)) return;
+    if (col.allowAddNew && String(value ?? '').trim() && !(col.options || []).includes(String(value).trim())) {
+      handleAddOption(col.key, String(value).trim());
+    }
+    const failed = [];
+    setBulkProgress({ done: 0, total: work.length });
+    setBulkStatus(null);
+    try {
+      for (let i = 0; i < work.length; i++) {
+        const { p, patch } = work[i];
+        try {
+          await onUpdate(p.id, patch);
+        } catch (err) {
+          console.error('Bulk edit: update failed for', p.company, err);
+          failed.push(p.company);
+        }
+        setBulkProgress({ done: i + 1, total: work.length });
+      }
+    } finally {
+      setBulkProgress(null);
+    }
+    const done = work.length - failed.length;
+    setBulkStatus({
+      type: failed.length ? 'error' : 'success',
+      message: `Updated ${done} compan${done === 1 ? 'y' : 'ies'}.`
+        + (unchanged ? ` ${unchanged} already had it.` : '')
+        + (failed.length ? ` ${failed.length} failed: ${failed.join(', ')}.` : ''),
+    });
+  }
+
   // Additive import from the Paste from Excel modal. The modal already
   // filtered out duplicates and rows without a company; this just adds
   // the new prospects one by one (onAdd dedupes again by company key as
@@ -941,6 +1020,21 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
           </span>
         )}
       </div>
+      {selectedRows.length > 0 && (
+        <BulkEditBar
+          columns={bulkColumns}
+          selectedCount={selectedRows.length}
+          applying={!!bulkProgress}
+          progress={bulkProgress}
+          onApply={applyBulkEdit}
+          onClear={() => { setSelectedIds(new Set()); setBulkStatus(null); }}
+        />
+      )}
+      {bulkStatus && (
+        <div style={{ margin: '0 0.75rem 0.4rem', fontSize: '0.72rem', fontWeight: 500, color: bulkStatus.type === 'error' ? '#DC2626' : '#059669', flexShrink: 0 }}>
+          {bulkStatus.message}
+        </div>
+      )}
       {pasteOpen && (
         <PasteAddModal
           existingProspects={allProspects || prospects}
@@ -1020,6 +1114,18 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
                   style={{ width: getWidth(col), position: 'relative' }}
                   onClick={() => col.type !== 'tags' && toggleSort(col.key)}
                 >
+                  {col.key === 'company' && (
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      ref={el => { if (el) el.indeterminate = selectedRows.length > 0 && !allVisibleSelected; }}
+                      onChange={toggleSelectAll}
+                      onClick={e => e.stopPropagation()}
+                      title={allVisibleSelected ? 'Untick every row' : `Tick all ${prospects.length} rows on screen to bulk edit them`}
+                      aria-label="Select all rows"
+                      style={{ marginRight: 6, verticalAlign: 'middle', cursor: 'pointer' }}
+                    />
+                  )}
                   {col.label}
                   {sortConfig.key === col.key && (
                     <span className={styles.sortArrow}>
@@ -1038,13 +1144,23 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
           </thead>
           <tbody>
             {prospects.map(p => (
-              <tr key={p.id}>
+              <tr key={p.id} style={selectedIds.has(p.id) ? { background: '#EFF6FF' } : undefined}>
                 {visibleColumns.map(col => (
                   <td key={col.key} className={col.sticky ? styles.stickyCol : undefined}>
                     {col.key === 'company' ? (
-                      <span className={styles.companyName} onClick={() => onSelect(p)}>
-                        {p.company}
-                      </span>
+                      <>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(p.id)}
+                          onChange={() => toggleSelected(p.id)}
+                          title="Tick to bulk edit"
+                          aria-label={`Select ${p.company}`}
+                          style={{ marginRight: 6, verticalAlign: 'middle', cursor: 'pointer' }}
+                        />
+                        <span className={styles.companyName} onClick={() => onSelect(p)}>
+                          {p.company}
+                        </span>
+                      </>
                     ) : (
                       <InlineCell value={p[col.key]} prospect={p} colDef={col} onUpdate={onUpdate} onAddOption={handleAddOption} onEditOptions={handleEditOptions} />
                     )}
