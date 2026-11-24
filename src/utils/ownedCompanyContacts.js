@@ -13,6 +13,7 @@
 import { companiesMatch } from './listFlags.js';
 import { carriesDivision, divisionQualifiers } from './companyIndex.js';
 import { exactCompanyKey } from './companyRoster.js';
+import { buildDivisionTree } from './divisions.js';
 
 // The owned companies as [{ name, kind }], deduped by name, with anything
 // that is the company itself dropped. Divisions come first, so a company
@@ -124,3 +125,29 @@ export function ownedCompanyFor(contact, owned, { self = '', ownNames = [], link
   return hit;
 }
 
+
+// What a tracker record owns, as ownedCompanyList: its whole divisions
+// chart and its Portfolio Companies rows (a row mapped by hand to a record
+// reads that record's name, else the row's own name, else the first record
+// whose name matches). The company card works this out from its own state;
+// screens without a card open (the Account MRI) ask here.
+export function recordOwnedCompanies(record, settings = {}, prospects = []) {
+  const company = String(record?.company || '').trim();
+  if (!company) return [];
+  const entries = [];
+  const nameById = new Map((prospects || []).map(p => [p?.id, p?.company]));
+  if (record?.id) {
+    const walk = (node) => {
+      for (const child of (node.children || [])) {
+        entries.push({ name: child.company, kind: 'division' });
+        walk(child);
+      }
+    };
+    walk(buildDivisionTree(settings, record.id, company, nameById));
+  }
+  for (const row of (Array.isArray(record?.portfolioCompanies) ? record.portfolioCompanies : [])) {
+    const mapped = row?.linkedProspectId ? nameById.get(row.linkedProspectId) : '';
+    entries.push({ name: mapped || row?.companyName, kind: 'holding' });
+  }
+  return ownedCompanyList(entries, company);
+}

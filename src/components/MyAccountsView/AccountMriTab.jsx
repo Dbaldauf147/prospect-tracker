@@ -29,6 +29,7 @@ import { mappedTargetNames } from '../../utils/targetAccountMatch';
 import { isPrimaryPoc } from '../../utils/attendeeRoles';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { companyRosterContacts } from '../../utils/companyRoster';
+import { recordOwnedCompanies, ownedCompanyFor } from '../../utils/ownedCompanyContacts';
 import { dealsForCompany } from '../../utils/clientContracts';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
@@ -47,7 +48,7 @@ const siteListSlug = company => String(company || '').toLowerCase().replace(/[^a
 
 // `isListed(row)` says whether the Strategic Accounts list names the row's
 // company; those rows are drawn in the list's red, as on the Accounts view.
-export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, targetAccountsData, settings, updateSettings, updateSettingsPath, onSelect }) {
+export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts, oppsRecords, targetAccountsData, settings, updateSettings, updateSettingsPath, onSelect }) {
   // The Deals subtab's agreements and its client-name mapping, which the
   // Fee, Set-up and Contract term rows read. Re-read when either changes.
   const [deals, setDeals] = useState(() => ({ list: loadDealsList().data || [], map: loadDealClientMap() }));
@@ -99,10 +100,16 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, ta
 
   const mriRows = useMemo(() => rows.map(r => {
     const record = r.record || { company: r.company, status: r.status, cdm: r.cdm };
+    // The account's own people only: anyone the company card lists under
+    // Owned Company Contacts (a division's or portfolio company's person the
+    // roster pulled in) is left out, the same rule the card uses.
+    const owned = recordOwnedCompanies(record, settings || {}, prospects);
+    const ownNames = [record.aliases, record.hubspotCompanyNames]
+      .flatMap(v => String(v || '').split(/[\n;,]+/)).map(n => n.trim()).filter(Boolean);
     const contacts = companyRosterContacts(taggedContacts, record, {
       links: settings?.companyContactLinks,
       exclusions: settings?.companyContactExclusions,
-    });
+    }).filter(c => !ownedCompanyFor(c, owned, { self: record.company, ownNames, links: settings?.companyContactLinks || {} }));
     // The account's opps, matched on the tracker record's name as the
     // company card matches them, and on the name this row shows, in case
     // the two are spelled differently.
@@ -166,7 +173,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, ta
       profile,
       stage,
     };
-  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, settings?.companyContactLinks, settings?.companyContactExclusions]);
+  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, settings, prospects]);
 
   // The company whose Account MRI popup is open.
   const [openId, setOpenId] = useState(null);
