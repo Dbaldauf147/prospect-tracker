@@ -43,7 +43,7 @@ eq(upsellOpportunities({ A: 'Sold', RECs: 'Not Sold' }, 'Dana Reyes'), '', 'noth
 eq(
   accountServiceStatuses({
     company: 'Northwind',
-    servicesExplored: { idm: 'Renewal', UCA: '-' },
+    servicesExplored: { IDM: 'Renewal', UCA: '-' },
     oppRows: [
       { Account: 'Northwind', Stage: 'Sold', Scope: 'Bill payment, IDM' },
       { Account: 'Northwind', Stage: 'Not Sold', Scope: 'Audits' },
@@ -54,6 +54,27 @@ eq(
   { 'Bill payment': 'Sold', IDM: 'Renewal', Audits: 'Not Sold' },
   'manual status, else the stage of an opp on the account naming the service',
 );
+eq(
+  accountServiceStatuses({
+    company: 'Northwind',
+    servicesExplored: { 'Audits ': 'Not Sold', idm: 'Not Sold', IDM: 'Qualifying' },
+    oppRows: [{ Account: 'Northwind', Stage: 'Sold', Scope: 'Audits' }],
+    services: ['Audits', 'IDM'],
+  }),
+  { Audits: 'Sold', IDM: 'Qualifying' },
+  'only a status saved under the board\'s exact name counts, as on the board',
+);
+eq(
+  ubmScope(accountServiceStatuses({
+    company: 'Northwind',
+    servicesExplored: {},
+    oppRows: [{ Account: 'Northwind', Stage: 'Not Sold', Scope: 'Bill payment' }],
+    services: ['Bill payment', 'IDM'],
+  })),
+  'Not Sold',
+  'UBM reads Bill payment\'s status from an opp',
+);
+eq(ubmScope({ 'bill payment': 'Qualifying' }), 'Qualifying', 'UBM finds Bill payment in any case');
 eq(
   accountServiceStatuses({
     company: 'Northwind',

@@ -169,8 +169,17 @@ export function accountServiceStatuses({ company, servicesExplored, oppRows, ser
     names.push(text(n));
   }
   const out = {};
+  // The board reads a manual status by its own exact service name
+  // (servicesExplored[item]); one saved under another spelling ("audits",
+  // "Audits " left by an old rename) is not shown there, and the opp's
+  // stage shows instead. Read them the same way, so a stale spelling can't
+  // turn a service the board shows as Sold into Not Sold here.
+  const exact = new Set(names);
+  const manualStatuses = Object.fromEntries(
+    Object.entries(servicesExplored || {}).filter(([k]) => exact.has(k)),
+  );
   const readings = scopeServiceStatuses({
-    services: names, account: company, oppRows, manualStatuses: servicesExplored, serviceOverrides,
+    services: names, account: company, oppRows, manualStatuses, serviceOverrides,
   });
   for (const [name, r] of readings) if (r.status) out[text(renames?.[name]) || name] = r.status;
   return out;
@@ -231,7 +240,11 @@ const dateText = d => (d instanceof Date && !Number.isNaN(d.getTime())
 // What the UBM row reads: "In scope" once Bill payment is Sold, else the
 // service's status as the Services board has it (Qualifying, Not Sold ...).
 export function ubmScope(servicesExplored) {
-  const status = text((servicesExplored || {})[UBM_SERVICE]).replace(/^-$/, '');
+  const statuses = servicesExplored || {};
+  const key = UBM_SERVICE in statuses
+    ? UBM_SERVICE
+    : Object.keys(statuses).find(k => text(k).toLowerCase() === UBM_SERVICE.toLowerCase());
+  const status = text(key ? statuses[key] : '').replace(/^-$/, '');
   return status.toLowerCase() === 'sold' ? 'In scope' : status;
 }
 

@@ -1,8 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { createPortal } from 'react-dom';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
@@ -22,6 +20,7 @@ import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { hasTargetValues } from '../../utils/companyTargets';
 import { MY_ACCOUNTS_SINCE_EVENT, loadMyAccountsSince, saveMyAccountsSince, withMyAccountsStamped, sinceFor, sinceDayKey, daysBetween } from '../../utils/myAccountsSince';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import { loadOpps2FromFirestore } from '../../utils/opps2Store';
 import { loadList } from '../../utils/uploadedListStore';
 import { tierPreferringTargetsList, isOwnTarget, reportingTier, ownTargetTierLabel, OWN_TARGET_TIER_LABEL } from '../../utils/tierSource';
 import { companyDedupeKey } from '../../utils/companyKey';
@@ -1680,26 +1679,30 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       } catch { return null; }
     }
     async function loadFromFirestore() {
-      // Opps 2 is the canonical store — fall back to its Firestore
-      // doc when local IDB is empty (e.g. fresh browser, never
-      // opened Opps 2 here yet).
+      // Opps 2 is the canonical store: fall back to its Firestore doc when
+      // local IDB is empty (e.g. fresh browser, never opened Opps 2 here
+      // yet). Read through opps2Store, which reassembles the doc when it is
+      // saved in chunks (a large opps list); reading only its `json` field
+      // came back empty then.
       if (!user?.uid) return null;
       try {
-        const ref = doc(db, 'opps2Data', user.uid);
-        const snap = await getDoc(ref);
-        if (!snap.exists()) return null;
-        const raw = snap.data();
-        if (!raw?.json) return null;
-        const parsed = JSON.parse(raw.json);
-        return parsed?.records || null;
+        const data = await loadOpps2FromFirestore(user.uid);
+        return data?.records || null;
       } catch { return null; }
     }
-    (async () => {
+    const load = async () => {
       let records = await loadFromIndexedDB();
       if (!records || records.length === 0) records = await loadFromFirestore();
       if (!cancelled && records && records.length > 0) setOppsRecords(records);
-    })();
-    return () => { cancelled = true; };
+    };
+    load();
+    // Re-read when Opps 2 saves its cache (the app's background sync, or an
+    // edit on the Opps 2 tab), so a view opened before the opps arrived, or
+    // one left open while they changed, isn't stuck on what it first read.
+    // The Account MRI's Services / UBM rows read these, and otherwise
+    // disagreed with the company card, which reads them fresh on open.
+    window.addEventListener('opps2-cache-updated', load);
+    return () => { cancelled = true; window.removeEventListener('opps2-cache-updated', load); };
   }, [user]);
 
   const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount, displayNameByAccount, pePartnerAccountSet, oppsRecordsByAccount } = useMemo(() => {
