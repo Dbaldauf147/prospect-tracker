@@ -40,7 +40,7 @@ export const MRI_PROFILE_FIELDS = [
   { row: 17, key: 'energySpend', label: 'Energy spend ($M/yr)', source: '', kind: 'number' },
   { row: 19, key: 'mainContact', label: 'Main point of contact', source: 'Primary Point of Contact' },
   { row: 20, key: 'revenueText', label: 'Annual revenue / profit', source: 'Revenue' },
-  { row: 21, key: 'currentProvider', label: 'Current provider', source: '' },
+  { row: 21, key: 'currentProvider', label: 'Current provider', source: 'Competitors' },
   { row: 22, key: 'competitors', label: 'Key competitors', source: 'Competitors' },
   { row: 23, key: 'background', label: 'Other context / background', source: 'Company Notes' },
   { row: 25, key: 'services', label: 'Services in scope', source: 'Services' },
@@ -201,6 +201,9 @@ export function accountMriProfile({ record, tier = '', contacts = [], contracts 
     sites: Number.isFinite(sites) && sites > 0 ? sites : null,
     mainContact: mainContactText(contacts),
     revenueText: text(p.revenue),
+    // The competitor on the account is who they buy from today, so it fills
+    // Current provider too until somebody types something else there.
+    currentProvider: competitors.filter(Boolean).join('; '),
     competitors: competitors.filter(Boolean).join('; '),
     background: text(p.notes),
     services: servicesInScope(p.servicesExplored),
