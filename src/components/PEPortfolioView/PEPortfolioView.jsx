@@ -1728,6 +1728,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup, or from the Portfolio table): <code>Lead</code>, <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>. A firm nobody has worked yet is a <code>Lead</code>.</>
               : subtab === 'companies'
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm: matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns: so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
+              : subtab === 'raClients'
+              ? <>The <strong>portfolio companies tagged to an existing RA client</strong>: every row of <strong>All PCs</strong> whose <strong>RA Client Match</strong> is filled in (set on the owning firm's Portfolio Companies tab). Same columns, search and <strong>PE Owner</strong> filter as All PCs; this tab keeps its own column layout.</>
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen.</>
               : subtab === 'blueOwlServices'
@@ -1773,6 +1775,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'portfolio', label: 'Portfolio' },
           { key: 'stages', label: 'PE Stages' },
           { key: 'companies', label: 'All PCs' },
+          { key: 'raClients', label: 'RA Clients' },
           { key: 'blueOwl', label: 'PE Overview' },
           { key: 'blueOwlServices', label: 'PE Overview - Services' },
           { key: 'opps', label: 'PE Opps' },
@@ -1866,6 +1869,16 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           onSelectProspect={onSelectProspect}
           settings={settings}
           updateSettings={updateSettings}
+        />
+      ) : subtab === 'raClients' ? (
+        <PEAllCompaniesTab
+          key="raClients"
+          firms={visibleFirms}
+          prospects={prospects}
+          onSelectProspect={onSelectProspect}
+          settings={settings}
+          updateSettings={updateSettings}
+          raClientsOnly
         />
       ) : subtab === 'blueOwl' ? (
         // Keyed per tab: the two tabs render the same component at the
@@ -2810,7 +2823,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 // also shows the portfolio companies of every firm whose PE Owner is
 // Blue Owl). Matching uses the shared fuzzy companiesMatch so name
 // variants ("Blue Owl" ↔ "Blue Owl Capital") line up.
-function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, updateSettings }) {
+// `raClientsOnly` is the RA Clients subtab: the same table narrowed to the
+// portfolio companies whose RA Client Match is filled in (set on the
+// owning firm's Portfolio Companies tab), with its own column layout.
+function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, updateSettings, raClientsOnly = false }) {
   const [search, setSearch] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
 
@@ -2933,10 +2949,10 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
         });
       }
     }
-    return out;
-  }, [firms, listFlagsByCompany]);
+    return raClientsOnly ? out.filter(r => String(r.raClientMatch).trim()) : out;
+  }, [firms, listFlagsByCompany, raClientsOnly]);
 
-  const columns = useMemo(() => [
+  const allColumns = useMemo(() => [
     { key: 'peFirm', label: 'PE Firm', defaultWidth: 190, sticky: true, render: (r) => (
       <button
         type="button"
@@ -2986,6 +3002,17 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
     { key: 'pcDescription', label: 'PC Description', defaultWidth: 320 },
     { key: 'notes', label: 'Notes', defaultWidth: 220 },
   ], [firms, onSelectProspect]);
+  // On the RA Clients subtab the RA client a PC is tagged to, and its
+  // Client Manager, are what the tab is about, so they start beside the
+  // company name instead of off to the right. Its own layout, so a drag
+  // there does not move All PCs' columns.
+  const columns = useMemo(() => {
+    if (!raClientsOnly) return allColumns;
+    const lead = ['raClientMatch', 'clientManager'];
+    const rest = allColumns.filter(c => !lead.includes(c.key));
+    const at = rest.findIndex(c => c.key === 'companyName') + 1;
+    return [...rest.slice(0, at), ...lead.map(k => allColumns.find(c => c.key === k)), ...rest.slice(at)];
+  }, [allColumns, raClientsOnly]);
 
   const filtered = useMemo(() => {
     let out = rows;
@@ -3037,14 +3064,16 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {rows.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No portfolio companies mapped yet</div>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>{raClientsOnly ? 'No portfolio companies are tagged to an RA client yet' : 'No portfolio companies mapped yet'}</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Open a PE firm's company popup and add companies in its <strong>Portfolio Companies</strong> tab: they'll be merged here.
+              {raClientsOnly
+                ? <>Open a PE firm's company popup and set <strong>RA Client Match</strong> on a row of its <strong>Portfolio Companies</strong> tab: it will show here.</>
+                : <>Open a PE firm's company popup and add companies in its <strong>Portfolio Companies</strong> tab: they'll be merged here.</>}
             </div>
           </div>
         ) : (
           <DataTable
-            tableId="pe-all-portfolio-companies"
+            tableId={raClientsOnly ? 'pe-ra-client-portfolio-companies' : 'pe-all-portfolio-companies'}
             settings={settings}
             updateSettings={updateSettings}
             columns={columns}
@@ -3053,8 +3082,8 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
             defaultSort={{ key: 'score', direction: 'desc' }}
             enableColumnFilters
             emptyMessage="No portfolio companies match your filters"
-            exportFileName="pe_portfolio_companies"
-            exportPrimarySheetName="Portfolio Companies"
+            exportFileName={raClientsOnly ? 'pe_ra_client_portfolio_companies' : 'pe_portfolio_companies'}
+            exportPrimarySheetName={raClientsOnly ? 'RA Client PCs' : 'Portfolio Companies'}
           />
         )}
       </div>
