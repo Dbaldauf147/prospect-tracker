@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { sortCoverageRows, nextCoverageSort } from '../../utils/coverageSort';
+import { contactNameWarning } from '../../utils/firstNameAsLastName';
 import { failedEmailMap, failedEmailTitle } from '../../utils/failedEmailLookup';
 import { contactMovedOffEmail } from '../../utils/badEmails';
 import { withReplacedFailedEmails } from '../../utils/replacedFailedRecipients';
@@ -3022,6 +3023,15 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                 // out with a dashed edge and says so, where it is easy to
                 // spot before the email goes to them anyway.
                 const hiddenTag = !!raw && contactIsHidden(raw);
+                // A typical first name sitting in the Last Name box, which is
+                // most often the two names the wrong way round. The same
+                // warning the contact popup shows, read off the HubSpot
+                // record when there is one. Opening the contact (click the
+                // name) is where it gets fixed.
+                const nameWarn = contactNameWarning({ firstname: raw?.firstname, lastname: raw?.lastname, name: c.name });
+                const nameWarnTitle = nameWarn
+                  ? `"${nameWarn.lastname}" is usually a first name. ${nameWarn.firstAlsoGiven ? 'Check the last name is right.' : 'The first and last names may be the wrong way round.'} Click the name to open the contact and fix it.`
+                  : '';
                 const statusTitle = selfDup
                   ? 'Duplicate recipient: this address also appears elsewhere in the To section (double-send)'
                   // Sent and failed are both said: a send that bounced is
@@ -3035,7 +3045,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                   <span
                     key={c.id}
                     className={styles.contactTag}
-                    title={[whoTitle, hiddenTag ? 'Tagged Hide: this contact is hidden on the contact lists' : '', statusTitle].filter(Boolean).join('\n\n')}
+                    title={[whoTitle, hiddenTag ? 'Tagged Hide: this contact is hidden on the contact lists' : '', nameWarnTitle, statusTitle].filter(Boolean).join('\n\n')}
                     data-hidden-contact={hiddenTag || undefined}
                     style={{
                       ...(hasExtras ? { flexDirection: 'column', alignItems: 'flex-start', whiteSpace: 'normal', gap: '0.2rem' } : {}),
@@ -3054,6 +3064,11 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                         title={`${whoTitle}\n\nClick to open ${c.name}`}
                         style={{ cursor: 'pointer', textDecoration: 'underline' }}
                       >{c.name}</span> <span className={styles.contactEmail} style={failed ? { color: '#B91C1C', textDecoration: 'line-through' } : sentDate ? { color: '#15803D' } : hiddenTag ? { color: '#64748B' } : undefined}>({c.email})</span>
+                      {nameWarn && (
+                        <span data-first-name-as-last title={nameWarnTitle} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 6px', borderRadius: 999, background: '#FEF3C7', border: '1px solid #FDE68A', color: '#78350F', fontSize: '0.6rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
+                          ⚠ Last name?
+                        </span>
+                      )}
                       {hiddenTag && (
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 6px', borderRadius: 999, background: '#64748B', color: '#fff', fontSize: '0.6rem', fontWeight: 700, lineHeight: 1.7, whiteSpace: 'nowrap' }}>
                           ⊘ Hidden
