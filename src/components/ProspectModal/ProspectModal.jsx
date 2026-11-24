@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense, Fragment, isValidElement, cloneElement } from 'react';
 import { useBadEmails } from '../../hooks/useBadEmails';
+import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
 import { badEmailInfo, badEmailTitle, getPublishedBadEmails, contactFailedEmails, contactBouncedEmails, failedEmailChipTitle, normEmail } from '../../utils/badEmails';
 import { BfoHistoryTab } from './BfoHistoryTab';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
@@ -6115,6 +6116,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     () => estimateEmailDomainCandidates(companyContacts),
     [companyContacts],
   );
+  // What the mail to those addresses did, for the delivered / failed
+  // counts on each format in the picker (utils/emailFormatDelivery.js).
+  const { campaigns: savedCampaignsForFormats } = useSavedCampaigns();
+  const badEmailsForFormats = useBadEmails();
+  const emailFormatDeliveryData = useMemo(() => ({
+    campaigns: savedCampaignsForFormats,
+    badEmails: badEmailsForFormats.map,
+    failedByContact: badEmailsForFormats.failedByContact,
+    contacts: companyContacts,
+  }), [savedCampaignsForFormats, badEmailsForFormats.map, badEmailsForFormats.failedByContact, companyContacts]);
 
 
   // Per-contact sent / received email counts sourced from the
@@ -10937,7 +10948,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>Email Domains</label>
-              <EmailDomainsField value={fields.emailDomain} onChange={v => set('emailDomain', v)} options={emailDomainOptions} />
+              <EmailDomainsField value={fields.emailDomain} onChange={v => set('emailDomain', v)} options={emailDomainOptions} delivery={emailFormatDeliveryData} />
             </div>
 
             <div>
