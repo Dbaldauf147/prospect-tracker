@@ -1,10 +1,18 @@
 // Reference dropdown lists for the Opps workflow. Lifted from the
 // shared spreadsheet so the same option vocabulary surfaces inside
 // the app — used by the Dropdowns reference tab.
-import { PE_STRATEGIES, ASSET_TYPES } from './enums.js';
+import { PE_STRATEGIES, ASSET_TYPES, SERVICE_STATUSES } from './enums.js';
 import { SITE_STATUS_OPTIONS } from '../utils/siteStatus.js';
 
 export const DROPDOWN_LISTS = [
+  // The statuses a service can be set to on the company card. Edited here or
+  // from "Edit statuses..." in any of the card's service status dropdowns;
+  // utils/serviceStatusList.js keeps the ones the app reads by name.
+  {
+    key: 'serviceStatuses',
+    label: 'Service statuses',
+    options: SERVICE_STATUSES,
+  },
   {
     key: 'whoIsWaiting',
     label: 'Who is waiting',
