@@ -209,7 +209,8 @@ export function servicesInScope(servicesExplored) {
  * The "Potential upsell opportunities & who is responsible" cell: a line per
  * status (Qualifying, Renewal) that has services, then the account's
  * salesperson as the one responsible (the tracker keeps no owner per
- * service). '' when no service has either status.
+ * service). "-" when no service has either status, so the cell says there
+ * is nothing to upsell (and so no one responsible) rather than sitting blank.
  */
 export function upsellOpportunities(servicesExplored, responsible = '') {
   const lines = [];
@@ -217,7 +218,7 @@ export function upsellOpportunities(servicesExplored, responsible = '') {
     const names = servicesWith(servicesExplored, [status]);
     if (names.length) lines.push(`${status}: ${names.join(', ')}`);
   }
-  if (!lines.length) return '';
+  if (!lines.length) return '-';
   const who = text(responsible);
   if (who) lines.push(`Responsible: ${who}`);
   return lines.join('\n');
