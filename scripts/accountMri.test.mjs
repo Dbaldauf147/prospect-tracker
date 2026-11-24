@@ -38,8 +38,9 @@ eq(servicesInScope({ RECs: 'Not Sold' }), 'Sold: None\nNot Sold: RECs', 'an empt
 eq(servicesInScope({ IDM: 'Qualifying', 'API/ETL': 'N/A', X: '-' }), '', 'in-flight services are not in scope');
 eq(upsellOpportunities({ ...board, ESG: 'Renewal', UCA: 'Renewal' }, 'Dana Reyes'), 'Qualifying: IDM\nRenewal: ESG, UCA\nResponsible: Dana Reyes', 'qualifying, then renewal, then the salesperson');
 eq(upsellOpportunities(board), 'Qualifying: IDM', 'no salesperson, no responsible line');
-eq(upsellOpportunities({ Audits: 'Exploring', Q: 'Quoted' }, 'Dana Reyes'), '', 'other in-flight statuses are not upsell');
-eq(upsellOpportunities({ A: 'Sold', RECs: 'Not Sold' }, 'Dana Reyes'), '', 'nothing qualifying or renewing');
+eq(upsellOpportunities({ Audits: 'Exploring', Q: 'Quoted' }, 'Dana Reyes'), '-', 'other in-flight statuses are not upsell');
+eq(upsellOpportunities({ A: 'Sold', RECs: 'Not Sold' }, 'Dana Reyes'), '-', 'nothing qualifying or renewing: a dash');
+eq(upsellOpportunities({}, 'Dana Reyes'), '-', 'no services at all: a dash');
 eq(
   accountServiceStatuses({
     company: 'Northwind',
