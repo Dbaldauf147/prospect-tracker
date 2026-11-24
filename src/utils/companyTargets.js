@@ -14,6 +14,10 @@
 // its SBTi entry): typed on the tab, or the Source column of a pasted table.
 // `hidden` greys the row out on the tab (kept, not deleted: an old target
 // worth remembering but not worth reading past).
+// `reachedOut` is Prospecting > Targets' Reached Out tick for this one
+// target. It is only on a row once that box has been ticked or cleared; a
+// row without it falls back to the company-wide tick the page kept before
+// the tick was per target (see targetReachedOut).
 // `classification` is the target's ambition (SBTi's "1.5°C", "Well-below
 // 2°C"). Commitments pasted before commitmentType existed carried their
 // commitment type here; normalize moves it across. `status` is free
@@ -130,6 +134,7 @@ export function normalizeTargets(raw) {
         datePublished: String(r.datePublished || ''),
         sourceUrl: String(r.sourceUrl || '').trim(),
         hidden: !!r.hidden,
+        ...(typeof r.reachedOut === 'boolean' ? { reachedOut: r.reachedOut } : {}),
       };
     });
 }
@@ -137,13 +142,22 @@ export function normalizeTargets(raw) {
 // The list with one row's field changed. Year fields are cleaned on the way in.
 export function updateTarget(list, id, key, value) {
   const v = TARGET_YEAR_KEYS.includes(key) ? cleanYear(value)
-    : (TARGET_SCOPES.includes(key) || key === 'hidden') ? !!value
+    : (TARGET_SCOPES.includes(key) || key === 'hidden' || key === 'reachedOut') ? !!value
       : String(value ?? '');
   return normalizeTargets(list).map(r => (r.id === id ? { ...r, [key]: v } : r));
 }
 
 export function removeTarget(list, id) {
   return normalizeTargets(list).filter(r => r.id !== id);
+}
+
+// Has this target been reached out about? Its own tick once it has one.
+// Before the tick was per target it was one per company (`targetsReachedOut`
+// on the company record), and a target nobody has ticked or cleared since
+// still reads that, so the ticks made back then are not lost.
+export function targetReachedOut(target, prospect) {
+  if (typeof target?.reachedOut === 'boolean') return target.reachedOut;
+  return !!prospect?.targetsReachedOut;
 }
 
 // "1, 2" / "1, 2, 3" / "" - the scopes a target covers, for export and filters.
