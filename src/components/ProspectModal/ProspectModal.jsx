@@ -50,6 +50,8 @@ import { STRATEGIC_STORAGE_KEY, strategicMatches, strategicTypes, isNamStrategic
 import { STATUSES, STATUS_COLORS, TIER_OPTIONS, TIERS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
 import ServiceBucketPopup from './ServiceBucketPopup';
+import ServiceStatusSourcePopup from './ServiceStatusSourcePopup';
+import { oppsForService } from '../../utils/serviceStatusSource';
 import PortfolioAnalysisSummary from './PortfolioAnalysisSummary';
 import { isGraveyardBucket } from '../../utils/servicePricing';
 import { getServiceCategories, buildServiceBoard, exploredCountTest, isUncountedBucket, setBucketCounted, renameBucketCounted, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
@@ -6950,6 +6952,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [bulkStatus, setBulkStatus] = useState('Not Sold');
   const [bulkSME, setBulkSME] = useState('');
   const [expandedServiceNote, setExpandedServiceNote] = useState(null);
+  // The service whose status popup (where the status came from) is open.
+  const [statusSourceItem, setStatusSourceItem] = useState(null);
   const [portfolioOpen, setPortfolioOpen] = useState(true);
   // Which page of the Portfolio tab is showing: the site list and holdings,
   // or the acquisitions & dispositions log.
@@ -13172,6 +13176,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       onClose={() => setServiceBucketPopup(null)}
                     />
                   )}
+                  {statusSourceItem && (() => {
+                    const item = statusSourceItem;
+                    const autoNaBy = autoNaServices.get(item);
+                    const categoryNa = categoryNaServices.get(item);
+                    const close = () => setStatusSourceItem(null);
+                    return (
+                      <ServiceStatusSourcePopup
+                        label={getDisplayName(item)}
+                        manualStatus={svcAll[item] || '-'}
+                        oppStage={scopeMatchedServices.get(item) || ''}
+                        autoNaText={autoNaBy ? autoNaTitle(getDisplayName(item), autoNaBy) : ''}
+                        categoryNaText={categoryNa ? `N/A automatically: ${categoryNa.why}, and ${getDisplayName(item)} is tagged ${categoryNa.bucket}.` : ''}
+                        opps={oppsForService(companyOpps, item)}
+                        oppsLoaded={!!oppsCache}
+                        note={(fields.serviceNotes || {})[item] || ''}
+                        statuses={serviceStatuses}
+                        colorOf={serviceStatusColor}
+                        oppColorOf={oppStageColors}
+                        onSetStatus={(status) => {
+                          const next = { ...(fields.servicesExplored || {}) };
+                          if (status === '-') delete next[item];
+                          else next[item] = status;
+                          set('servicesExplored', next);
+                        }}
+                        onEditStatuses={() => setStatusEditorOpen(true)}
+                        onEditNote={() => { close(); setExpandedServiceNote(item); }}
+                        onClose={close}
+                      />
+                    );
+                  })()}
                   {filtering && (
                     <div style={{ marginTop: '0.5rem', fontSize: '0.68rem', color: '#64748B' }}>
                       {matchCount === 0
@@ -13425,31 +13459,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       }}
                                     >{prospectAnyway ? '\u2713 Prospect' : 'Prospect'}</button>
                                   )}
-                                  <select
-                                    value={effectiveStatus}
-                                    onChange={e => {
-                                      if (e.target.value === EDIT_SERVICE_STATUSES) { setStatusEditorOpen(true); return; }
-                                      const next = { ...(fields.servicesExplored || {}), [item]: e.target.value };
-                                      if (e.target.value === '-') delete next[item];
-                                      set('servicesExplored', next);
-                                    }}
+                                  {/* The status opens a popup saying where it
+                                      came from (the opps behind it, or the
+                                      note when it was set by hand), and the
+                                      status is changed from there. */}
+                                  <button
+                                    type="button"
+                                    data-service-status={item}
+                                    onClick={() => setStatusSourceItem(item)}
                                     title={isManualOverride
-                                      ? `Manual override: ${manualStatus}.${oppStage ? ` Automatic status from a matching opp would be: ${oppStage}.` : ' No matching opp, so the automatic status is blank.'} Pick "- (auto)" or click ↺ to revert to the automatic status.`
-                                      : oppStage ? `Automatic status from a matching opp: ${oppStage}. Pick a status to set a manual override.`
+                                      ? `Set by hand: ${manualStatus}. Click to see the note and any opps naming this service.`
+                                      : oppStage ? `From a matching opp: ${oppStage}. Click to see which opps.`
                                       : isAutoNa ? autoNaTitle(getDisplayName(item), autoNaBy)
-                                      : isCategoryNa ? `N/A automatically: ${categoryNa.why}, and ${getDisplayName(item)} is tagged ${categoryNa.bucket}. Pick a status to overrule it.`
-                                      : 'No manual override and no matching opp.'}
+                                      : isCategoryNa ? `N/A automatically: ${categoryNa.why}, and ${getDisplayName(item)} is tagged ${categoryNa.bucket}. Click to change it.`
+                                      : 'No status set by hand and no matching opp. Click to set one.'}
                                     style={{
-                                      fontSize: '0.62rem', padding: '1px 2px', border: `1px solid ${isManualOverride ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                                      fontSize: '0.62rem', padding: '1px 4px', border: `1px solid ${isManualOverride ? 'var(--color-accent)' : 'var(--color-border)'}`,
                                       borderRadius: '3px', background: colors.bg || 'var(--color-surface)', color: colors.color || 'var(--color-text)',
-                                      cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit', fontWeight: 600,
+                                      cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit', fontWeight: 600, textAlign: 'left',
+                                      display: 'inline-flex', alignItems: 'center', justifyContent: 'space-between', gap: 3, whiteSpace: 'nowrap',
                                     }}
                                   >
-                                    {/* A status since renamed or taken off the list still shows. */}
-                                    {effectiveStatus && !serviceStatuses.includes(effectiveStatus) && <option value={effectiveStatus}>{effectiveStatus}</option>}
-                                    {serviceStatuses.map(s => <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>)}
-                                    <option value={EDIT_SERVICE_STATUSES}>Edit statuses...</option>
-                                  </select>
+                                    <span>{effectiveStatus === '-' ? '-' : effectiveStatus}</span>
+                                    <span style={{ fontSize: '0.5rem', opacity: 0.6 }}>&#9662;</span>
+                                  </button>
                                   {isManualOverride && (
                                     <button
                                       type="button"
