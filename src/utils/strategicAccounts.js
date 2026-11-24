@@ -41,6 +41,41 @@ export function strategicNameKey(rows) {
   return headers.length ? pickNameKey(headers) : '';
 }
 
+// The column that says which kind of strategic account a row is: "Global
+// Strategic Account" or "NAM Strategic Account". A header that is exactly
+// "Type" wins over one that merely contains it; never the name column or
+// an owner one.
+export function strategicTypeKey(rows) {
+  const nameKey = strategicNameKey(rows);
+  const headers = headersOf(rows).filter(h => h !== nameKey && !OWNER_HEADER.test(h));
+  return headers.find(h => /^type$/i.test(h.trim())) || headers.find(h => /type/i.test(h)) || '';
+}
+
+/** Whether a Type cell says NAM Strategic Account ("NAM ...", "North America ..."). */
+export function isNamStrategicType(type) {
+  return /\bNAM\b|north\s*america/i.test(String(type || ''));
+}
+
+/**
+ * The list without its NAM Strategic Account rows, for My Accounts >
+ * Strategic Accounts, which leaves those off. A row with no Type, or any
+ * other Type, stays.
+ */
+export function withoutNamStrategicRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const typeKey = strategicTypeKey(rows);
+  return typeKey ? rows.filter(r => !isNamStrategicType(r?.[typeKey])) : rows;
+}
+
+/** The distinct Types across a company's matches, in list order. */
+export function strategicTypes(matches) {
+  const out = [];
+  for (const m of matches || []) for (const t of m.types || []) {
+    if (!out.some(x => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return out;
+}
+
 /** Owner names on one row, split on ; / , / newline / " and " / &, deduped. */
 export function rowOwners(row, headers) {
   const out = [];
@@ -62,8 +97,9 @@ export function rowOwners(row, headers) {
 
 /**
  * The list read once, for asking about many companies: returns
- * `company => [{ name, owners: string[], mapped: boolean }]`, deduped by
- * name. A row answers to the company its Table View mapping names, and to
+ * `company => [{ name, owners: string[], types: string[], mapped: boolean }]`,
+ * deduped by name; `types` are the row's Type cells (Global or NAM
+ * Strategic Account), empty when the list has no Type column. A row answers to the company its Table View mapping names, and to
  * any it is mapped to in `otherMappings` (the list page's My Accounts and
  * Portfolio Companies columns); with none of those, and unless dismissed,
  * to the one its own name normalises to.
@@ -74,6 +110,7 @@ export function strategicLookup(rows, mapping = {}, dismissed = {}, otherMapping
   const nameKey = strategicNameKey(rows);
   if (!nameKey) return none;
   const owners = ownerHeaders(rows);
+  const typeKey = strategicTypeKey(rows);
   // normalised company -> (row matchKey -> match), in list order.
   const byCompany = new Map();
   for (const row of rows) {
@@ -86,6 +123,7 @@ export function strategicLookup(rows, mapping = {}, dismissed = {}, otherMapping
     if (!mappedTo.length && dismissed[key]) continue;
     const targets = new Set((mappedTo.length ? mappedTo : [name]).map(normalizeCompany).filter(Boolean));
     const rowOwnerList = rowOwners(row, owners);
+    const rowType = typeKey ? String(row?.[typeKey] ?? '').trim() : '';
     for (const target of targets) {
       if (!byCompany.has(target)) byCompany.set(target, new Map());
       const byKey = byCompany.get(target);
@@ -94,8 +132,9 @@ export function strategicLookup(rows, mapping = {}, dismissed = {}, otherMapping
         for (const o of rowOwnerList) {
           if (!prev.owners.some(p => p.toLowerCase() === o.toLowerCase())) prev.owners.push(o);
         }
+        if (rowType && !prev.types.some(t => t.toLowerCase() === rowType.toLowerCase())) prev.types.push(rowType);
       } else {
-        byKey.set(key, { name, owners: [...rowOwnerList], mapped: mappedTo.length > 0 });
+        byKey.set(key, { name, owners: [...rowOwnerList], types: rowType ? [rowType] : [], mapped: mappedTo.length > 0 });
       }
     }
   }
@@ -107,7 +146,8 @@ export function strategicLookup(rows, mapping = {}, dismissed = {}, otherMapping
 
 /**
  * Strategic Accounts rows that are `company`.
- * Returns [{ name, owners: string[], mapped: boolean }], deduped by name.
+ * Returns [{ name, owners: string[], types: string[], mapped: boolean }],
+ * deduped by name.
  */
 export function strategicMatches(rows, company, mapping = {}, dismissed = {}, otherMappings = []) {
   return strategicLookup(rows, mapping, dismissed, otherMappings)(company);
@@ -123,7 +163,9 @@ export const ON_STRATEGIC_LIST = 'Strategic Accounts list';
  * My Accounts > Strategic Accounts: every Tier 2 account on My Accounts,
  * plus every tracker company this CDM is on that the Strategic Accounts
  * list names (whether or not My Accounts carries it, and whatever its
- * tier). A Tier 1 account is here only when the list names it.
+ * tier). A Tier 1 account is here only when the list names it. The
+ * subtab passes a `lookup` built without the list's NAM Strategic Account
+ * rows (withoutNamStrategicRows), so those do not count as being listed.
  *
  * `accounts` are My Accounts rows (myTier / tierLabel set), `prospects` the
  * tracker records, `lookup` a strategicLookup, `isCdm` whether a CDM cell is

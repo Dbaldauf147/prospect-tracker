@@ -46,7 +46,7 @@ import {
   RA_CLIENTS_MAP_KEY, listMatchKey, readListField, mapListRow, unmapListRow, mapsToCompany,
 } from '../../utils/listAccountMapping';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
-import { STRATEGIC_STORAGE_KEY, strategicMatches } from '../../utils/strategicAccounts';
+import { STRATEGIC_STORAGE_KEY, strategicMatches, strategicTypes, isNamStrategicType } from '../../utils/strategicAccounts';
 import { STATUSES, STATUS_COLORS, TIER_OPTIONS, TIERS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
 import ServiceBucketPopup from './ServiceBucketPopup';
@@ -7060,6 +7060,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
     return out;
   }, [strategicMatchList]);
+  // Which kind of strategic account the list says it is (its Type column):
+  // Global Strategic Account, NAM Strategic Account, or both.
+  const strategicTypeList = useMemo(() => strategicTypes(strategicMatchList), [strategicMatchList]);
   const [pastePortfolio, setPastePortfolio] = useState('');
   // Slug used as the Firestore path segment for persisted research
   // results - same shape as companySlug below; declared earlier here
@@ -10661,9 +10664,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               gap: '0.35rem 0.7rem',
             }}>
               <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>⚠️</span>
-              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
-                Strategic Account
-              </span>
+              {/* The list's Type for the company, so a NAM Strategic Account
+                  reads differently from a Global one; plain "Strategic
+                  Account" when the list gives no Type. */}
+              {strategicTypeList.length > 0 ? strategicTypeList.map(t => (
+                <span
+                  key={t}
+                  title="The Type the Strategic Accounts list gives this company"
+                  style={{
+                    padding: '0.1rem 0.5rem', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700,
+                    textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap',
+                    ...(isNamStrategicType(t)
+                      ? { background: '#FFFFFF', border: '1px solid #991B1B', color: '#991B1B' }
+                      : { background: '#991B1B', border: '1px solid #991B1B', color: '#FFFFFF' }),
+                  }}
+                >{t}</span>
+              )) : (
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                  Strategic Account
+                </span>
+              )}
               <span style={{ fontSize: '0.75rem', color: '#7F1D1D', minWidth: 0 }}>
                 {strategicOwners.length > 0
                   ? `This company is on the Strategic Accounts list. Check with the account ${strategicOwners.length === 1 ? 'owner' : 'owners'} before reaching out.`

@@ -1,7 +1,9 @@
 // My Accounts > Strategic Accounts: every Tier 2 account on My Accounts,
 // plus every company this CDM is on that the Strategic Accounts list
 // (Lists > Strategic Accounts) names, with who owns it there. A Tier 1
-// account is here only when the list names it.
+// account is here only when the list names it. The list's NAM Strategic
+// Account rows do not count here: only its other rows (the Global
+// Strategic Accounts) put a company on this subtab.
 //
 // A company is "on the list" by the same rule as the red strip at the top
 // of the company popup (utils/strategicAccounts.js), so the two agree.
@@ -15,13 +17,13 @@ import { TIERS } from '../../data/enums.js';
 import { loadList } from '../../utils/uploadedListStore';
 import { readListField } from '../../utils/listAccountMapping';
 import { matchesCdm } from '../../utils/cdmMatch';
-import { STRATEGIC_STORAGE_KEY, ON_STRATEGIC_LIST, strategicLookup, strategicAccountRows } from '../../utils/strategicAccounts';
+import { STRATEGIC_STORAGE_KEY, ON_STRATEGIC_LIST, strategicLookup, strategicAccountRows, withoutNamStrategicRows } from '../../utils/strategicAccounts';
 import { DataTable } from '../common/DataTable';
 import { AccountMriTab } from './AccountMriTab';
 import { LISTED_ROW_STYLE, LISTED_COMPANY_CELL, LISTED_NAME_INK } from './strategicListedStyle';
 
 const VIEWS = [
-  { key: 'accounts', label: 'Accounts', title: 'The strategic accounts and why each one is here. A Tier 1 account shows only when it is on the Strategic Accounts list.' },
+  { key: 'accounts', label: 'Accounts', title: 'The strategic accounts and why each one is here. A Tier 1 account shows only when it is on the Strategic Accounts list. NAM Strategic Accounts are left off.' },
   { key: 'mri', label: 'Account MRI', title: 'The same accounts as the Account MRI intake template, with an export that fills it in' },
 ];
 const VIEW_KEY = 'my-accounts-strategic-view';
@@ -64,8 +66,10 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
     return () => { cancelled = true; };
   }, []);
 
+  // NAM Strategic Account rows are left out before anything is matched, so
+  // a company only they name is not "on the list" here and shows no owner.
   const lookup = useMemo(() => strategicLookup(
-    listRows || [],
+    withoutNamStrategicRows(listRows || []),
     readListField(settings, STRATEGIC_STORAGE_KEY, 'mapping'),
     readListField(settings, STRATEGIC_STORAGE_KEY, 'dismissed'),
     [
@@ -122,7 +126,7 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
       },
       {
         key: 'reasons', label: 'Here Because', defaultWidth: 230,
-        headerTitle: 'Why the company is on this subtab: it is a Tier 2 account, or you are its CDM and the Strategic Accounts list names it. A Tier 1 account shows only when the list names it.',
+        headerTitle: 'Why the company is on this subtab: it is a Tier 2 account, or you are its CDM and the Strategic Accounts list names it. A Tier 1 account shows only when the list names it. NAM Strategic Account rows on the list do not count.',
         getSortValue: r => r.reasons.join(', ').toLowerCase(),
         getFilterValue: r => r.reasons.join(', '),
         exportValue: r => r.reasons.join(', '),
@@ -134,7 +138,7 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
       },
       {
         key: 'owners', label: 'Strategic Account Owner', defaultWidth: 250,
-        headerTitle: 'Who owns the company on the Strategic Accounts list. Blank when the list does not name the company, or names no owner for it.',
+        headerTitle: 'Who owns the company on the Strategic Accounts list. Blank when the list does not name the company, names it only as a NAM Strategic Account, or names no owner for it.',
         getSortValue: r => (r.owners.length ? r.owners.join(', ').toLowerCase() : null),
         getFilterValue: r => r.owners.join(', '),
         exportValue: r => r.owners.join(', '),
@@ -175,7 +179,7 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
         </span>
         {count(ON_STRATEGIC_LIST) > 0 && (
           <span
-            title="Rows tinted red with a red bar and a red company name are on the Strategic Accounts list. The other rows are here as Tier 2 accounts only."
+            title="Rows tinted red with a red bar and a red company name are on the Strategic Accounts list (NAM Strategic Accounts aside). The other rows are here as Tier 2 accounts only."
             style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', color: '#7F1D1D' }}
           >
             <span aria-hidden="true" style={{ width: 16, height: 12, borderRadius: 2, background: LISTED_ROW_STYLE.background, border: '1px solid #FECACA', boxShadow: 'inset 3px 0 0 #DC2626' }} />
