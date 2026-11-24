@@ -1,7 +1,7 @@
 // The collapsed "contacts at owned companies" table on the company card:
 // which people it lists and which owned company it puts them under. Run:
 //   node scripts/ownedCompanyContacts.test.mjs
-import { ownedCompanyList, ownedCompanyContacts } from '../src/utils/ownedCompanyContacts.js';
+import { ownedCompanyList, ownedCompanyContacts, ownedCompanyFor } from '../src/utils/ownedCompanyContacts.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -60,6 +60,26 @@ eq(run({ showHidden: true }).map(r => r[0]), ['1', '2', '4', '6', '7', '8'],
   'Show hidden brings back hide-tagged and removed contacts');
 
 eq(ownedCompanyContacts(contacts, []), [], 'no owned companies, no rows');
+
+// ── Roster contacts who work at an owned company ──────────────────────
+{
+  const owned = [
+    { name: 'Brookfield (Self Storage)', kind: 'division' },
+    { name: 'Westinghouse', kind: 'holding' },
+    { name: 'Brookfield Asset Management Ltd', kind: 'holding' },
+  ];
+  const opts = { self: 'Brookfield Asset Management', ownNames: ['BAM'], links: { westinghouse: ['5', '7'], 'brookfield asset management': ['6', '7'] } };
+  const at = (company, id = 'x') => ownedCompanyFor({ id, company }, owned, opts)?.name || null;
+  eq(at('Westinghouse Inc'), 'Westinghouse', 'Company names a holding: moves');
+  eq(at('Brookfield (Self Storage)'), 'Brookfield (Self Storage)', 'Company carries a division bracket: moves');
+  eq(at('Brookfield Asset Management'), null, 'exactly the company itself: stays');
+  eq(at('BAM'), null, 'one of its aliases: stays');
+  eq(at('Brookfield Asset Management Inc'), null, 'fuzzy match to both the company and a holding: stays');
+  eq(at('Brookfield Asset Management', '5'), 'Westinghouse', 'linked by hand to a holding: moves');
+  eq(at('Westinghouse', '6'), null, 'linked by hand to the company itself: stays');
+  eq(at('Brookfield Asset Management', '7'), 'Westinghouse', 'linked to both: the holding wins');
+  eq(at(''), null, 'no Company text: stays');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

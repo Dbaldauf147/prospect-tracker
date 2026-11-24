@@ -185,7 +185,7 @@ import { DM_STEPS, bucketStepsLeft, dmBucketAnswer, contactNaByBucket } from '..
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { ContactsTable, OwnedContactsSection } from './ContactsTable.jsx';
-import { ownedCompanyList, ownedCompanyContacts } from '../../utils/ownedCompanyContacts';
+import { ownedCompanyList, ownedCompanyContacts, ownedCompanyFor } from '../../utils/ownedCompanyContacts';
 import { ContactPasteModal } from './ContactPasteModal.jsx';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { slimHubspotContact, withoutUnknownBlanks } from '../../utils/hubspotContactFields';
@@ -7908,6 +7908,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return ownedCompanyList(entries, fields.company);
   }, [isNew, fields.company, fields.portfolioCompanies, prospect?.id, prospects, settings, prospectByName, prospectById]);
 
+  // Roster contacts who really work at one of the companies this one owns
+  // (a portfolio company or a division) - id -> { contact, company, kind }.
+  // They are listed under Owned Company Contacts instead of as this
+  // company's own people (utils/ownedCompanyContacts.ownedCompanyFor).
+  const rosterOwnedRows = useMemo(() => {
+    const out = new Map();
+    if (ownedCompanies.length === 0) return out;
+    const ownNames = [fields.aliases, fields.hubspotCompanyNames]
+      .flatMap(v => String(v || '').split(/[\n;,]+/)).map(n => n.trim()).filter(Boolean);
+    for (const c of companyContacts) {
+      const o = ownedCompanyFor(c, ownedCompanies, { self: fields.company, ownNames, links: settings.companyContactLinks || {} });
+      if (o) out.set(String(c.id || c.vid || ''), { contact: c, company: o.name, kind: o.kind });
+    }
+    return out;
+  }, [companyContacts, ownedCompanies, fields.company, fields.aliases, fields.hubspotCompanyNames, settings.companyContactLinks]);
+  const ownRosterContacts = useMemo(
+    () => (rosterOwnedRows.size === 0 ? companyContacts : companyContacts.filter(c => !rosterOwnedRows.has(String(c.id || c.vid || '')))),
+    [companyContacts, rosterOwnedRows],
+  );
+
   // The opps at those companies, listed under the company's own on the Opps
   // tab. Same matching the Download PPT deck uses (owned companies, and
   // accounts this company is PE owner of), but closed opps too, since the
@@ -8112,7 +8132,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const n = (v) => (v > 0 ? String(v) : '');
     return {
       company: '',
-      contacts: n(companyContacts.length),
+      contacts: n(ownRosterContacts.length),
       divisions: n(prospect?.id ? divisionsFor(settings, prospect.id).length : 0),
       services: servicesExploredCount.total
         ? `${servicesExploredCount.explored}/${servicesExploredCount.total}`
@@ -8132,7 +8152,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       targets: n(Array.isArray(fields.climateTargets) ? fields.climateTargets.filter(t => t && !t.hidden).length : 0),
       portfolio: n((fields.portfolioCompanies || []).length),
     };
-  }, [companyContacts.length, servicesExploredCount, companyOppsSummary.total,
+  }, [ownRosterContacts.length, servicesExploredCount, companyOppsSummary.total,
     accountPotentialReading, fields.portfolioCompanies, activeContractCount, fields.bfoHistory, fields.climateTargets,
     settings, prospect?.id]);
 
@@ -8402,16 +8422,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // owner bucket; anyone else at an owner is pulled in alongside, under the
   // same hidden / excluded rules as the roster itself.
   const { directContacts, ownerContacts } = useMemo(() => {
-    if (contactOwners.length === 0) return { directContacts: companyContacts, ownerContacts: [] };
+    if (contactOwners.length === 0) return { directContacts: ownRosterContacts, ownerContacts: [] };
     const isOwnerContact = (c) => !companiesMatch(c.company, fields.company)
       && contactOwners.some(o => companiesMatch(c.company, o.name));
     const direct = [];
     const owner = [];
     const present = new Set();
-    for (const c of companyContacts) {
-      present.add(String(c.id || c.vid || ''));
-      (isOwnerContact(c) ? owner : direct).push(c);
-    }
+    for (const c of companyContacts) present.add(String(c.id || c.vid || ''));
+    for (const c of ownRosterContacts) (isOwnerContact(c) ? owner : direct).push(c);
     for (const c of hubspotContacts) {
       const id = String(c.id || c.vid || '');
       if (!id || present.has(id) || !isOwnerContact(c)) continue;
@@ -8420,15 +8438,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       present.add(id);
     }
     return { directContacts: direct, ownerContacts: owner };
-  }, [contactOwners, companyContacts, hubspotContacts, fields.company, showHiddenContacts, excludedContactIds]);
+  }, [contactOwners, companyContacts, ownRosterContacts, hubspotContacts, fields.company, showHiddenContacts, excludedContactIds]);
 
   // Everything the roster grids can select: the company's own contacts plus
   // the owner contacts that aren't on its roster.
   const selectableContacts = useMemo(() => {
-    if (ownerContacts.length === 0) return companyContacts;
-    const ids = new Set(companyContacts.map(c => String(c.id || c.vid || '')));
-    return [...companyContacts, ...ownerContacts.filter(c => !ids.has(String(c.id || c.vid || '')))];
-  }, [companyContacts, ownerContacts]);
+    if (ownerContacts.length === 0) return ownRosterContacts;
+    const ids = new Set(ownRosterContacts.map(c => String(c.id || c.vid || '')));
+    return [...ownRosterContacts, ...ownerContacts.filter(c => !ids.has(String(c.id || c.vid || '')))];
+  }, [ownRosterContacts, ownerContacts]);
 
   // The opps the "Download PPT" button on the Opps tab puts in its deck:
   // the live ones at this company and at everything it owns, so a PE
@@ -8495,15 +8513,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // it walks every cached HubSpot contact.
   const ownedContactRows = useMemo(() => {
     if (activeTab !== 'contacts' || ownedCompanies.length === 0) return [];
-    const skipIds = new Set(selectableContacts.map(c => String(c.id || c.vid || '')));
-    return ownedCompanyContacts(hubspotContacts, ownedCompanies, {
+    // Roster people who work at an owned company come first, then everyone
+    // else at those companies.
+    const skipIds = new Set([...selectableContacts, ...[...rosterOwnedRows.values()].map(r => r.contact)].map(c => String(c.id || c.vid || '')));
+    return [...rosterOwnedRows.values(), ...ownedCompanyContacts(hubspotContacts, ownedCompanies, {
       skipIds,
       showHidden: showHiddenContacts,
       isHidden: contactIsHidden,
       links: settings.companyContactLinks || {},
       exclusions: settings.companyContactExclusions || {},
-    });
-  }, [activeTab, ownedCompanies, selectableContacts, hubspotContacts, showHiddenContacts, settings.companyContactLinks, settings.companyContactExclusions]);
+    })];
+  }, [activeTab, ownedCompanies, selectableContacts, rosterOwnedRows, hubspotContacts, showHiddenContacts, settings.companyContactLinks, settings.companyContactExclusions]);
 
   // Remove a contact from this company's roster only. Non-destructive -
   // the contact stays in HubSpot and on every other company it matches.
