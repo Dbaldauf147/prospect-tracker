@@ -54,7 +54,7 @@ import {
   loadClientScopeMap, setClientScope, setClientScopes, CLIENT_SCOPE_EVENT,
 } from '../../utils/clientManagerStore';
 import { serviceStatusColor, serviceBucket } from '../../utils/serviceStatusColors';
-import { SERVICE_STATUSES } from '../../data/enums';
+import { useServiceStatuses } from '../../hooks/useServiceStatuses';
 import {
   CLIENT_COUNT_FIELDS,
   countsUsed,
@@ -454,6 +454,7 @@ const cellReset = { maxWidth: 'none', overflow: 'visible', textOverflow: 'clip' 
 // not a status called "-", it is the service falling back to whatever a
 // matching opp says, and the border says which of the two you are looking at.
 function ServiceStatusSelect({ value, manual, disabled, title, onPick, minWidth = 96 }) {
+  const statuses = useServiceStatuses();
   const mixed = value === MIXED_STATUS;
   const { bg, color } = mixed ? {} : serviceStatusColor(value);
   return (
@@ -475,7 +476,9 @@ function ServiceStatusSelect({ value, manual, disabled, title, onPick, minWidth 
           listed to be shown and never to be chosen — picking it would have to
           mean setting several services to different things at once. */}
       {mixed && <option value={MIXED_STATUS} disabled>Mixed</option>}
-      {SERVICE_STATUSES.map(st => (
+      {/* A status since taken off the list still shows. */}
+      {!mixed && value && !statuses.includes(value) && <option value={value}>{value}</option>}
+      {statuses.map(st => (
         <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>
       ))}
     </select>

@@ -37,7 +37,8 @@
 // price against, so the next biggest open service leads instead. Saved in
 // settings, shared by the two subtabs.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { STATUS_COLORS, SERVICE_STATUSES, TIERS } from '../../data/enums.js';
+import { STATUS_COLORS, TIERS } from '../../data/enums.js';
+import { useServiceStatuses } from '../../hooks/useServiceStatuses';
 import { serviceStatusColor } from '../../utils/serviceStatusColors.js';
 import { withServiceStatus } from '../../utils/clientDealSizing.js';
 import { planProspectingBulkStatus } from '../../utils/prospectingBulkStatus.js';
@@ -99,6 +100,7 @@ function Figure({ value, from, unit = '' }) {
 // a matching opp says. A blue border means the status is typed on the card
 // rather than coming from an opp.
 function DealStatusSelect({ deal, disabled, onPick }) {
+  const statuses = useServiceStatuses();
   const value = deal.status || '-';
   const manual = !!deal.status && !deal.fromOpp;
   const { bg, color } = serviceStatusColor(deal.status);
@@ -121,8 +123,8 @@ function DealStatusSelect({ deal, disabled, onPick }) {
       }}
     >
       {/* A status off the opp list the card doesn't offer still shows. */}
-      {!SERVICE_STATUSES.includes(value) && <option value={value}>{value}</option>}
-      {SERVICE_STATUSES.map(st => (
+      {!statuses.includes(value) && <option value={value}>{value}</option>}
+      {statuses.map(st => (
         <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>
       ))}
     </select>
@@ -148,6 +150,7 @@ function cachedDeal(prospect, ctx, oppRecords) {
 }
 
 export function ProspectingCompanies({ mode, prospects, settings, updateSettings = null, updateProspect = null, cdmName = '', onSelectProspect, maxWidth }) {
+  const serviceStatuses = useServiceStatuses();
   const siteLists = settings?.companySiteLists || null;
   const baseRows = useMemo(() => (
     mode === 'pcs'
@@ -698,7 +701,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
             style={{ fontSize: '0.72rem', fontFamily: 'inherit', padding: '2px 4px', borderRadius: 4, border: '1px solid #CBD5E1', fontWeight: 600, ...(bulkStatus ? { background: serviceStatusColor(bulkStatus).bg || '#fff', color: serviceStatusColor(bulkStatus).color || '#475569' } : {}) }}
           >
             <option value="">Pick a status</option>
-            {SERVICE_STATUSES.filter(st => st !== '-').map(st => <option key={st} value={st}>{st}</option>)}
+            {serviceStatuses.filter(st => st !== '-').map(st => <option key={st} value={st}>{st}</option>)}
           </select>
           <span>on each one&apos;s Biggest Deal Service</span>
           <button

@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { SERVICE_STATUSES } from '../../data/enums';
+import { useServiceStatuses } from '../../hooks/useServiceStatuses';
 import { buildServiceBoard, graveyardTest } from '../../utils/serviceCategoriesStore';
 import { isGraveyardBucket } from '../../utils/servicePricing';
 import { companiesMatch } from '../../utils/listFlags';
@@ -197,6 +197,7 @@ function buildCategories(settings, options) {
 // status nor a matching opp has anything to say about — same ordering the
 // company card uses, so the two boards read a service the same way.
 function StatusSelect({ item, manual, auto, autoNa, onSet, disabled, disabledReason }) {
+  const statuses = useServiceStatuses();
   const naBySale = !manual && !auto && autoNa?.length > 0;
   const effective = manual || auto || (naBySale ? 'N/A' : '-');
   const colors = STATUS_COLORS[effective] || {};
@@ -226,7 +227,9 @@ function StatusSelect({ item, manual, auto, autoNa, onSet, disabled, disabledRea
         fontStyle: !manual && (auto || naBySale) ? 'italic' : 'normal',
       }}
     >
-      {SERVICE_STATUSES.map(s => (
+      {/* A status since taken off the list still shows. */}
+      {!statuses.includes(effective) && <option value={effective}>{effective}</option>}
+      {statuses.map(s => (
         <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>
       ))}
     </select>
