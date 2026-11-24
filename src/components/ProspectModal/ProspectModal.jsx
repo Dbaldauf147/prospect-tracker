@@ -87,6 +87,8 @@ import { ALIASES_FIELD, mergedCompanyAliases } from '../../utils/companyAliases'
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { PROSPECT_ANYWAY_FIELD, NOT_SOLD_STATUS, isProspectAnyway, withProspectAnyway } from '../../utils/serviceProspectAnyway';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
+import { serviceStatusOptions, serviceStatusesPatch, EDIT_SERVICE_STATUSES } from '../../utils/serviceStatusList';
+import ServiceStatusEditor from './ServiceStatusEditor';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import { ServiceDetailPopup } from '../common/ServiceDetailPopup';
 import { AccountPotentialTab } from '../DropdownsView/AccountPotentialTab';
@@ -420,7 +422,7 @@ function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep, company = '', zoomCompanyName = '', serviceNames = [], serviceOverrides = {}, serviceStatusOf = null, onSetServiceBucket = null, onSetServiceStatus = null }) {
+function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep, company = '', zoomCompanyName = '', serviceNames = [], serviceOverrides = {}, serviceStatusOf = null, onSetServiceBucket = null, onSetServiceStatus = null, serviceStatuses = SERVICE_STATUSES, onEditServiceStatuses = null }) {
   // The Zoom title searches logged for this company on Bulk Add > Zoom
   // Search Log, for the bottom row: per category, which titles have
   // already been pulled and when. Re-read when the log changes elsewhere.
@@ -673,13 +675,17 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                               <select
                                 data-bucket-service-status={name}
                                 value={status || '-'}
-                                onChange={e => onSetServiceStatus(name, e.target.value)}
+                                onChange={(e) => {
+                                  if (e.target.value === EDIT_SERVICE_STATUSES) { onEditServiceStatuses?.(); return; }
+                                  onSetServiceStatus(name, e.target.value);
+                                }}
                                 title={`${name} at this company: ${status || 'no status'}. Pick N/A or Not Sold to rule it out here (only this company).`}
                                 aria-label={`${name} status at this company`}
                                 style={{ fontSize: '0.6rem', fontWeight: 700, fontFamily: 'inherit', padding: '0 1px', border: 'none', borderRadius: 3, background: 'transparent', color: dead ? '#64748B' : '#475569', cursor: 'pointer', maxWidth: 90 }}
                               >
-                                {!SERVICE_STATUSES.includes(status) && status && <option value={status} disabled>{status}</option>}
-                                {SERVICE_STATUSES.map(st => <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>)}
+                                {!serviceStatuses.includes(status) && status && <option value={status} disabled>{status}</option>}
+                                {serviceStatuses.map(st => <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>)}
+                                {onEditServiceStatuses && <option value={EDIT_SERVICE_STATUSES}>Edit statuses...</option>}
                               </select>
                             ) : (
                               <span style={{ fontSize: '0.6rem', fontWeight: 700, color: dead ? '#64748B' : '#475569', whiteSpace: 'nowrap' }}>{status || '-'}</span>
@@ -6929,6 +6935,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // view-only, nothing here is saved.
   const [serviceSearch, setServiceSearch] = useState('');
   const [serviceStatusFilter, setServiceStatusFilter] = useState('all');
+  // The statuses a service can be set to: an editable list, shared by every
+  // company (utils/serviceStatusList.js), and the editor for it.
+  const serviceStatuses = useMemo(() => serviceStatusOptions(settings), [settings]);
+  const [statusEditorOpen, setStatusEditorOpen] = useState(false);
   const [editingServiceName, setEditingServiceName] = useState(null);
   // The box whose header was clicked on the Services board: its popup sets
   // every service in it at once and says whether it counts toward the %.
@@ -12943,7 +12953,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       <option value="any">Has a status</option>
                       <option value="none">No status</option>
                       <option value="retry">Trying again</option>
-                      {SERVICE_STATUSES.filter(s => s !== '-').map(s => <option key={s} value={s}>{s}</option>)}
+                      {serviceStatuses.filter(s => s !== '-').map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                     {(serviceSearch || serviceStatusFilter !== 'all') && (
                       <button
@@ -13108,11 +13118,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       <span>Status</span>
                       <select
                         value={bulkStatus}
-                        onChange={e => setBulkStatus(e.target.value)}
+                        onChange={(e) => {
+                          if (e.target.value === EDIT_SERVICE_STATUSES) { setStatusEditorOpen(true); return; }
+                          setBulkStatus(e.target.value);
+                        }}
                         aria-label="Status for the selected services"
                         style={{ fontSize: '0.65rem', padding: '1px 2px', border: '1px solid var(--color-border)', borderRadius: '3px', fontFamily: 'inherit' }}
                       >
-                        {SERVICE_STATUSES.map(st => <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>)}
+                        {serviceStatuses.map(st => <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>)}
+                        <option value={EDIT_SERVICE_STATUSES}>Edit statuses...</option>
                       </select>
                       <button
                         type="button"
@@ -13141,6 +13155,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       manualOf={(item) => svcAll[item] || '-'}
                       effectiveOf={effectiveStatusOf}
                       colorOf={serviceStatusColor}
+                      statuses={serviceStatuses}
+                      onEditStatuses={() => setStatusEditorOpen(true)}
                       counted={!isUncountedBucket(popupCat.name, settings)}
                       countLocked={isGraveyardBucket(popupCat.name)}
                       onApply={(status) => {
@@ -13412,6 +13428,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   <select
                                     value={effectiveStatus}
                                     onChange={e => {
+                                      if (e.target.value === EDIT_SERVICE_STATUSES) { setStatusEditorOpen(true); return; }
                                       const next = { ...(fields.servicesExplored || {}), [item]: e.target.value };
                                       if (e.target.value === '-') delete next[item];
                                       set('servicesExplored', next);
@@ -13428,7 +13445,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit', fontWeight: 600,
                                     }}
                                   >
-                                    {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>)}
+                                    {/* A status since renamed or taken off the list still shows. */}
+                                    {effectiveStatus && !serviceStatuses.includes(effectiveStatus) && <option value={effectiveStatus}>{effectiveStatus}</option>}
+                                    {serviceStatuses.map(s => <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>)}
+                                    <option value={EDIT_SERVICE_STATUSES}>Edit statuses...</option>
                                   </select>
                                   {isManualOverride && (
                                     <button
@@ -15921,6 +15941,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   serviceNames={allServiceItems}
                   serviceOverrides={settings.serviceOverrides || {}}
                   serviceStatusOf={effectiveServiceStatus}
+                  serviceStatuses={serviceStatuses}
+                  onEditServiceStatuses={() => setStatusEditorOpen(true)}
                   onSetServiceStatus={(name, status) => set('servicesExplored',
                     withServiceStatus(fields.servicesExplored, [name], status))}
                   onSetServiceBucket={(name, bucket, on) => updateSettings(s => ({
@@ -16892,6 +16914,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           </div>
         </div>,
         document.body
+      )}
+      {statusEditorOpen && (
+        <ServiceStatusEditor
+          statuses={serviceStatuses}
+          onSave={list => updateSettings(s => serviceStatusesPatch(s, list))}
+          onClose={() => setStatusEditorOpen(false)}
+        />
       )}
     </div>
   );
