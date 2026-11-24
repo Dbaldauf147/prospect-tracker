@@ -54,6 +54,9 @@ const PROFILE_INPUT = {
   energySpend: { type: 'number' },
   background: { type: 'textarea' },
   services: { type: 'textarea' },
+  fee: { type: 'textarea' },
+  setup: { type: 'textarea' },
+  contractTerm: { type: 'textarea' },
   earlyOut: { type: 'select', list: 'yesNo' },
   upsell: { type: 'textarea' },
 };

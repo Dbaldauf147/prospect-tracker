@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs';
 import {
   MRI_PROFILE_FIELDS, MRI_PROFILE_SHEET_PATH, accountMriProfile, fillProfileSheet,
   fillTableSheet, fillAccountMriWorkbook, buyingCommitteeRows, siteUtilityRows, MRI_COMMITTEE_TABLE, MRI_SITES_TABLE,
-  revenueInBillions, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, mainContactText, mriFileName,
+  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, mainContactText, mriFileName,
 } from '../src/utils/accountMri.js';
 
 let passed = 0, failed = 0;
@@ -70,11 +70,31 @@ eq(profile.competitors, 'Engie; Enel X', 'competitors, firm not repeated');
 eq(profile.currentProvider, 'Engie; Enel X', 'current provider is the competitors');
 eq(profile.fee, '$450,000 / yr', 'fee');
 eq(profile.setup, '$60,000 one-time', 'setup');
-eq(profile.ubm, 'Sold', 'ubm');
+eq(profile.ubm, 'In scope', 'ubm: Bill payment sold is in scope');
 eq(profile.services, 'Sold: Bill payment\nExplored: IDM (Qualifying)\nNot Sold: None', 'services in scope');
 eq(profile.upsell, 'Qualifying: IDM\nResponsible: Alex Morgan', 'upsell names the salesperson');
 eq(profile.contractTerm, 'Expires Mar 31, 2027', 'contract term');
 eq(profile.assignedSince, '2025-03-14', 'assigned since is the Target Accounts entry date');
+eq(ubmScope({ 'Bill payment': 'Qualifying' }), 'Qualifying', 'ubm in flight keeps its status');
+eq(ubmScope({ 'Bill payment': '-' }), '', 'ubm unexplored');
+eq(ubmScope({}), '', 'ubm no services');
+
+const agreements = [
+  { 'Agreement Name': 'MSA', 'Paperwork completed': 'Complete', 'Current Term Start Date': '2025-01-01', 'End Date': '2027-03-31', 'Recurring Revenue': '$100,000', Setup: '25000' },
+  { 'Agreement Name': 'Bill pay SOW', 'Paperwork completed': 'Complete', 'End Date': '2026-12-31', 'Recurring Revenue': 50000 },
+  { 'Agreement Name': 'Old deal', 'Paperwork completed': 'Expired', 'End Date': '2024-01-01', 'Recurring Revenue': 999999, Setup: 999 },
+];
+const cf = contractFields(agreements);
+eq(cf.contractTerm, 'Expires Dec 31, 2026 (Bill pay SOW)', 'soonest active end, no start');
+eq(cf.fee, '$150,000 / yr (2 active contracts)\nMSA: $100,000\nBill pay SOW: $50,000', 'fee: active total and each contract');
+eq(cf.setup, '$25,000 one-time', 'setup: one contract, no breakdown');
+eq(contractFields([agreements[0]]).contractTerm, 'Jan 1, 2025 – Mar 31, 2027 (MSA)', 'term with its start');
+eq(contractFields([]), { contractTerm: 'No contract', fee: '', setup: '' }, 'no contracts');
+eq(contractFields([agreements[2]]).contractTerm, 'No contract', 'only expired contracts');
+eq(contractFields([], { known: false }).contractTerm, '', 'deals not loaded: blank, not No contract');
+eq(contractFields([{ 'Agreement Name': 'A' }]).contractTerm, 'Active, no end date on file', 'active, undated');
+eq(accountMriProfile({ record: { company: 'X' }, deals: [] }).contractTerm, 'No contract', 'profile: no contract');
+eq(accountMriProfile({ record: { company: 'X' }, deals: agreements }).fee.split('\n')[0], '$150,000 / yr (2 active contracts)', 'profile reads deals');
 eq(accountMriProfile({ record: { company: 'X' } }).existingClient, '', 'no status, no client answer');
 eq(accountMriProfile({ record: { company: 'X', status: 'Qualifying' } }).existingClient, 'No', 'not a client');
 
