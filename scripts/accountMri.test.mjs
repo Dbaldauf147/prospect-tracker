@@ -158,6 +158,11 @@ eq(cf.fee, '$150,000 / yr (2 active contracts)\nMSA: $100,000\nBill pay SOW: $50
 eq(cf.setup, '$25,000 one-time', 'setup: one contract, no breakdown');
 eq(contractFields([agreements[0]]).contractTerm, 'Jan 1, 2025 – Mar 31, 2027 (MSA)', 'term with its start');
 eq(contractFields([]), { contractTerm: 'No contract', fee: '', setup: '' }, 'no contracts');
+eq(
+  (({ fee, setup, contractTerm }) => ({ fee, setup, contractTerm }))(accountMriProfile({ record: { company: 'X' }, deals: [], dealsKnown: true })),
+  { fee: '', setup: '', contractTerm: 'No contract' },
+  'no contract: Fee and Set-up blank',
+);
 eq(contractFields([agreements[2]]).contractTerm, 'No contract', 'only expired contracts');
 eq(contractFields([], { known: false }).contractTerm, '', 'deals not loaded: blank, not No contract');
 eq(contractFields([{ 'Agreement Name': 'A' }]).contractTerm, 'Active, no end date on file', 'active, undated');

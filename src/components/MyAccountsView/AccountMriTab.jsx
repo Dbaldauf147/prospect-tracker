@@ -103,14 +103,21 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, ta
       links: settings?.companyContactLinks,
       exclusions: settings?.companyContactExclusions,
     });
+    // The account's opps, matched on the tracker record's name as the
+    // company card matches them, and on the name this row shows, in case
+    // the two are spelled differently.
+    const oppNames = [...new Set([record.company, r.company].map(n => String(n || '').trim()).filter(Boolean))];
     const companyOpps = [];
     for (const [account, list] of oppsByAccount) {
-      if (companiesMatch(account, record.company)) companyOpps.push(...list);
+      if (oppNames.some(n => companiesMatch(account, n))) companyOpps.push(...list);
     }
+    // Already matched above, so each is handed over under the one name the
+    // status reader matches on again.
+    const oppAccount = oppNames[0] || '';
     const serviceStatuses = accountServiceStatuses({
-      company: record.company,
+      company: oppAccount,
       servicesExplored: record.servicesExplored,
-      oppRows: companyOpps,
+      oppRows: companyOpps.map(o => ({ ...o, Account: oppAccount })),
       services: serviceNames,
       serviceOverrides: serviceOverrides || {},
       hidden: hiddenServices,
