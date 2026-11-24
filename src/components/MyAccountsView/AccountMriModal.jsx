@@ -9,12 +9,12 @@
 // button writes all of it into the template. The form's shape, lists and
 // scoring live in utils/accountMriForm.js.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, mriFormExport,
+  addMissingDecisionMakers, tabProgress, mriFormExport, formatMoneyInput,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -40,6 +40,41 @@ const ghostButton = { fontSize: '0.74rem', fontFamily: 'inherit', padding: '0.35
 const newId = () => `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 const pct = n => `${Math.round(n * 100)}%`;
 
+// A money box that formats as it is typed: "$1,350,000". The caret is put
+// back after the same number of digits it followed, so typing or deleting
+// in the middle doesn't throw it to the end when a comma comes or goes.
+function MoneyInput({ value, onChange }) {
+  const ref = useRef(null);
+  const caretDigits = useRef(null);
+  const shown = formatMoneyInput(value);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const want = caretDigits.current;
+    if (!el || want == null || document.activeElement !== el) return;
+    caretDigits.current = null;
+    let pos = el.value.indexOf('$') + 1;
+    for (let seen = 0; pos < el.value.length && seen < want; pos++) {
+      if (/[\d.]/.test(el.value[pos])) seen++;
+    }
+    el.setSelectionRange(pos, pos);
+  });
+  return (
+    <input
+      ref={ref}
+      type="text"
+      inputMode="decimal"
+      placeholder="$0"
+      value={shown}
+      onChange={e => {
+        const before = e.target.value.slice(0, e.target.selectionStart ?? e.target.value.length);
+        caretDigits.current = (before.match(/[\d.]/g) || []).length;
+        onChange(formatMoneyInput(e.target.value));
+      }}
+      style={inputStyle}
+    />
+  );
+}
+
 // One control for every kind of field the form has.
 function Field({ field, value, onChange, hint, onReset }) {
   const common = { value: value ?? '', onChange: e => onChange(e.target.value), style: inputStyle };
@@ -59,7 +94,9 @@ function Field({ field, value, onChange, hint, onReset }) {
     control = <textarea {...common} rows={field.tall ? 5 : 3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.4 }} />;
   } else if (field.type === 'date') {
     control = <input type="date" {...common} />;
-  } else if (field.type === 'number' || field.type === 'money' || field.type === 'percent') {
+  } else if (field.type === 'money') {
+    control = <MoneyInput value={value} onChange={onChange} />;
+  } else if (field.type === 'number' || field.type === 'percent') {
     control = <input type="number" step="any" {...common} />;
   } else {
     control = <input type="text" placeholder={field.placeholder || ''} {...common} />;
