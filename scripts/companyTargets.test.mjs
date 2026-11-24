@@ -2,7 +2,7 @@
 // five-yearly refresh, and the Target Type list.
 // Plain Node, no framework. Run:
 //   node scripts/companyTargets.test.mjs
-import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues, editSavedTarget, targetsOfCompaniesMatching, normalizeTypeGroups, targetTabKeyFn, saveTypeGroup, removeTypeFromGroup, removeTypeGroup, companyTargetCount } from '../src/utils/companyTargets.js';
+import { targetLinkHref, targetLinkLabel, normalizeTargets, updateTarget, removeTarget, cleanYear, blankTarget, scopesLabel, refreshDue, parsePastedTargets, mergePastedTargets, allSavedTargets, soonestTargetPerCompany, noTargetRow, hasNoTargetRow, isNoTargetRow, targetTypeTabs, targetTypeKey, hasTargetValues, editSavedTarget, targetsOfCompaniesMatching, normalizeTypeGroups, targetTabKeyFn, saveTypeGroup, removeTypeFromGroup, removeTypeGroup, companyTargetCount, targetReachedOut } from '../src/utils/companyTargets.js';
 
 const store = {};
 globalThis.localStorage = {
@@ -288,6 +288,24 @@ check('link: kept on the row, trimmed', normalizeTargets([{ id: 'a', sourceUrl: 
   check('count: hidden targets are left out', n([{ type: 'Net zero' }, { type: 'SBTi near-term', hidden: true }]), 1);
   check('count: a No target set row is not a target', n([noTargetRow()]), 0);
   check('count: an empty row is not a target', n([blankTarget(), { type: 'Net zero' }]), 1);
+}
+
+// Reached Out is a tick per target; the old company-wide tick is the
+// fallback for a target nobody has ticked or cleared since.
+{
+  const p = { id: 'p1', company: 'Kimco', climateTargets: [{ id: 'a', type: 'Net zero' }, { id: 'b', type: 'Data coverage' }] };
+  const read = prospect => allSavedTargets([prospect]).map(t => targetReachedOut(t, t.prospect));
+  check('reached out: nothing ticked', read(p), [false, false]);
+  const ticked = { ...p, climateTargets: editSavedTarget(p, 1, 'reachedOut', true) };
+  check('reached out: ticking one target leaves the other', read(ticked), [false, true]);
+  check('reached out: the tick is saved on that target only', ticked.climateTargets.map(t => t.reachedOut), [undefined, true]);
+  check('reached out: ticking a ticked target saves nothing', editSavedTarget(ticked, 1, 'reachedOut', true), null);
+  check('reached out: survives a re-read of the list', normalizeTargets(ticked.climateTargets).map(t => t.reachedOut), [undefined, true]);
+  const legacy = { ...p, targetsReachedOut: true };
+  check('reached out: the old company tick still shows on every target', read(legacy), [true, true]);
+  const cleared = { ...legacy, climateTargets: editSavedTarget(legacy, 0, 'reachedOut', false) };
+  check('reached out: clearing one target leaves the other on the old tick', read(cleared), [false, true]);
+  check('reached out: a target row carries no key until it is set', 'reachedOut' in normalizeTargets([{ type: 'Net zero' }])[0], false);
 }
 
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }

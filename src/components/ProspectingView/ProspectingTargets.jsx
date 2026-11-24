@@ -12,8 +12,10 @@
 // subtab counts and the company search too. "Show other accounts" lists
 // everybody's again, for this visit; with no CDM name set in Settings
 // there is no book to go by, so every company is listed.
-// Reached Out is a tick per company, saved on the company record as
-// `targetsReachedOut`, for whether it has been contacted about its targets.
+// Reached Out is a tick per target, saved on the target itself
+// (`reachedOut` in the company's `climateTargets`), for whether the company
+// has been contacted about that target. A target not yet ticked or cleared
+// reads the old company-wide tick (utils/companyTargets targetReachedOut).
 // The search box finds companies by name and lists ALL of their targets,
 // whatever their type and hidden or not (utils/companyTargets
 // targetsOfCompaniesMatching), instead of the one row per company. It
@@ -32,7 +34,7 @@
 import { targetsSearchedAt, fmtSearched } from '../../utils/targetsSearched';
 import { useMemo, useRef, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { allSavedTargets, soonestTargetPerCompany, targetsOfCompaniesMatching, isNoTargetRow, refreshDue, scopesLabel, editSavedTarget, cleanYear, TARGET_ACTIONS, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTabKeyFn, normalizeTypeGroups, saveTypeGroup, removeTypeFromGroup, removeTypeGroup, typeGroupKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES } from '../../utils/companyTargets';
+import { allSavedTargets, soonestTargetPerCompany, targetsOfCompaniesMatching, isNoTargetRow, refreshDue, scopesLabel, editSavedTarget, cleanYear, TARGET_ACTIONS, targetLinkHref, targetLinkLabel, targetTypeTabs, targetTabKeyFn, normalizeTypeGroups, saveTypeGroup, removeTypeFromGroup, removeTypeGroup, typeGroupKey, REFRESH_CYCLE_YEARS, TARGET_SCOPES, targetReachedOut } from '../../utils/companyTargets';
 import { reportingTier } from '../../utils/tierSource';
 import { myAccounts } from '../../utils/tieredAccountActivity';
 import { TargetTypeSelect } from '../ProspectModal/TargetTypeSelect';
@@ -238,22 +240,25 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
     },
     {
       key: 'reachedOut', label: 'Reached Out', defaultWidth: 135,
-      getSortValue: r => (r.prospect.targetsReachedOut ? 1 : 0),
-      getFilterValue: r => (r.prospect.targetsReachedOut ? 'Yes' : 'No'),
-      exportValue: r => (r.prospect.targetsReachedOut ? 'Yes' : 'No'),
-      render: r => (
-        <label style={{ display: 'flex', justifyContent: 'center', cursor: updateProspect ? 'pointer' : 'default' }}>
-          <input
-            type="checkbox"
-            checked={!!r.prospect.targetsReachedOut}
-            disabled={!updateProspect}
-            aria-label={`Reached out to ${r.company} about its targets`}
-            title={r.prospect.targetsReachedOut ? 'Reached out about its targets. Untick to clear.' : 'Tick once you have reached out about its targets'}
-            onChange={e => updateProspect(r.prospect.id, { targetsReachedOut: e.target.checked })}
-            style={{ cursor: 'inherit' }}
-          />
-        </label>
-      ),
+      getSortValue: r => (targetReachedOut(r, r.prospect) ? 1 : 0),
+      getFilterValue: r => (targetReachedOut(r, r.prospect) ? 'Yes' : 'No'),
+      exportValue: r => (targetReachedOut(r, r.prospect) ? 'Yes' : 'No'),
+      render: r => {
+        const done = targetReachedOut(r, r.prospect);
+        return (
+          <label style={{ display: 'flex', justifyContent: 'center', cursor: canEdit ? 'pointer' : 'default' }}>
+            <input
+              type="checkbox"
+              checked={done}
+              disabled={!canEdit}
+              aria-label={`Reached out to ${r.company} about this target`}
+              title={done ? 'Reached out about this target. Untick to clear.' : 'Tick once you have reached out about this target'}
+              onChange={e => edit(r, 'reachedOut', e.target.checked)}
+              style={{ cursor: 'inherit' }}
+            />
+          </label>
+        );
+      },
     },
     {
       key: 'searchedAt', label: 'Last Searched', defaultWidth: 125,
@@ -538,10 +543,10 @@ export function ProspectingTargets({ prospects, settings, updateSettings, update
           // Hidden targets sit below the rest and companies logged as having
           // no target set at the very bottom, both whatever the sort.
           rowGroup={r => (isNoTargetRow(r) ? 2 : r.hidden ? 1 : 0)}
-          // A company ticked Reached Out reads green, and that wins over the
+          // A target ticked Reached Out reads green, and that wins over the
           // grey of a hidden or no-target row: the grey says "nothing to do
           // here yet", the tick says something was done.
-          rowStyle={r => (r.prospect.targetsReachedOut ? { background: '#DCFCE7' }
+          rowStyle={r => (targetReachedOut(r, r.prospect) ? { background: '#DCFCE7' }
             : isNoTargetRow(r) ? { opacity: 0.6, background: '#F1F5F9', filter: 'grayscale(1)' }
               : r.hidden ? { opacity: 0.45, background: '#F1F5F9' } : undefined)}
           emptyMessage={searching && !found.length ? 'No company with saved targets matches that name.' : all.length ? 'No targets match the filters.' : everyone.length ? 'None of My Accounts has targets saved yet. Tick Show other accounts to see everyone\'s.' : 'No targets saved yet. Add them on a company popup\'s Targets tab.'}
