@@ -7046,6 +7046,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       (fields.company || '').trim(),
       readListField(settings, STRATEGIC_STORAGE_KEY, 'mapping'),
       readListField(settings, STRATEGIC_STORAGE_KEY, 'dismissed'),
+      [
+        readListField(settings, STRATEGIC_STORAGE_KEY, 'myAccountMapping'),
+        readListField(settings, STRATEGIC_STORAGE_KEY, 'portfolioMapping'),
+      ],
     ),
     [strategicRows, fields.company, settings],
   );
