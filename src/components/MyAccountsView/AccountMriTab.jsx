@@ -17,7 +17,10 @@
 // answers in this table and in the export.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MRI_FILLED_FIELDS, accountMriProfile, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
+import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
+import { companiesMatch } from '../../utils/listFlags';
+import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
@@ -44,7 +47,7 @@ const siteListSlug = company => String(company || '').toLowerCase().replace(/[^a
 
 // `isListed(row)` says whether the Strategic Accounts list names the row's
 // company; those rows are drawn in the list's red, as on the Accounts view.
-export function AccountMriTab({ rows, isListed, hubspotContacts, targetAccountsData, settings, updateSettings, updateSettingsPath, onSelect }) {
+export function AccountMriTab({ rows, isListed, hubspotContacts, oppsRecords, targetAccountsData, settings, updateSettings, updateSettingsPath, onSelect }) {
   // The Deals subtab's agreements and its client-name mapping, which the
   // Fee, Set-up and Contract term rows read. Re-read when either changes.
   const [deals, setDeals] = useState(() => ({ list: loadDealsList().data || [], map: loadDealClientMap() }));
@@ -71,11 +74,43 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, targetAccountsD
   const siteLists = settings?.companySiteLists;
   const savedForms = settings?.accountMri;
 
+  // What the Services and UBM rows read: each service's status as the
+  // company card's Services board shows it, the manual status else the
+  // stage of an opp on the account naming it. The opps are grouped by
+  // Account once, so each company matches against the account names rather
+  // than every opp.
+  const serviceNames = useMemo(() => {
+    const solutions = getEffectiveDropdownLists(settings || {}).find(l => l.key === 'solutions')?.options || [];
+    return [...new Set(buildServiceBoard(settings || {}, solutions).flatMap(c => c.items || []))];
+  }, [settings]);
+  const serviceOverrides = settings?.serviceOverrides;
+  const oppsByAccount = useMemo(() => {
+    const map = new Map();
+    for (const o of oppsRecords || []) {
+      const account = String(o?.Account || '').trim();
+      if (!account || !String(o?.Scope || '').trim()) continue;
+      if (!map.has(account)) map.set(account, []);
+      map.get(account).push(o);
+    }
+    return map;
+  }, [oppsRecords]);
+
   const mriRows = useMemo(() => rows.map(r => {
     const record = r.record || { company: r.company, status: r.status, cdm: r.cdm };
     const contacts = companyRosterContacts(taggedContacts, record, {
       links: settings?.companyContactLinks,
       exclusions: settings?.companyContactExclusions,
+    });
+    const companyOpps = [];
+    for (const [account, list] of oppsByAccount) {
+      if (companiesMatch(account, record.company)) companyOpps.push(...list);
+    }
+    const serviceStatuses = accountServiceStatuses({
+      company: record.company,
+      servicesExplored: record.servicesExplored,
+      oppRows: companyOpps,
+      services: serviceNames,
+      serviceOverrides: serviceOverrides || {},
     });
     const companyDeals = dealsForCompany(deals.list, deals.map, record.company, record.aliases);
     // What the tracker says, then what the popup has saved over it.
@@ -83,6 +118,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, targetAccountsD
       record,
       tier: r.tier,
       contacts,
+      serviceStatuses,
       contracts: companyDeals.length ? contractsSummary(companyDeals) : null,
       entryDate: entryDateFor(entryDates, {
         targetNames: r.targetNames?.length ? r.targetNames : mappedTargetNames({ targetMap }, r.record?.id),
@@ -114,7 +150,7 @@ export function AccountMriTab({ rows, isListed, hubspotContacts, targetAccountsD
       profile,
       stage,
     };
-  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, settings?.companyContactLinks, settings?.companyContactExclusions]);
+  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, settings?.companyContactLinks, settings?.companyContactExclusions]);
 
   // The company whose Account MRI popup is open.
   const [openId, setOpenId] = useState(null);

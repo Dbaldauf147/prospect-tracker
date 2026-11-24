@@ -80,6 +80,7 @@ import { complianceFlaggedFrameworks } from '../../utils/complianceFrameworkFlag
 import { companiesMatch, companyRosterContacts } from '../../utils/companyRoster';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
+import { peFirmPortfolio, peOwnerMatchesFirm } from '../../utils/peFirmOpps';
 import { EQUIPMENT_ESTIMATE_TYPES, portfolioEquipmentEstimate, propertyTypeEquipment } from '../../data/propertyTypeEstimates';
 import { companyDedupeKey } from '../../utils/companyKey';
 import { ALIASES_FIELD, mergedCompanyAliases } from '../../utils/companyAliases';
@@ -7349,6 +7350,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // The Portfolio Companies row whose "link to Table View" picker is open
   // (its index), and that picker's create in flight / last failure.
   const [portfolioLinkIdx, setPortfolioLinkIdx] = useState(null);
+  // The Portfolio Companies "Suggested" strip, folded away for this sitting.
+  const [portfolioSuggestHidden, setPortfolioSuggestHidden] = useState(false);
+  // Every Table View record whose PE Owner names this firm, for the
+  // Suggested strip. Kept out of the render so typing in the popup doesn't
+  // rescan all the records each keystroke.
+  const portfolioFirmOwned = useMemo(
+    () => peFirmPortfolio(fields.company, prospects || []),
+    [fields.company, prospects],
+  );
   const [portfolioLinkBusy, setPortfolioLinkBusy] = useState(false);
   const [portfolioLinkError, setPortfolioLinkError] = useState('');
   useEffect(() => {
@@ -13961,15 +13971,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 // firm goes onto its PE Owner, as "+ Link" does); free text
                 // lands as a plain named row. Stamped and pinned on top like
                 // addRow, so it shows up where the user is looking.
-                function addSearchedRow(companyName, target) {
+                // `adds` is [{ companyName, target }], so "Add all" from the
+                // suggestions lands in one write rather than each add
+                // overwriting the last from the same stale `rows`.
+                function addSearchedRows(adds) {
+                  if (!adds.length) return;
                   const used = new Set(rows.map(r => r.addedManuallyAt).filter(Boolean));
                   let stamp = Date.now();
-                  while (used.has(stamp)) stamp += 1;
-                  const row = { addedManuallyAt: stamp, companyName, status: '', sector: '', subsector: '', subsectorScore: '', strategy: '', hqCity: '', hqCountry: '', energyGwh: '', estElectricity: '', estNaturalGas: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' };
-                  if (target?.id) row.linkedProspectId = target.id;
-                  set('portfolioCompanies', [...rows, row]);
-                  setPortfolioNewStamps(prev => [...prev, stamp]);
-                  if (target?.id) {
+                  const stamps = [];
+                  const added = adds.map(({ companyName, target }) => {
+                    while (used.has(stamp)) stamp += 1;
+                    used.add(stamp);
+                    stamps.push(stamp);
+                    const row = { addedManuallyAt: stamp, companyName, status: '', sector: '', subsector: '', subsectorScore: '', strategy: '', hqCity: '', hqCountry: '', energyGwh: '', estElectricity: '', estNaturalGas: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' };
+                    if (target?.id) row.linkedProspectId = target.id;
+                    return row;
+                  });
+                  set('portfolioCompanies', [...rows, ...added]);
+                  setPortfolioNewStamps(prev => [...prev, ...stamps]);
+                  for (const { target } of adds) {
+                    // A PE Owner that already names this firm, even spelled
+                    // short ("Brookfield"), is left as it is rather than
+                    // gaining a near-duplicate of the firm's full name.
+                    if (!target?.id || peOwnerMatchesFirm(target.peOwner, fields.company)) continue;
                     const nextOwner = withThisFirmAsOwner(target.peOwner);
                     if (nextOwner !== (target.peOwner || '')) {
                       try { onUpdateProspect?.(target.id, { peOwner: nextOwner }); }
@@ -13977,6 +14001,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     }
                   }
                 }
+                const addSearchedRow = (companyName, target) => addSearchedRows([{ companyName, target }]);
                 // Table View records this table already points at, so the
                 // search can mark them rather than add them twice.
                 const portfolioLinkedIds = new Set();
@@ -13984,6 +14009,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   const hit = findPortfolioProspect(r, prospectByName, prospectById);
                   if (hit?.id) portfolioLinkedIds.add(hit.id);
                 }
+                // Suggested: Table View companies whose PE Owner names this
+                // firm but that this table doesn't list yet. Same owner match
+                // the PE Portfolio tab scopes a firm with (peFirmPortfolio).
+                const portfolioSuggestions = portfolioFirmOwned
+                  .filter(p => p?.id && p.id !== prospect?.id && String(p.company || '').trim() && !portfolioLinkedIds.has(p.id))
+                  .sort((a, b) => String(a.company).localeCompare(String(b.company)));
                 function addRow() {
                   // `addedManuallyAt` is both a record of the hand-entry and
                   // the row's identity for pinning - nudged forward on the
@@ -14463,6 +14494,50 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         onAddName={name => addSearchedRow(name, null)}
                       />
                     </div>
+                    {portfolioSuggestions.length > 0 && (
+                      <div style={{ marginBottom: '0.5rem', padding: '0.45rem 0.55rem', border: '1px dashed #CBD5E1', borderRadius: 6, background: '#F8FAFC' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            Suggested ({portfolioSuggestions.length})
+                          </span>
+                          <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
+                            On Table View with {fields.company} as PE Owner, not in this list yet.
+                          </span>
+                          <span style={{ marginLeft: 'auto', display: 'flex', gap: '0.35rem' }}>
+                            {!portfolioSuggestHidden && (
+                              <button
+                                type="button"
+                                onClick={() => addSearchedRows(portfolioSuggestions.map(p => ({ companyName: String(p.company).trim(), target: p })))}
+                                title={`Add all ${portfolioSuggestions.length} to this list, each mapped to its Table View record.`}
+                                style={{ padding: '0.2rem 0.55rem', border: 'none', borderRadius: 5, background: 'var(--color-accent)', color: '#fff', fontSize: '0.66rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                              >+ Add all</button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setPortfolioSuggestHidden(h => !h)}
+                              style={{ padding: '0.2rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 5, background: '#fff', color: '#475569', fontSize: '0.66rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                            >{portfolioSuggestHidden ? 'Show' : 'Hide'}</button>
+                          </span>
+                        </div>
+                        {!portfolioSuggestHidden && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.4rem', maxHeight: 140, overflowY: 'auto' }}>
+                            {portfolioSuggestions.map(p => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => addSearchedRow(String(p.company).trim(), p)}
+                                title={`Add "${p.company}" to this list, mapped to its Table View record.${p.peOwner ? `\nPE Owner: ${p.peOwner}` : ''}`}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0.15rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 999, background: '#fff', color: '#0F172A', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                              >
+                                <span style={{ color: 'var(--color-accent)', fontWeight: 700 }}>+</span>
+                                {p.company}
+                                {p.status ? <span style={{ color: '#94A3B8' }}>{p.status}</span> : null}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.5rem', alignItems: 'center' }}>
                       <button
                         onClick={researchWithClaude}
