@@ -173,6 +173,7 @@ import {
 } from '../../utils/peMonthlyEmail';
 import { coverageFromSettings, salespeopleForVertical } from '../../utils/salesCoverage';
 import { schedulesStore } from '../../utils/newOppsSchedulesStore';
+import { NOT_SOLD_WEEKLY_DEFAULTS } from '../../utils/notSoldWeeklyEmail';
 
 // The New Opps schedule modal, pointed at the PE Monthly email: its own
 // schedules (api/pe-monthly-schedules), its own send-now route, and a
@@ -192,6 +193,19 @@ const PE_MONTHLY_SCHEDULE_KIND = {
     dayOfMonthLocal: 1,
   },
   sendBody: (rows) => ({ rows: Array.isArray(rows) ? rows : undefined }),
+};
+
+// And at the Not Sold weekly email: the opps lost in the seven days before
+// it sends (utils/notSoldWeeklyEmail.js), every Monday morning by default.
+const NOT_SOLD_WEEKLY_SCHEDULE_KIND = {
+  store: schedulesStore('/api/not-sold-weekly-schedules'),
+  sendNowPath: '/api/not-sold-weekly-send-now',
+  title: 'Schedule Not Sold email',
+  columnsNote: 'The emailed table always shows: Account, Scope, Source, Deal Size, Close Date, Reason Not Sold, Competition, Loss Notes, and a BFO Link - the opps marked Not Sold whose Close Date is in the seven days before the day it sends, worked out fresh each time. Sent on a Monday, that is the Monday to Sunday just ended.',
+  emptyLabel: 'Don\u2019t send if nothing was marked Not Sold',
+  namePlaceholder: 'e.g. Weekly Not Sold opps',
+  defaults: { ...NOT_SOLD_WEEKLY_DEFAULTS, frequency: 'weekly', dayOfWeekLocal: 1, dayOfMonthLocal: 1 },
+  sendBody: (rows) => ({ records: Array.isArray(rows) ? rows : undefined }),
 };
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
@@ -14686,6 +14700,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   const [activeTab, setActiveTab] = useState('opps');
   // New Opps subtab: controls the recurring-email schedule manager modal.
   const [newOppsScheduleOpen, setNewOppsScheduleOpen] = useState(false);
+  const [notSoldScheduleOpen, setNotSoldScheduleOpen] = useState(false);
   // Wording the New Opps Outlook draft opens with — the saved override from
   // userSettings over the built-in defaults.
   const [newOppsDraftTextOpen, setNewOppsDraftTextOpen] = useState(false);
@@ -19836,6 +19851,16 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                     {recentlyClosed.unnamed} left out - no BFO Opportunity Name
                   </span>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setNotSoldScheduleOpen(true)}
+                  title="Schedule a recurring email that sends last week's Not Sold opps as a table in the email body"
+                  style={{
+                    marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
+                    fontFamily: 'inherit', color: '#009530', background: '#fff',
+                    border: '1px solid #009530', borderRadius: 6, cursor: 'pointer',
+                  }}
+                >Schedule Not Sold email</button>
               </div>
               <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
                 Shows opps at Sold or Not Sold that have a BFO Opportunity Name and whose Close Date is
@@ -20027,6 +20052,15 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         email={user?.email}
         oppsRows={peMonthly}
         kind={PE_MONTHLY_SCHEDULE_KIND}
+      />
+
+      <NewOppsScheduleModal
+        open={notSoldScheduleOpen}
+        onClose={() => setNotSoldScheduleOpen(false)}
+        uid={user?.uid}
+        email={user?.email}
+        oppsRows={recentlyClosed.rows}
+        kind={NOT_SOLD_WEEKLY_SCHEDULE_KIND}
       />
 
       <NewOppsScheduleModal
