@@ -27,8 +27,12 @@
 import { useState } from 'react';
 import { PopupListField } from './PopupListField';
 import { domainTierEntries } from '../../utils/emailDomainPattern';
+import { emailFormatDelivery, emailFormatDeliveryTitle } from '../../utils/emailFormatDelivery';
 
-export function EmailDomainsField({ value, onChange, options }) {
+// `delivery` is what the mail did: { campaigns, badEmails, contacts,
+// failedByContact }, read by emailFormatDelivery for each row's delivered
+// and failed counts.
+export function EmailDomainsField({ value, onChange, options, delivery }) {
   // The picker. `domainPicks` is the field as it would be saved: an ordered
   // list of entries, 1st tier first. Held here so the panel survives a
   // re-render (a contact sync landing mid-read) rather than closing under
@@ -154,6 +158,8 @@ export function EmailDomainsField({ value, onChange, options }) {
       .filter(e => !recorded.has(lower(e)) && !opts.candidates.some(o => lower(o.entry) === lower(e)))
       .map(e => ({ entry: e, suggested: false, onRecord: false, samples: [], votes: 0 })),
   ];
+  // How each format's addresses did when emailed.
+  const deliveryByEntry = domainPickerOpen ? emailFormatDelivery(rows.map(r => r.entry), delivery || {}) : new Map();
   // Domains that taught nothing at all. Named rather than
   // dropped: "nothing offered for parentco.com" answers the
   // question, and silence about it reads as a bug.
@@ -479,6 +485,22 @@ export function EmailDomainsField({ value, onChange, options }) {
                         ? 'Added by hand. No contact here is written this way.'
                         : 'Added by hand, and no naming pattern, so no address is built from it. It still pulls contacts on this domain onto the card.'}
                   </div>
+                  {hasPattern && (() => {
+                    const d = deliveryByEntry.get(lower(row.entry));
+                    return (
+                      <div data-format-delivery title={d ? emailFormatDeliveryTitle(d) : 'No saved campaign has emailed an address written this way, and no failure notice has come back for one.'} style={{ fontSize: '0.66rem', marginTop: 2, color: 'var(--color-text-muted)' }}>
+                        {d ? (
+                          <>
+                            Emailed:{' '}
+                            <span style={{ fontWeight: 700, color: '#166534' }}>{d.delivered} delivered</span>
+                            {', '}
+                            <span style={{ fontWeight: 700, color: d.failed ? '#B91C1C' : 'var(--color-text-muted)' }}>{d.failed} failed</span>
+                            {d.failed > 0 && d.failedEmails.length <= 3 ? ` (${d.failedEmails.join(', ')})` : ''}
+                          </>
+                        ) : 'Emailed: none sent yet.'}
+                      </div>
+                    );
+                  })()}
                   {row.samples.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.1rem 0.5rem', marginTop: 2 }}>
                       {row.samples.map(s => (
