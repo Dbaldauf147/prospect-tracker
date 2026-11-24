@@ -1728,6 +1728,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup, or from the Portfolio table): <code>Lead</code>, <code>Discovery</code>, <code>Piloting</code>, <code>Existing Partnership</code>, and <code>Not Sold</code>. A firm nobody has worked yet is a <code>Lead</code>.</>
               : subtab === 'companies'
               ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm: matching that firm's export. The <strong>PE Owner</strong> dropdown filters to one owner, matching the source PE firm, the company's own PE Owner from Table View, or firms that owner owns: so picking <code>Blue Owl</code> also shows the portfolio companies of every Blue Owl-owned firm.</>
+              : subtab === 'raClients'
+              ? <>The portfolio companies, across every PE firm, that are tagged to an existing <strong>RA client</strong>: the ones with an <strong>RA Client Match</strong> set on their firm's Portfolio Companies tab. Same columns, search and <strong>PE Owner</strong> filter as <strong>All PCs</strong>.</>
               : subtab === 'blueOwl'
               ? <>Every company from the Table View whose <strong>PE Owner</strong> (set in its company popup) is <code>{peFirm || '-'}</code>. Pick a different firm from the dropdown to switch the view. Double-click any cell to edit it: same dropdowns as Table View. The <strong>NAM HQ</strong> / <strong>Outside NAM HQ</strong> tabs slice the list by HQ Region (a company with no HQ Region set counts as outside), and the choice sticks per tab. <strong>Export Excel</strong> always writes all three slices as its own three sheets, whichever one is on screen.</>
               : subtab === 'blueOwlServices'
@@ -1773,6 +1775,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'portfolio', label: 'Portfolio' },
           { key: 'stages', label: 'PE Stages' },
           { key: 'companies', label: 'All PCs' },
+          { key: 'raClients', label: 'RA Clients' },
           { key: 'blueOwl', label: 'PE Overview' },
           { key: 'blueOwlServices', label: 'PE Overview - Services' },
           { key: 'opps', label: 'PE Opps' },
@@ -1861,6 +1864,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         />
       ) : subtab === 'companies' ? (
         <PEAllCompaniesTab
+          key="all-pcs"
+          firms={visibleFirms}
+          prospects={prospects}
+          onSelectProspect={onSelectProspect}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : subtab === 'raClients' ? (
+        // Same table as All PCs (keyed apart so its search, filters and
+        // column layout don't carry over), limited to RA-client PCs.
+        <PEAllCompaniesTab
+          key="ra-clients"
+          raClientsOnly
           firms={visibleFirms}
           prospects={prospects}
           onSelectProspect={onSelectProspect}
@@ -2810,7 +2826,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 // also shows the portfolio companies of every firm whose PE Owner is
 // Blue Owl). Matching uses the shared fuzzy companiesMatch so name
 // variants ("Blue Owl" ↔ "Blue Owl Capital") line up.
-function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, updateSettings }) {
+// raClientsOnly narrows the table to the PCs tagged with an RA Client
+// Match on their firm's Portfolio Companies tab (the RA Clients sub-tab),
+// under its own tableId so its column layout is kept apart from All PCs.
+function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, updateSettings, raClientsOnly = false }) {
   const [search, setSearch] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
 
@@ -2906,6 +2925,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
       const years = pcs.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
       const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
       for (const pc of pcs) {
+        if (raClientsOnly && !String(pc.raClientMatch || '').trim()) continue;
         out.push({
           id: id++,
           _peId: pe.id,
@@ -2934,7 +2954,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
       }
     }
     return out;
-  }, [firms, listFlagsByCompany]);
+  }, [firms, listFlagsByCompany, raClientsOnly]);
 
   const columns = useMemo(() => [
     { key: 'peFirm', label: 'PE Firm', defaultWidth: 190, sticky: true, render: (r) => (
@@ -3014,7 +3034,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder={`Search ${rows.length} portfolio compan${rows.length === 1 ? 'y' : 'ies'}…`}
+          placeholder={`Search ${rows.length} ${raClientsOnly ? 'RA client ' : ''}portfolio compan${rows.length === 1 ? 'y' : 'ies'}…`}
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         <select
@@ -3035,7 +3055,14 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
         {(search.trim() || ownerFilter) && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
-        {rows.length === 0 ? (
+        {rows.length === 0 && raClientsOnly ? (
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No portfolio companies are tagged to an RA client yet</div>
+            <div style={{ fontSize: '0.78rem' }}>
+              Set the <strong>RA Client Match</strong> on a PE firm's <strong>Portfolio Companies</strong> tab and the company will show here.
+            </div>
+          </div>
+        ) : rows.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No portfolio companies mapped yet</div>
             <div style={{ fontSize: '0.78rem' }}>
@@ -3044,7 +3071,7 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
           </div>
         ) : (
           <DataTable
-            tableId="pe-all-portfolio-companies"
+            tableId={raClientsOnly ? 'pe-ra-client-portfolio-companies' : 'pe-all-portfolio-companies'}
             settings={settings}
             updateSettings={updateSettings}
             columns={columns}
@@ -3053,8 +3080,8 @@ function PEAllCompaniesTab({ firms, prospects = [], onSelectProspect, settings, 
             defaultSort={{ key: 'score', direction: 'desc' }}
             enableColumnFilters
             emptyMessage="No portfolio companies match your filters"
-            exportFileName="pe_portfolio_companies"
-            exportPrimarySheetName="Portfolio Companies"
+            exportFileName={raClientsOnly ? 'pe_ra_client_portfolio_companies' : 'pe_portfolio_companies'}
+            exportPrimarySheetName={raClientsOnly ? 'RA Client PCs' : 'Portfolio Companies'}
           />
         )}
       </div>
