@@ -9,7 +9,7 @@
 // one function, so a drift here is a drift there.
 import {
   isCampaignFresh, isCampaignActive, campaignSendStats, campaignOutreachLabel, unfinishedCampaigns,
-  isCampaignPaused, campaignStatus, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS, campaignPauseDays, campaignsAllSent,
+  isCampaignPaused, campaignStatus, campaignPauseUntil, campaignPauseUntilDay, CAMPAIGN_PAUSE_DAYS, campaignPauseDays, campaignsAllSent,
   isCampaignFullySent, isCampaignAutoPaused, campaignAutoPauseUntil,
 } from '../src/utils/campaignOutreach.js';
 
@@ -150,6 +150,20 @@ check('junk is not a pause', campaignPauseDays('soon', 'days'), null);
 check('half a day rounds to nothing', campaignPauseDays(0.4, 'days'), null);
 check('over a year is refused', campaignPauseDays(53, 'weeks'), null);
 check('a year is allowed', campaignPauseDays(365, 'days'), 365);
+
+// Pausing until a date picked on the calendar lifts at the start of that day.
+{
+  const noon = new Date(2026, 10, 24, 12, 0, 0).getTime();
+  check('a picked date lifts at the start of that day',
+    campaignPauseUntilDay('2026-12-09', noon), new Date(2026, 11, 9).toISOString());
+  check('tomorrow is the soonest', campaignPauseUntilDay('2026-11-25', noon), new Date(2026, 10, 25).toISOString());
+  check('today is not a pause', campaignPauseUntilDay('2026-11-24', noon), null);
+  check('a past date is not a pause', campaignPauseUntilDay('2026-11-01', noon), null);
+  check('over a year out is refused', campaignPauseUntilDay('2027-12-01', noon), null);
+  check('junk is not a date', campaignPauseUntilDay('next week', noon), null);
+  check('a picked date pauses the campaign until then',
+    isCampaignPaused({ pausedUntil: campaignPauseUntilDay('2026-12-09', noon) }, noon), true);
+}
 
 check('paused until tomorrow is paused', isCampaignPaused({ pausedUntil: inDays(1) }, NOW), true);
 check('a pause that has run out is not', isCampaignPaused({ pausedUntil: daysAgo(1) }, NOW), false);

@@ -1434,18 +1434,19 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     saveCampaigns(savedCampaigns.map((x, i) => (i === index ? withSchedule(x, key, day) : x)));
   }
 
-  // Park a campaign for `days` days (the picker's X days or X weeks,
-  // CAMPAIGN_PAUSE_DAYS when none is given). Stored as the moment the
+  // Park a campaign until `until`, the ISO moment the picker worked out from
+  // X days, X weeks or a date on its calendar (CAMPAIGN_PAUSE_DAYS from now
+  // when none is given). Stored as the moment the
   // pause lifts rather than a flag, so it un-pauses itself — there's nothing
   // to remember to switch back on, and a campaign can't sit paused for a
   // month because nobody came back to it. The Active/Inactive setting
   // underneath is untouched and is what the campaign returns to.
-  function pauseCampaign(index, e, days = CAMPAIGN_PAUSE_DAYS) {
+  function pauseCampaign(index, e, until = campaignPauseUntil(Date.now(), CAMPAIGN_PAUSE_DAYS)) {
     if (e) e.stopPropagation();
     const c = savedCampaigns[index];
     if (!c) return;
     saveCampaigns(savedCampaigns.map((x, i) => (
-      i === index ? { ...x, pausedUntil: campaignPauseUntil(Date.now(), days) } : x
+      i === index ? { ...x, pausedUntil: until } : x
     )));
   }
 
@@ -3739,7 +3740,10 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                             campaign is running. */}
                         {!paused && (
                           <CampaignPauseButton
-                            onPause={days => pauseCampaign(i, null, days)}
+                            onPause={until => pauseCampaign(i, null, until)}
+                            campaigns={savedCampaigns}
+                            prospects={prospects}
+                            cdmName={cdmName}
                             returnsTo={active ? 'Active' : 'Inactive'}
                           />
                         )}

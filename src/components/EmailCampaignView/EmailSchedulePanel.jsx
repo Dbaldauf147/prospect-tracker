@@ -5,18 +5,13 @@
 // The rules are in utils/emailSchedule.js; this is the cards and, under
 // them, the planned sends as a table (the shared DataTable, so it carries
 // Dan's column formatting) or as a month calendar, whichever was last picked.
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
-import { buildEmailSchedule, audienceMembers, localDay, addDays, calendarWeeks, weeksSpanning, addMonths, scheduleCalendarEntries, DEFAULT_MOST_SHARE, OUTREACH_LIMIT, OUTREACH_WINDOW_DAYS } from '../../utils/emailSchedule';
-import { makeRosterGates } from '../../utils/contactRosters';
-import { useClientFlagMaps } from '../../utils/rosterHooks';
-import { getHubspotContacts } from '../../utils/hubspotContactsCache';
-import { loadOppsFromCache } from '../../utils/oppsCache';
+import { addDays, calendarWeeks, weeksSpanning, addMonths, scheduleCalendarEntries, OUTREACH_LIMIT, OUTREACH_WINDOW_DAYS } from '../../utils/emailSchedule';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { useEmailSchedule, savedMostShare, MOST_KEY, MOST_CHOICES } from './useEmailSchedule';
 
 const TABLE_ID = 'email-campaign-schedule';
-const MOST_KEY = 'email-schedule:most';
-const MOST_CHOICES = [0.5, 0.67, 0.75, 0.8, 0.9, 1];
 const VIEW_KEY = 'email-schedule:view';
 // Calendar first: it is the view the tab opens on until List is picked.
 const VIEWS = [['calendar', 'Calendar'], ['list', 'List']];
@@ -246,39 +241,13 @@ function ScheduleCalendar({ rows, groups, today, onOpenCampaign, onReschedule })
 }
 
 export function EmailSchedulePanel({ campaigns, prospects, cdmName, onOpenCampaign, onReschedule, settings, updateSettings }) {
-  const [most, setMostState] = useState(() => {
-    const v = Number(userLsGet(MOST_KEY));
-    return MOST_CHOICES.includes(v) ? v : DEFAULT_MOST_SHARE;
-  });
+  const [most, setMostState] = useState(savedMostShare);
   const setMost = (v) => { setMostState(v); try { userLsSet(MOST_KEY, String(v)); } catch { /* a convenience */ } };
 
   const [view, setViewState] = useState(() => (userLsGet(VIEW_KEY) === 'list' ? 'list' : 'calendar'));
   const setView = (v) => { setViewState(v); try { userLsSet(VIEW_KEY, v); } catch { /* a convenience */ } };
 
-  const { clientStatusMap, clientUntrackedMap } = useClientFlagMaps();
-  const [contacts, setContacts] = useState(null);
-  const [oppsRecords, setOppsRecords] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    loadOppsFromCache().then(o => { if (!cancelled) setOppsRecords(o?.records || []); }).catch(() => {});
-    const refresh = () => {
-      getHubspotContacts().then(c => { if (!cancelled) setContacts(c || []); }).catch(() => { if (!cancelled) setContacts([]); });
-    };
-    refresh();
-    window.addEventListener('hubspot-cache-updated', refresh);
-    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
-  }, []);
-
-  const gates = useMemo(
-    () => makeRosterGates({ prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap }),
-    [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
-  );
-  const members = useMemo(() => audienceMembers(contacts || [], gates), [contacts, gates]);
-  const today = localDay(new Date());
-  const { rows, groups } = useMemo(
-    () => buildEmailSchedule({ campaigns, members, today, most }),
-    [campaigns, members, today, most],
-  );
+  const { rows, groups, today, loading } = useEmailSchedule({ campaigns, prospects, cdmName, most });
 
   const columns = useMemo(() => [
     { key: 'audienceLabel', label: 'Audience', defaultWidth: 115 },
@@ -314,7 +283,7 @@ export function EmailSchedulePanel({ campaigns, prospects, cdmName, onOpenCampai
           of contacts
         </label>
       </div>
-      {contacts === null && <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>Loading contacts...</div>}
+      {loading && <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>Loading contacts...</div>}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
         {groups.map(g => <GroupCard key={g.key} g={g} most={most} onOpenCampaign={onOpenCampaign} />)}
       </div>
