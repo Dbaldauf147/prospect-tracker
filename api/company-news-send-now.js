@@ -85,6 +85,7 @@ async function handler(req, res, auth) {
       to,
       subject: subject || digest.defaultSubject,
       html: digest.html,
+      attachments: digest.attachments,
       replyTo: auth.email,
     });
 
