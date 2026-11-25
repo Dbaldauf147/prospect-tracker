@@ -13,6 +13,7 @@ import {
   mriFormExport, diagnosisSignals, diagnosisNotes, DEFAULT_SIGNALS, dateSerial, mriSlug, formatMoneyInput, formatNumberInput, profileDisplayValue,
   climateCommitmentLevel, trackerSignals, mergeSignals, withTrackerSignals, climateTargetSummary, trackerNotes,
   profileRecordPatch,
+  footprintLevel, spreadLevel,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -176,6 +177,21 @@ eq(
   ['$1,350,000', '$1,350,000', '$1,234.5', '$1,234.56', '$0.5', '$0', '$7', '-$2,500', '', '', '', '$123'],
   'money input formatting',
 );
+// Skeleton: Footprint scale from the site count, Geographic spread from the site list.
+eq(['', '0', '12', '49', '50', '100', '101', '2,000', 641.8, 'n/a'].map(footprintLevel),
+  ['', '', 'Low', 'Low', 'Moderate', 'Moderate', 'Strong', 'Strong', 'Strong', ''], 'footprint scale by site count');
+const list = rows => ({ headers: ['Site Name', 'City', 'State', 'Country'], rows });
+eq(trackerSignals({}, { siteList: list([{ 'Site Name': 'A', State: 'NY', Country: 'USA' }, { 'Site Name': 'B', State: 'Ontario', Country: 'Canada' }]) })['skeleton.3'], 'Strong', 'spread: two countries');
+eq(trackerSignals({}, { siteList: list([{ 'Site Name': 'A', State: 'NY', Country: 'USA' }, { 'Site Name': 'B', State: 'TX', Country: 'United States' }]) })['skeleton.3'], 'Moderate', 'spread: two states, US written two ways');
+eq(trackerSignals({}, { siteList: list([{ 'Site Name': 'A', State: 'NY', Country: 'US' }, { 'Site Name': 'B', State: 'New York', Country: 'US' }]) })['skeleton.3'], 'Low', 'spread: one state, code and name');
+eq(trackerSignals({}, { siteList: { headers: ['Site Name'], rows: [{ 'Site Name': 'A' }, { 'Site Name': 'B' }] } })['skeleton.3'], undefined, 'spread: list says nothing about where');
+eq(trackerSignals({}, { siteList: null })['skeleton.3'], undefined, 'spread: no list');
+eq(spreadLevel({ sites: 1, countries: 0, states: 0 }), 'Low', 'spread: a single site');
+eq(trackerSignals({ numberOfSites: '2000' })['skeleton.0'], 'Strong', 'footprint from the Sites field');
+eq(trackerSignals({}, { siteList: list(Array.from({ length: 60 }, (_, i) => ({ 'Site Name': `S${i}`, State: 'NY' }))) })['skeleton.0'], 'Moderate', 'footprint from the list when the Sites field is empty');
+eq(trackerSignals({}, {})['skeleton.0'], undefined, 'footprint: no count, no rating');
+eq(trackerSignals({ numberOfSites: '30' }, { siteList: list([{ 'Site Name': 'A', State: 'NY', Status: 'Closed' }]) })['skeleton.0'], 'Low', 'the Sites field wins over the list');
+
 // Tab 1 rows that are the company's own field are written to the company.
 eq(
   [
