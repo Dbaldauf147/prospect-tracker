@@ -1,34 +1,39 @@
-// How close each company's site list is to the size it can be saved at.
+// How close each company's site list is to the most this app will store
+// for one company.
 //
-// A site list is one Firestore document (utils/companySiteListsStore), and
-// Firestore refuses a document over 1 MiB. A list that crosses that line
-// stops saving: the next "Save to <company>" or upload fails, and the
-// change lives only in the open tab until it is refreshed away. So the
-// Issues tab warns while there is still room ("near the limit"), and says
-// plainly once a list is past it.
+// A site list used to be one Firestore document, so the 1 MiB document cap
+// was its limit and a big portfolio could not be saved at all. A list too
+// big for one document is now stored in parts (utils/siteListParts), so
+// Firestore no longer sets the limit. What does is that every list is
+// loaded with the settings on every page load, so this is a backstop
+// against a list so large it would slow every page down, well above any
+// real portfolio (11,000 sites with the analysis columns is about 20 MB).
+// The Issues tab warns while there is still room ("near the limit"), and
+// says plainly once a list is past it.
 //
 // Sized the way Firestore sizes a document (utils/settingsDocSize), from
 // the copy every device already has, so the warning shows everywhere and
 // costs no reads. Pure, for scripts/siteListSize.test.mjs.
 
-import { FIRESTORE_DOC_LIMIT, valueBytes } from './settingsDocSize.js';
+import { valueBytes } from './settingsDocSize.js';
 
 // The document name and Firestore's own per-document overhead, generously:
 // the path is userSettings/<uid>/companySiteLists/<slug>.
 const DOC_NAME_ALLOWANCE = 200;
 
-// Warn from here: about 80% of the cap, which on a typical list is a few
-// thousand rows of headroom.
-export const SITE_LIST_WARN_BYTES = Math.round(FIRESTORE_DOC_LIMIT * 0.8);
-export const SITE_LIST_LIMIT_BYTES = FIRESTORE_DOC_LIMIT;
+export const SITE_LIST_LIMIT_BYTES = 50 * 1024 * 1024;
+// Warn from here: 80% of the limit.
+export const SITE_LIST_WARN_BYTES = Math.round(SITE_LIST_LIMIT_BYTES * 0.8);
 
-/** Firestore's size for one company's site-list document. */
+/** Firestore's size for one company's site list, as if it were one document. */
 export function siteListBytes(entry) {
   if (!entry || typeof entry !== 'object') return 0;
   return valueBytes(entry) + DOC_NAME_ALLOWANCE;
 }
 
-const kb = (n) => `${Math.round(n / 1024).toLocaleString()} KB`;
+const kb = (n) => (n >= 1024 * 1024
+  ? `${(n / (1024 * 1024)).toFixed(1)} MB`
+  : `${Math.round(n / 1024).toLocaleString()} KB`);
 const slugOf = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
 
 /**
@@ -52,9 +57,10 @@ export function oversizedSiteLists(lists) {
   return out.sort((a, b) => b.bytes - a.bytes);
 }
 
-/** "845 / 1,024 KB", for the Issues tab's Resolution cell. */
+/** "41.2 / 50 MB", for the Issues tab's Resolution cell. */
 export function siteListSizeLabel(bytes) {
-  return `${Math.round(bytes / 1024).toLocaleString()} / ${kb(SITE_LIST_LIMIT_BYTES)}`;
+  const mb = (n) => n / (1024 * 1024);
+  return `${mb(bytes).toFixed(1)} / ${Math.round(mb(SITE_LIST_LIMIT_BYTES))} MB`;
 }
 
 /**

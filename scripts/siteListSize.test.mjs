@@ -48,16 +48,16 @@ eq(oversizedSiteLists(null), [], 'no lists, no rows');
 eq(rows.map(r => [r.siteList.slug, r.siteList.over]), [['over', true], ['near', false]], 'rows carry slug and over for the Resolution cell');
 const ignoredRows = siteListSizeIssues(big, { ignored: ['near', 'over'] });
 eq(ignoredRows.map(r => r.id), ['site-list-size:over:over'], 'Ignore hides a near list but never an over one');
-eq(siteListSizeLabel(845 * 1024), '845 / 1,024 KB', 'size label');
+eq(siteListSizeLabel(41.2 * 1024 * 1024), '41.2 / 50 MB', 'size label');
 
-markLocalOnly('siteList:acme', { kind: 'siteList', reason: 'too-big', name: 'Acme sites.xlsx', sizeBytes: 1.2e6, limitBytes: SITE_LIST_LIMIT_BYTES, owner: 'Acme', error: 'invalid-argument' });
+markLocalOnly('siteList:acme', { kind: 'siteList', reason: 'too-big', name: 'Acme sites.xlsx', sizeBytes: 60e6, limitBytes: SITE_LIST_LIMIT_BYTES, owner: 'Acme', error: 'invalid-argument' });
 markLocalOnly('siteList:globex', { kind: 'siteList', reason: 'backup-failed', owner: 'globex', error: 'unavailable' });
 const failedRows = localOnlyFileIssues(loadLocalOnlyFiles(), { prospects: [{ id: 'g1', company: 'Globex' }] });
 eq(failedRows.map(r => [r.source, r.type, r.company, r.prospectId]), [
   ['Site lists', 'Site list not saved', 'Acme', null],
   ['Site lists', 'Site list not saved', 'Globex', 'g1'],
 ], 'failed saves are listed under Site lists');
-eq(failedRows[0].detail, 'The last save of the site list "Acme sites.xlsx" (1.1 MB) failed: it is over the 1.0 MB one site list can hold. The change was only in the tab you made it in, so a refresh loses it. Make the list smaller, then save it again from Company card > Site list.', 'too-big detail');
+eq(failedRows[0].detail, 'The last save of the site list "Acme sites.xlsx" (57.2 MB) failed: it is over the 50.0 MB one site list can hold. The change was only in the tab you made it in, so a refresh loses it. Make the list smaller, then save it again from Company card > Site list.', 'too-big detail');
 eq(failedRows[1].detail, 'The last save of this site list failed: the save was refused (unavailable). The change was only in the tab you made it in, so a refresh loses it. Save it again from Company card > Site list.', 'failed detail');
 eq([...rows, ...failedRows].every(r => !/—/.test(r.detail)), true, 'no em dashes in the copy');
 
