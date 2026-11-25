@@ -11,7 +11,7 @@ import {
   MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
   mriStageProgress,
   mriFormExport, diagnosisSignals, diagnosisNotes, DEFAULT_SIGNALS, dateSerial, mriSlug, formatMoneyInput, formatNumberInput, profileDisplayValue,
-  climateCommitmentLevel, trackerSignals, mergeSignals, withTrackerSignals, climateTargetSummary, trackerNotes,
+  climateCommitmentLevel, disclosureLevel, trackerSignals, mergeSignals, withTrackerSignals, climateTargetSummary, trackerNotes,
   profileRecordPatch,
 } from '../src/utils/accountMriForm.js';
 
@@ -217,7 +217,15 @@ eq(
   ['Absent', 'Absent', 'Absent', 'Strong', 'Strong', 'Strong', 'Strong', 'Moderate', 'Moderate', 'Absent', 'Absent'],
   'climate commitment level from targets',
 );
-eq(trackerSignals({ climateTargets: [{ type: 'Net zero' }] }), { 'brain.0': 'Strong' }, 'tracker signals');
+eq(trackerSignals({ climateTargets: [{ type: 'Net zero' }] }), { 'brain.0': 'Strong', 'immune.0': 'Absent', 'immune.1': 'Absent' }, 'tracker signals');
+eq(
+  [[], ['CDP'], ['GRESB'], ['NZAM'], ['UN PRI'], ['un pri'], ['SBT', 'CSRD', 'Ecovadis', 'CA SB'], ['SBT', 'GRESB']].map(disclosureLevel),
+  ['Absent', 'Strong', 'Strong', 'Strong', 'Strong', 'Strong', 'Absent', 'Strong'],
+  'disclosure level from CDP / GRESB / NZAM / UN PRI',
+);
+eq((({ 'immune.0': a, 'immune.1': b }) => [a, b])(trackerSignals({ frameworks: ['UN PRI'] })), ['Strong', 'Strong'], "the record's own frameworks count");
+eq((({ 'immune.0': a, 'immune.1': b }) => [a, b])(trackerSignals({ frameworks: ['SBT'] }, new Set(['CDP']))), ['Strong', 'Strong'], 'a Lists-page flag counts');
+eq(mergeSignals(trackerSignals({ frameworks: ['CDP'] }), { 'immune.0': 'Low' })['immune.0'], 'Low', 'a hand-picked Immune rating still wins');
 eq((({ 'brain.0': a, 'brain.1': b, 'brain.2': c }) => [a, b, c])(mergeSignals({ 'brain.0': 'Strong' }, { 'brain.1': 'Low' })), ['Strong', 'Low', 'Absent'], 'tracker rating fills an unpicked sign');
 eq(mergeSignals({ 'brain.0': 'Strong' }, { 'brain.0': 'Low' })['brain.0'], 'Low', 'a picked rating wins');
 eq(['brain.0', 'brain.2'].map(k => k in mergeSignals({ 'brain.0': 'Strong' }, { 'brain.0': '', 'brain.2': '' })), [false, false], 'a sign cleared by hand stays blank');

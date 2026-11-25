@@ -220,9 +220,36 @@ export function climateCommitmentLevel(climateTargets) {
   return 'Moderate';
 }
 
-// The tracker's own Diagnosis ratings for a company record.
-export function trackerSignals(record) {
-  return { [CLIMATE_COMMITMENT_SIGN]: climateCommitmentLevel(record?.climateTargets) };
+// The signs "Regulatory disclosure exposure" and "Investor / customer ESG
+// scrutiny" read from the frameworks the company reports to: Strong when it
+// reports to any of CDP, GRESB, NZAM or UN PRI, Absent when it reports to
+// none of them.
+export const DISCLOSURE_SIGNS = ['immune.0', 'immune.1'];
+export const DISCLOSURE_FRAMEWORKS = ['CDP', 'GRESB', 'NZAM', 'UN PRI'];
+export function disclosureLevel(frameworks) {
+  const have = new Set([...(frameworks || [])].map(f => String(f || '').trim().toUpperCase()));
+  return DISCLOSURE_FRAMEWORKS.some(f => have.has(f)) ? 'Strong' : 'Absent';
+}
+
+// Where each tracker-rated sign is read from, for the popup's "from ..." hint.
+export const SIGNAL_SOURCES = {
+  [CLIMATE_COMMITMENT_SIGN]: { label: 'Targets', title: "Rated from the company's Targets tab until you pick a rating here" },
+  ...Object.fromEntries(DISCLOSURE_SIGNS.map(k => [k, {
+    label: 'Frameworks',
+    title: `Strong when the company reports to ${DISCLOSURE_FRAMEWORKS.join(', ')}, Absent when it reports to none of them, until you pick a rating here`,
+  }])),
+};
+
+// The tracker's own Diagnosis ratings for a company record. `frameworks`
+// is every framework the company is flagged with (its own list plus the
+// Lists-page mappings, as the Frameworks column shows); the record's own
+// list is used when it isn't given.
+export function trackerSignals(record, frameworks) {
+  const level = disclosureLevel([...(record?.frameworks || []), ...(frameworks || [])]);
+  return {
+    [CLIMATE_COMMITMENT_SIGN]: climateCommitmentLevel(record?.climateTargets),
+    ...Object.fromEntries(DISCLOSURE_SIGNS.map(k => [k, level])),
+  };
 }
 
 // What kind of targets a company has, from its Targets tab, as one line
