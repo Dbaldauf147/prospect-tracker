@@ -281,7 +281,8 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
         profile: one.profile,
         committee: one.committee,
         sites: one.sites,
-        extra: one.form ? mriFormExport(one.form) : null,
+        // With the Diagnosis defaults and the Targets rating, as the popup's export has them.
+        extra: mriFormExport(withTrackerSignals(one.form, one.trackerSignals)),
       });
     } catch (err) {
       setError(err?.message || 'The export failed.');
@@ -329,7 +330,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       {openRow && (
         <AccountMriModal
           key={openRow.id}
-          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites }}
+          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals }}
           form={openRow.form}
           onSave={next => saveForm(openRow.company, next)}
           onClose={() => setOpenId(null)}
