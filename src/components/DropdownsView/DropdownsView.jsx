@@ -80,7 +80,8 @@ const SERVICE_TABLE_COLUMNS = [
   // blank row that still reads as an open question
   // (src/utils/serviceAutoNa.js).
   { key: 'autoNa',           label: 'Auto-N/A Services', width: 240,    editable: true  },
-  { key: 'sme',              label: 'SME',               width: 150,    editable: true  },
+  { key: 'sme',              label: 'NAM SME',           width: 150,    editable: true  },
+  { key: 'euSme',            label: 'EU SME',            width: 150,    editable: true  },
   { key: 'ktm',              label: 'KTM',               width: 150,    editable: true  },
   // The contact tags of the people the service is sold to, "ESG;
   // Procurement". Picked as chips in the service popup; plain text here.
@@ -110,6 +111,7 @@ const SERVICES_LATE_COLUMNS = [
   { key: 'autoAdd',   flag: 'servicesAutoAddColumnRevealed' },
   { key: 'autoNa',    flag: 'servicesAutoNaColumnRevealed' },
   { key: 'ktm',       flag: 'servicesKtmColumnRevealed' },
+  { key: 'euSme',     flag: 'servicesEuSmeColumnRevealed' },
   { key: 'contactTags', flag: 'servicesContactTagsColumnRevealed' },
   { key: 'serviceBucket', flag: 'servicesBucketColumnRevealed' },
   // Not a new column, but the survivor of the BFO Tag / Local Project Name
@@ -1448,7 +1450,7 @@ export function DropdownsView({ settings, updateSettings }) {
       if (name.toLowerCase().includes(term)) return true;
       if (bucket.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.autoAdd, meta.autoNa, meta.sme, meta.ktm, meta.contactTags, notesPlainText(meta.notes)]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.autoAdd, meta.autoNa, meta.sme, meta.euSme, meta.ktm, meta.contactTags, notesPlainText(meta.notes)]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
@@ -1548,6 +1550,7 @@ export function DropdownsView({ settings, updateSettings }) {
     autoAdd: meta?.autoAdd || '',
     autoNa: meta?.autoNa || '',
     sme: meta?.sme || '',
+    euSme: meta?.euSme || '',
     ktm: meta?.ktm || '',
     contactTags: meta?.contactTags || '',
     _url: serviceLinks[name] || '',

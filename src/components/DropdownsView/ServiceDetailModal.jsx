@@ -1750,7 +1750,8 @@ export function ServiceDetailFields({
       {pick('productLine', 'Product Line')}
       <YesNoField label="Timeline Driven" value={meta?.timelineDriven} onCommit={save('timelineDriven')} />
       <WeeksField label="Rollout Time" value={meta?.rolloutTime} onCommit={save('rolloutTime')} />
-      {pick('sme', 'SME')}
+      {pick('sme', 'NAM SME')}
+      {pick('euSme', 'EU SME')}
       {pick('ktm', 'KTM')}
       <ContactTagsField value={meta?.contactTags} onCommit={save('contactTags')} />
       <NotesField value={meta?.notes} onCommit={save('notes')} />
