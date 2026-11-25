@@ -4002,6 +4002,7 @@ Fix that now?
           updateSettings={updateSettings}
           updateSettingsPath={updateSettingsPath}
           onSelect={onSelect}
+          onUpdate={onUpdate}
           filterBar={(
             <input
               className={styles.searchInput}

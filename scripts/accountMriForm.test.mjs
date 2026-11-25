@@ -5,13 +5,14 @@
 import { readFile } from 'node:fs/promises';
 import JSZip from 'jszip';
 import ExcelJS from 'exceljs';
-import { fillAccountMriWorkbook, MRI_PROFILE_FIELDS, MRI_COMMITTEE_TABLE } from '../src/utils/accountMri.js';
+import { fillAccountMriWorkbook, MRI_PROFILE_FIELDS, MRI_COMMITTEE_TABLE, accountMriProfile } from '../src/utils/accountMri.js';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_FIELDS, BUY_STATEMENTS, OURS_STATEMENTS, WIN_MATRIX,
   MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
   mriStageProgress,
   mriFormExport, diagnosisSignals, DEFAULT_SIGNALS, dateSerial, mriSlug, formatMoneyInput, formatNumberInput, profileDisplayValue,
   climateCommitmentLevel, trackerSignals, mergeSignals, withTrackerSignals,
+  profileRecordPatch,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -175,6 +176,29 @@ eq(
   ['$1,350,000', '$1,350,000', '$1,234.5', '$1,234.56', '$0.5', '$0', '$7', '-$2,500', '', '', '', '$123'],
   'money input formatting',
 );
+// Tab 1 rows that are the company's own field are written to the company.
+eq(
+  [
+    ['vertical', 'Real Estate'], ['salesperson', 'Dan Baldauf'], ['hq', 'North America'],
+    ['revenueB', '$40.6'], ['revenueB', ''], ['revenueText', '$2,870,000,000'],
+    ['sites', '2,000'], ['background', 'SAE - Jimmy Sohal'],
+    ['competitors', 'Deepki'], ['competitors', 'No competitor known'],
+  ].map(([k, v]) => profileRecordPatch(k, v)),
+  [
+    { vertical: 'Real Estate' }, { cdm: 'Dan Baldauf' }, { hqRegion: 'North America' },
+    { revenue: '$40.6B' }, { revenue: '' }, { revenue: '$2,870,000,000' },
+    { numberOfSites: '2000' }, { notes: 'SAE - Jimmy Sohal' },
+    { competitorsNotes: 'Deepki' }, { competitorsNotes: '' },
+  ],
+  'record patch per row',
+);
+eq(['tier', 'stage', 'fee', 'energySpend', 'currentProvider', 'team'].map(k => profileRecordPatch(k, 'x')), [null, null, null, null, null, null], 'rows the MRI keeps');
+// What is written reads back as the same row value.
+{
+  const back = accountMriProfile({ record: { company: 'X', ...profileRecordPatch('revenueB', '$40.6'), ...profileRecordPatch('sites', '2,000') } });
+  eq([back.revenueB, back.sites], [40.6, 2000], 'revenue and sites read back');
+}
+
 // Tab 2's "Public climate / net-zero commitment" from the Targets tab.
 eq(
   [

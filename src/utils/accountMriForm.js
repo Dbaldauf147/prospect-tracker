@@ -10,7 +10,7 @@
 // formulas); scripts/accountMriForm.test.mjs holds them to it.
 //
 // Imported with extensions so this loads under plain Node for the tests.
-import { MRI_PROFILE_FIELDS } from './accountMri.js';
+import { MRI_PROFILE_FIELDS, NO_COMPETITOR } from './accountMri.js';
 import { normalizeTargets, isNoTargetRow, hasTargetValues } from './companyTargets.js';
 
 export const MRI_LISTS = {
@@ -99,6 +99,34 @@ export function mergeProfile(tracker = {}, saved = {}) {
     if (own !== undefined) { values[f.key] = own; typed[f.key] = true; } else values[f.key] = tracker?.[f.key] ?? '';
   }
   return { values, typed };
+}
+
+// Tab 1 rows that are the company record's own field: a value typed on the
+// Account MRI is written to the company (so the company popup shows it too)
+// rather than kept on the MRI only. Each turns what the row holds into the
+// record's fields. The other rows are worked out from more than one field
+// (Stage, Existing client), from other lists (Tier, Services, contracts,
+// contacts) or have no field on the record, so they stay the MRI's own.
+const plainNumber = v => String(v ?? '').replace(/[$,\s]/g, '');
+export const PROFILE_RECORD_FIELDS = {
+  vertical: v => ({ vertical: v }),
+  salesperson: v => ({ cdm: v }),
+  hq: v => ({ hqRegion: v }),
+  // Revenue ($B) "$40.6" is $40.6 billion; the record's Revenue is free text.
+  revenueB: (v) => {
+    const n = plainNumber(v);
+    return { revenue: n === '' ? '' : Number.isFinite(Number(n)) ? `$${n}B` : String(v) };
+  },
+  revenueText: v => ({ revenue: v }),
+  sites: v => ({ numberOfSites: plainNumber(v) }),
+  background: v => ({ notes: v }),
+  competitors: v => ({ competitorsNotes: String(v ?? '').trim() === NO_COMPETITOR ? '' : v }),
+};
+
+/** The company record update for one tab 1 row, or null when the row is the MRI's own. */
+export function profileRecordPatch(key, value) {
+  const to = PROFILE_RECORD_FIELDS[key];
+  return to ? to(String(value ?? '').trim()) : null;
 }
 
 // ── Tab 2 ────────────────────────────────────────────────────────────────
