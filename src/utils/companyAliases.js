@@ -48,3 +48,16 @@ export function mergedCompanyAliases(survivor, absorbed) {
   }
   return out;
 }
+
+/**
+ * Whether an opp's Account is this company itself: its own name or one of
+ * the names merged into it, compared by dedupe key (case, punctuation and
+ * Inc./LLC don't matter; a bracketed division does). The Services board
+ * and the Account MRI read a company's services off these opps only, so a
+ * related company sharing a word of the name ("Brookfield (Core Retail)",
+ * a Brookfield portfolio company) doesn't set this company's statuses.
+ */
+export function accountIsCompany(account, record) {
+  const key = companyDedupeKey(account);
+  return !!key && recordCompanyKeys(record).includes(key);
+}
