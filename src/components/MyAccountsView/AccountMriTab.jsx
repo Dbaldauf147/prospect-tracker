@@ -315,7 +315,9 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
           columns={columns}
           rows={mriRows}
           rowStyle={r => (r.listed ? LISTED_ROW_STYLE : undefined)}
-          defaultSort={{ key: 'company', direction: 'asc' }}
+          // Furthest along first: highest tab, then most of it filled.
+          // Ties keep the rows' alphabetical order (the sort is stable).
+          defaultSort={{ key: 'mriProgress', direction: 'desc' }}
           alwaysVisible={['company']}
           emptyMessage="No accounts match"
           settings={settings}
