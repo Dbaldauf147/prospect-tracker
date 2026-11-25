@@ -237,6 +237,25 @@ export const DROPDOWN_LISTS = [
     label: 'Entity Outside the US Approval',
     options: ['Not required', 'Requested', 'Approved', 'Denied'],
   },
+  // The three qualifying questions asked once an opp is in Quoting: when
+  // the client wants results, the people it will put on the work, and
+  // whether there is money for it. Each is a pick on the Opp details
+  // popup's Stage 4 Quoting group; the user grows the lists here.
+  {
+    key: 'clientResultsTiming',
+    label: 'When Does the Client Want Results?',
+    options: ['Within 30 days', '1-3 months', '3-6 months', '6-12 months', 'More than 12 months', 'No date set', 'Unknown'],
+  },
+  {
+    key: 'clientPeopleCommitted',
+    label: 'People the Client Will Commit',
+    options: ['Named team committed', 'Sponsor only', 'Some people, not named', 'No one committed yet', 'Unknown'],
+  },
+  {
+    key: 'clientBudget',
+    label: 'Client Has Budget?',
+    options: ['Yes, approved', 'Yes, not yet approved', 'Being requested', 'No budget', 'Unknown'],
+  },
   {
     key: 'quotedDate',
     label: 'Quoted Date',

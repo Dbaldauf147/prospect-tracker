@@ -553,6 +553,14 @@ const spokeWithCompany = (row) => {
 };
 const TRISTATE_COLUMNS = new Set(['No Further Action Today', SPOKE_WITH_COMPANY_COLUMN]);
 
+// The three questions picked once an opp is in Quoting (Stage 4's Quoting
+// group): when the client wants results, the people it will commit, and
+// whether it has budget. Each is a single pick from its own Dropdowns list
+// (DEFAULT_COLUMN_LINKS below).
+const RESULTS_TIMING_COLUMN = 'When Does the Client Want Results?';
+const PEOPLE_COMMITTED_COLUMN = 'People the Client Will Commit';
+const CLIENT_BUDGET_COLUMN = 'Client Has Budget?';
+
 // On-screen display label for an opp column key. The underlying data keys
 // stay stable (so stored records, dedup, currency formatting and the stage
 // prompts keep working); only the header text the user sees changes. The
@@ -793,7 +801,9 @@ const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'N
   // Written by the Not Sold close-out popup; never in an imported sheet.
   LOSS_NOTES_COLUMN,
   // Ticked on the Qualifying prompt; never in an imported sheet.
-  SPOKE_WITH_COMPANY_COLUMN];
+  SPOKE_WITH_COMPANY_COLUMN,
+  // Picked on the Opp details popup's Quoting group; never in an imported sheet.
+  RESULTS_TIMING_COLUMN, PEOPLE_COMMITTED_COLUMN, CLIENT_BUDGET_COLUMN];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
 // source stays pure ASCII — embedding the literal invisible characters
@@ -5915,6 +5925,9 @@ const DEFAULT_COLUMN_LINKS = {
   Status: { listKey: 'whoIsWaiting', mode: 'single' },
   'Chance?': { listKey: 'chance',    mode: 'single' },
   'Entity Outside the US Approval': { listKey: 'entityOutsideUsApproval', mode: 'single' },
+  [RESULTS_TIMING_COLUMN]: { listKey: 'clientResultsTiming', mode: 'single' },
+  [PEOPLE_COMMITTED_COLUMN]: { listKey: 'clientPeopleCommitted', mode: 'single' },
+  [CLIENT_BUDGET_COLUMN]: { listKey: 'clientBudget', mode: 'single' },
 };
 
 // Thin wrapper around the shared resolver so existing call sites in
@@ -9533,6 +9546,10 @@ const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
   'Margin Email Date': 'Quoting',
   'Sales Leader Review Date': 'Quoting',
   'Margin Approval Date': 'Quoting',
+  // Asked once the opp is being quoted, so they sit on the Quoting step.
+  [RESULTS_TIMING_COLUMN]: 'Quoting',
+  [PEOPLE_COMMITTED_COLUMN]: 'Quoting',
+  [CLIENT_BUDGET_COLUMN]: 'Quoting',
   // Stage 6 is one column (Agreement Sent), so every field on it sits
   // there — spelled out rather than left to the fallback so a later
   // second column can't silently pull them along.
@@ -9694,6 +9711,9 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Margin Email Date': 'stage4',
   'Sales Leader Review Date': 'stage4',
   'Margin Approval Date': 'stage4',
+  [RESULTS_TIMING_COLUMN]: 'stage4',
+  [PEOPLE_COMMITTED_COLUMN]: 'stage4',
+  [CLIENT_BUDGET_COLUMN]: 'stage4',
   // How and when it ends, split across the two stages that do that work.
   // Getting a signature agreed is Stage 6 — it's what the negotiation is
   // for, and a verbal is the same commitment one step earlier.
