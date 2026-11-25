@@ -259,10 +259,10 @@ export function spreadLevel(geo) {
 
 // Immune's "Regulatory disclosure exposure" and "Investor / customer ESG
 // scrutiny" from the frameworks the company reports to: Strong when it
-// reports to any of CDP, GRESB, NZAM or UN PRI, Absent when it reports to
-// none of them.
+// reports to any of CDP, GRESB, NZAM, UN PRI, CSRD or CA SB (California
+// SB 253 / 261), Absent when it reports to none of them.
 export const DISCLOSURE_SIGNS = ['immune.0', 'immune.1'];
-export const DISCLOSURE_FRAMEWORKS = ['CDP', 'GRESB', 'NZAM', 'UN PRI'];
+export const DISCLOSURE_FRAMEWORKS = ['CDP', 'GRESB', 'NZAM', 'UN PRI', 'CSRD', 'CA SB'];
 export function disclosureLevel(frameworks) {
   const have = new Set([...(frameworks || [])].map(f => String(f || '').trim().toUpperCase()));
   return DISCLOSURE_FRAMEWORKS.some(f => have.has(f)) ? 'Strong' : 'Absent';
@@ -421,11 +421,11 @@ export function siteFootprintNote(record, siteList) {
   return where ? `${plural(count, 'site', 'sites')} across ${where}` : plural(count, 'site', 'sites');
 }
 
-// Immune's Intel notes: which of CDP, GRESB, NZAM and UN PRI the company
-// reports to ("GRESB, UN PRI"), '' when none of them.
+// Immune's Intel notes: which of the disclosure frameworks the company
+// reports to ("GRESB, UN PRI, CSRD"), '' when none of them.
 export function disclosureFrameworkList(frameworks) {
   const have = new Set([...(frameworks || [])].map(f => String(f || '').trim().toUpperCase()));
-  return ['GRESB', 'CDP', 'UN PRI', 'NZAM'].filter(f => have.has(f)).join(', ');
+  return ['GRESB', 'CDP', 'UN PRI', 'NZAM', 'CSRD', 'CA SB'].filter(f => have.has(f)).join(', ');
 }
 
 // Heart's Intel notes: energy spend as a share of revenue, from tab 1's
