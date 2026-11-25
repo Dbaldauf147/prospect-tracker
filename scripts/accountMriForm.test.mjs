@@ -17,7 +17,7 @@ import {
   footprintFromServices, trackerFootprint, mergeFootprint,
   trackerSignalReasons, signalReason,
   withNoActiveDefaults, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY, revenueBillionsText,
-  setNoActiveDealHealth, setNoActiveClosePlan,
+  setNoActiveDealHealth, setNoActiveClosePlan, ENTERPRISE_FIELDS,
   trackerOpportunity, withTrackerOpportunity, primaryOwnOpp,
 } from '../src/utils/accountMriForm.js';
 
@@ -400,7 +400,7 @@ for (const n of [4, 6, 7]) {
   const none = { own: [], portfolio: [] };
   const auto = withNoActiveDefaults({}, none).opportunity;
   eq([auto.noActive, auto.noActiveAuto, auto.name], [true, true, NO_ACTIVE_OPPORTUNITY], 'no live opp: ticked on its own');
-  eq(withNoActiveDefaults({}, { own: [{}], portfolio: [] }).opportunity, undefined, 'a live opp on the company: not ticked');
+  eq(withNoActiveDefaults({}, { own: [{}], portfolio: [] }).opportunity?.noActive, undefined, 'a live opp on the company: not ticked');
   eq(withNoActiveDefaults({}, { own: [], portfolio: [{}] }).opportunity, undefined, 'a live opp on a portfolio company: not ticked');
   eq(withNoActiveDefaults({}, null).opportunity, undefined, 'opps not loaded: not ticked');
   eq(withNoActiveDefaults({ opportunity: { noActive: false } }, none).opportunity, { noActive: false }, 'unticked by hand: stays unticked');
@@ -436,6 +436,22 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   eq(withNoActiveDefaults({ closePlanNoActive: false, closePlan: [] }, none).closePlanNoActive, false, 'close plan unticked by hand stays unticked');
 }
 
+// Tab 4's Enterprise efficiency: "-" unless the opp is for Enterprise workshop.
+{
+  const live = scope => ({ own: [{ scope }], portfolio: [] });
+  const keys = ENTERPRISE_FIELDS.map(fl => fl.key);
+  const na = withNoActiveDefaults({}, live('EaaS, Audits')).opportunity;
+  eq(keys.map(k => na[k]), ['-', '0', '-', '-', '-', '-', '-', '-', '-'], 'not Enterprise workshop: the section reads - (0 for the dollar field)');
+  eq([na.enterpriseNa, na.name], [true, undefined], 'only the Enterprise efficiency section, flagged');
+  eq(withNoActiveDefaults({}, live('Bill payment; Enterprise workshop')).opportunity, undefined, 'an Enterprise workshop opp: left blank to fill in');
+  eq(withNoActiveDefaults({}, live('ENTERPRISE WORKSHOP')).opportunity, undefined, 'any casing');
+  const two = scopeA => ({ own: [{ stage: 'Quoted', scope: scopeA }, { stage: 'Lead', scope: 'EV' }], portfolio: [] });
+  eq(withNoActiveDefaults({}, two('Enterprise workshop')).opportunity, undefined, 'the opp tab 4 is about (furthest along) decides: Enterprise workshop');
+  eq(withNoActiveDefaults({}, two('Audits')).opportunity.enterpriseNa, true, 'the opp tab 4 is about decides: not Enterprise workshop');
+  eq(withNoActiveDefaults({ opportunity: { geography: 'US' } }, live('EV')).opportunity.geography, 'US', 'something typed there stands');
+  eq(withNoActiveDefaults({}, { own: [], portfolio: [{ scope: 'EV' }] }).opportunity, undefined, 'only a portfolio company opp: left alone');
+  eq(withNoActiveDefaults({}, null).opportunity, undefined, 'opps not loaded: left alone');
+}
 // Tab 4 filled from the account's own live opp.
 {
   const { accountLiveOpps } = await import('../src/utils/accountMri.js');
