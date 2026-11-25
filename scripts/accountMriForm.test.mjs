@@ -18,7 +18,7 @@ import {
   trackerSignalReasons, signalReason,
   withNoActiveDefaults, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY, revenueBillionsText,
   setNoActiveDealHealth, setNoActiveClosePlan, ENTERPRISE_FIELDS,
-  trackerOpportunity, withTrackerOpportunity, primaryOwnOpp,
+  trackerOpportunity, trackerOpportunitySources, withTrackerOpportunity, primaryOwnOpp,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -473,6 +473,11 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   const noBfo = trackerOpportunity({ own: [live.own[1]] }, []);
   eq([noBfo.targetClose, noBfo.odds], ['2027-03-31', undefined], 'no BFO row: the opp\'s own close date, odds left blank');
   eq(trackerOpportunity({ own: [], portfolio: [{}] }), {}, 'no own opp: nothing');
+  eq(trackerOpportunitySources(live, bfo), {
+    name: 'Opps', owner: 'Opps', planStarted: 'Opps', workingSince: 'Opps', targetClose: 'BFO', odds: 'BFO', revenue: 'Opps', cameFrom: 'Opps',
+    time: 'Opps', timeValidated: 'Opps', people: 'Opps', peopleValidated: 'Opps', money: 'Opps', moneyValidated: 'Opps',
+  }, 'sources: odds and the BFO close date from BFO');
+  eq(trackerOpportunitySources({ own: [live.own[1]] }, []).targetClose, 'Opps', 'no BFO row: close date from Opps');
   const t = trackerOpportunity(live, bfo);
   eq(withTrackerOpportunity({ opportunity: { name: 'Typed', revenue: '' } }, t).opportunity.name, 'Typed', 'typed wins');
   eq(withTrackerOpportunity({ opportunity: { revenue: '' } }, t).opportunity.revenue, '13750', 'blank is filled');

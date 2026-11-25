@@ -21,7 +21,7 @@ import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, accountTr
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals, withNoActiveDefaults, trackerOpportunity, withTrackerOpportunity } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals, withNoActiveDefaults, trackerOpportunity, trackerOpportunitySources, withTrackerOpportunity } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -223,6 +223,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       .map(o => prospectByName.get(o.name.toLowerCase()) || o.name);
     const liveOpps = (oppsRecords || []).length ? accountLiveOpps(oppsRecords, self, holdings) : null;
     const trackerOpp = trackerOpportunity(liveOpps, record.bfoHistory?.rows);
+    const trackerOppFrom = trackerOpportunitySources(liveOpps, record.bfoHistory?.rows);
     const footprint = trackerFootprint(systemServices, serviceStatuses);
     const profile = mergeProfile(trackerProfile, form?.profile).values;
     const siteList = (siteLists || {})[siteListSlug(record.company)];
@@ -254,6 +255,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       serviceStatuses,
       liveOpps,
       trackerOpp,
+      trackerOppFrom,
       committee: committeeRows(form?.committee, trackerCommittee).filter(c => c.name || c.email),
       sites,
       profile,
@@ -440,7 +442,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       {openRow && (
         <AccountMriModal
           key={openRow.id}
-          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerReasons: openRow.trackerReasons, trackerNotes: openRow.trackerNotes, trackerFootprint: openRow.trackerFootprint, serviceStatuses: openRow.serviceStatuses, liveOpps: openRow.liveOpps, trackerOpp: openRow.trackerOpp }}
+          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerReasons: openRow.trackerReasons, trackerNotes: openRow.trackerNotes, trackerFootprint: openRow.trackerFootprint, serviceStatuses: openRow.serviceStatuses, liveOpps: openRow.liveOpps, trackerOpp: openRow.trackerOpp, trackerOppFrom: openRow.trackerOppFrom }}
           serviceOptions={serviceOptions}
           form={openRow.form}
           onSave={next => saveForm(openRow.company, next)}
