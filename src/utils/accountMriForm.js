@@ -592,10 +592,9 @@ export const OPPORTUNITY_FIELDS = OPPORTUNITY_SECTIONS.flatMap(s => s.fields);
 // ── Tab 4 from the Opps tab ─────────────────────────────────────────────
 // The account's own live opp fills the background fields nobody has typed
 // over: its BFO Opportunity Name, Deal Size, Start Date (the plan and the
-// work both started with the opp), Lead Source, the likelihood to close that
-// the Opps popup works out, and the close date BFO holds for it (BFO
-// History, matched on the opp name; the opp's own Close Date when BFO has
-// none). The owner is the account's CDM.
+// work both started with the opp), Lead Source, and from the opp's row in
+// BFO History (matched on the opp name) its % Probability and close date
+// (the opp's own Close Date when BFO has none). The owner is the account's CDM.
 export const MRI_OPPORTUNITY_OWNER = 'Dan Baldauf';
 export const OPPORTUNITY_FROM_OPPS = new Set(['name', 'owner', 'planStarted', 'workingSince', 'targetClose', 'odds', 'revenue', 'cameFrom']);
 
@@ -644,9 +643,7 @@ export function trackerOpportunity(liveOpps, bfoHistory = []) {
     ? (bfoHistory || []).find(r => oppKey(r?.name) && oppKey(r.name) === oppKey(opp.bfoName))
     : null;
   const started = isoDay(opp.startDate);
-  const odds = opp.likelihood != null && Number.isFinite(opp.likelihood)
-    ? String(Math.round(opp.likelihood * 100))
-    : percentOf(bfo?.probability);
+  const odds = percentOf(bfo?.probability);
   const out = {
     name: opp.bfoName,
     owner: MRI_OPPORTUNITY_OWNER,
