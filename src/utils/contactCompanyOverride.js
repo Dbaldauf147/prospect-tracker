@@ -139,3 +139,23 @@ export function withCompanyPins(contacts, localFields) {
   });
   return touched ? out : contacts;
 }
+
+/**
+ * `contacts` with each one's whole settings.contactLocalFields entry laid
+ * over it, the pin as its `company`: exactly what App.jsx hands every page
+ * as its HubSpot contacts. A screen that reads the IndexedDB cache itself
+ * (My Accounts) has to do this too, or it sees the raw sync, and a contact
+ * pinned to the account (or carrying a field saved only locally) drops off
+ * it. A list with nothing local comes back as it is.
+ */
+export function withContactLocalFields(contacts, localFields) {
+  const lf = (localFields && typeof localFields === 'object' && !Array.isArray(localFields)) ? localFields : null;
+  if (!lf || !Array.isArray(contacts) || Object.keys(lf).length === 0) return contacts;
+  return contacts.map((c) => {
+    const f = lf[String(c?.id ?? c?.vid ?? '')];
+    if (!f) return c;
+    const out = { ...c, ...f };
+    if (typeof f._companyOverride === 'string' && f._companyOverride) out.company = f._companyOverride;
+    return out;
+  });
+}
