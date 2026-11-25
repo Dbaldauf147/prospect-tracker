@@ -637,24 +637,45 @@ export function primaryOwnOpp(liveOpps) {
  *   bfoHistory  the company's BFO History rows (record.bfoHistory.rows)
  */
 export function trackerOpportunity(liveOpps, bfoHistory = []) {
+  return trackerOpportunityRead(liveOpps, bfoHistory).values;
+}
+
+/**
+ * Where each of trackerOpportunity's values came from, { key: 'Opps' | 'BFO' },
+ * for the "from ..." label beside the field: BFO History for the odds, the
+ * close date when BFO holds one and the amount when the opp has none.
+ */
+export function trackerOpportunitySources(liveOpps, bfoHistory = []) {
+  return trackerOpportunityRead(liveOpps, bfoHistory).from;
+}
+
+function trackerOpportunityRead(liveOpps, bfoHistory) {
   const opp = primaryOwnOpp(liveOpps);
-  if (!opp) return {};
+  if (!opp) return { values: {}, from: {} };
   const bfo = opp.bfoName
     ? (bfoHistory || []).find(r => oppKey(r?.name) && oppKey(r.name) === oppKey(opp.bfoName))
     : null;
   const started = isoDay(opp.startDate);
-  const odds = percentOf(bfo?.probability);
-  const out = {
-    name: opp.bfoName,
-    owner: MRI_OPPORTUNITY_OWNER,
-    planStarted: started,
-    workingSince: started,
-    targetClose: isoDay(bfo?.closeDate) || isoDay(opp.closeDate),
-    odds,
-    revenue: dollars(opp.amount) || dollars(bfo?.amount),
-    cameFrom: opp.source,
+  const bfoClose = isoDay(bfo?.closeDate);
+  const oppAmount = dollars(opp.amount);
+  const read = {
+    name: [opp.bfoName, 'Opps'],
+    owner: [MRI_OPPORTUNITY_OWNER, 'Opps'],
+    planStarted: [started, 'Opps'],
+    workingSince: [started, 'Opps'],
+    targetClose: bfoClose ? [bfoClose, 'BFO'] : [isoDay(opp.closeDate), 'Opps'],
+    odds: [percentOf(bfo?.probability), 'BFO'],
+    revenue: oppAmount ? [oppAmount, 'Opps'] : [dollars(bfo?.amount), 'BFO'],
+    cameFrom: [opp.source, 'Opps'],
   };
-  return Object.fromEntries(Object.entries(out).filter(([, v]) => !isBlank(v)));
+  const values = {};
+  const from = {};
+  for (const [k, [v, src]] of Object.entries(read)) {
+    if (isBlank(v)) continue;
+    values[k] = v;
+    from[k] = src;
+  }
+  return { values, from };
 }
 
 /**
