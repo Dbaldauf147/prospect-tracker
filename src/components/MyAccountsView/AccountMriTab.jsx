@@ -21,7 +21,7 @@ import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, isPortfol
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -228,14 +228,18 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       getSortValue: r => {
         const v = r.profile[f.key];
         if (v == null || v === '') return null;
-        return typeof v === 'number' ? v : String(v).toLowerCase();
+        if (typeof v === 'number') return v;
+        // A dollar row or count typed in the popup is kept as "$1,630"; sort it as the number.
+        const n = f.kind === 'number' ? Number(String(v).replace(/[$,\s]/g, '')) : NaN;
+        return Number.isFinite(n) ? n : String(v).toLowerCase();
       },
       getFilterValue: r => String(r.profile[f.key] ?? ''),
       exportValue: r => r.profile[f.key] ?? '',
       render: r => {
         const v = r.profile[f.key];
         if (v == null || v === '') return blank;
-        return <span title={String(v)} style={{ color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{typeof v === 'number' ? v.toLocaleString() : v}</span>;
+        const shown = profileDisplayValue(f.key, v);
+        return <span title={shown} style={{ color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{shown}</span>;
       },
     })),
     {
