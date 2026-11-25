@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, mriFormExport, formatMoneyInput, formatNumberInput,
+  addMissingDecisionMakers, tabProgress, diagnosisSignals, DEFAULT_SIGNALS, mriFormExport, formatMoneyInput, formatNumberInput,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -179,10 +179,12 @@ function Segmented({ options, value, onChange, fill }) {
 }
 
 function DiagnosisTab({ diagnosis, onChange }) {
-  const signals = diagnosis.signals || {};
+  const signals = diagnosisSignals(diagnosis.signals);
   const set = (group, key, value) => {
     const next = { ...(diagnosis[group] || {}) };
-    if (value === '') delete next[key]; else next[key] = value;
+    // A rating that has a default (DEFAULT_SIGNALS) is kept as '' when
+    // cleared, so the default doesn't come straight back.
+    if (value === '' && !(group === 'signals' && DEFAULT_SIGNALS[key])) delete next[key]; else next[key] = value;
     onChange({ ...diagnosis, [group]: next });
   };
   return (

@@ -10,7 +10,7 @@ import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_FIELDS, BUY_STATEMENTS, OURS_STATEMENTS, WIN_MATRIX,
   MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
   mriStageProgress,
-  mriFormExport, dateSerial, mriSlug, formatMoneyInput, formatNumberInput, profileDisplayValue,
+  mriFormExport, diagnosisSignals, DEFAULT_SIGNALS, dateSerial, mriSlug, formatMoneyInput, formatNumberInput, profileDisplayValue,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -106,7 +106,7 @@ const form = {
   closePlan: [{ what: 'Workshop', done: 'Yes' }, { what: 'Proposal' }, {}],
 };
 eq(tabProgress({ form, profile: m.values, committee: dms, sites: [] }), {
-  profile: Math.round((5 / MRI_PROFILE_FIELDS.length) * 100), diagnosis: 7, committee: 100, opportunity: Math.round((2 / OPPORTUNITY_FIELDS.length) * 100), sites: 0, dealHealth: 11, closePlan: 50,
+  profile: Math.round((5 / MRI_PROFILE_FIELDS.length) * 100), diagnosis: Math.round((15 / 28) * 100), committee: 100, opportunity: Math.round((2 / OPPORTUNITY_FIELDS.length) * 100), sites: 0, dealHealth: 11, closePlan: 50,
 }, 'progress per tab');
 eq(tabProgress({}).closePlan, 0, 'nothing saved');
 eq(mriStageProgress(tabProgress({})).text, '1 - 0%', 'stage progress: nothing saved is stage 1');
@@ -182,11 +182,21 @@ eq(
 );
 eq(mriFormExport({ opportunity: { programValue: formatMoneyInput('2500000') } }).cells, mriFormExport({ opportunity: { programValue: '2500000' } }).cells, 'a formatted money value exports as the same number');
 
+// Tab 2's default Absent ratings, and nothing else, on a company nobody has touched.
+eq(Object.keys(DEFAULT_SIGNALS).length, 13, 'thirteen vital signs default to Absent');
+eq(diagnosisSignals({}), DEFAULT_SIGNALS, 'an untouched company shows the defaults');
+eq(diagnosisSignals({ 'brain.2': 'Strong', 'heart.2': '', 'brain.0': 'Low' })['brain.2'], 'Strong', 'a picked rating replaces the default');
+eq('heart.2' in diagnosisSignals({ 'heart.2': '' }), false, 'a default cleared by hand stays cleared');
+eq(diagnosisSignals({ 'brain.0': 'Low' })['brain.0'], 'Low', 'a rating with no default is kept');
+const tab2 = mriFormExport({}).cells['xl/worksheets/sheet2.xml'];
+eq((tab2 || []).length, 13, 'an empty form writes only the thirteen defaults on tab 2');
+eq(tabProgress({ form: {} }).diagnosis, Math.round((13 / 28) * 100), 'diagnosis progress counts the defaults');
+
 // Nothing typed changes nothing beyond what the export always wrote.
 const bare = await JSZip.loadAsync(templateBytes);
 await fillAccountMriWorkbook(bare, { profile: {}, committee: [], sites: [], extra: mriFormExport({}) });
 const untouched = await JSZip.loadAsync(templateBytes);
-for (const n of [2, 4, 6, 7]) {
+for (const n of [4, 6, 7]) {
   const path = `xl/worksheets/sheet${n}.xml`;
   eq(await bare.file(path).async('string') === await untouched.file(path).async('string'), true, `an empty form leaves tab ${n} byte for byte`);
 }
