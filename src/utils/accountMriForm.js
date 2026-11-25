@@ -12,6 +12,7 @@
 // Imported with extensions so this loads under plain Node for the tests.
 import { MRI_PROFILE_FIELDS, NO_COMPETITOR, siteGeography } from './accountMri.js';
 import { normalizeTargets, isNoTargetRow, hasTargetValues, NO_TARGET_TYPE } from './companyTargets.js';
+import { scopeTokens, scopeTokenMatchesService } from './scopeMatch.js';
 
 export const MRI_LISTS = {
   tier: ['Not set', 'Tier I', 'Tier II', 'Tier III'],
@@ -647,6 +648,35 @@ export function setNoActiveClosePlan(form = {}, on) {
 
 const hasRows = rows => Array.isArray(rows) && rows.some(r => Object.entries(r || {}).some(([k, v]) => k !== 'id' && !isBlank(v)));
 
+// Tab 4's Enterprise efficiency section is about an Enterprise workshop
+// sale; on any other opportunity it doesn't apply.
+export const ENTERPRISE_SERVICE = 'Enterprise workshop';
+export const ENTERPRISE_FIELDS = OPPORTUNITY_SECTIONS.find(sec => sec.title === 'Enterprise efficiency').fields;
+
+/**
+ * The form with tab 4's Enterprise efficiency fields reading "-" (0 for the
+ * dollar one) when the company has a live opp and none of its live opps'
+ * Scope names Enterprise workshop. Only the blank fields: anything typed
+ * there stands. Derived, never saved; the tab carries enterpriseNa so it
+ * can say why. Nothing changes while the opps haven't loaded, with no live
+ * opp of its own (tab 4 is then No active opportunity, or about a portfolio
+ * company's opp), or once tab 4 is ticked No active opportunity.
+ */
+export function withEnterpriseDefault(form, liveOpps) {
+  const f = form || {};
+  const own = liveOpps?.own || [];
+  if (!own.length) return f;
+  const o = f.opportunity || {};
+  if (o.noActive) return f;
+  const enterprise = own.some(opp => scopeTokens(opp.scope).some(t => scopeTokenMatchesService(t, ENTERPRISE_SERVICE)));
+  if (enterprise) return f;
+  const next = { ...o, enterpriseNa: true };
+  for (const fl of ENTERPRISE_FIELDS) {
+    if (isBlank(o[fl.key])) next[fl.key] = fl.type === 'money' ? '0' : '-';
+  }
+  return { ...f, opportunity: next };
+}
+
 /**
  * The form with "No active opportunity" ticked on its own, on tabs 4
  * (Opportunity), 6 (Deal Health) and 7 (Close Plan), when the company and
@@ -658,7 +688,7 @@ const hasRows = rows => Array.isArray(rows) && rows.some(r => Object.entries(r |
  * carries noActiveAuto (closePlanNoActiveAuto on tab 7) and is never saved.
  */
 export function withNoActiveDefaults(form, liveOpps) {
-  const f = form || {};
+  const f = withEnterpriseDefault(form || {}, liveOpps);
   if (!liveOpps || liveOpps.own?.length || liveOpps.portfolio?.length) return f;
   let out = f;
   const o = f.opportunity || {};

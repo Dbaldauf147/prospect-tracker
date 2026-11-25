@@ -17,7 +17,7 @@ import {
   footprintFromServices, trackerFootprint, mergeFootprint,
   trackerSignalReasons, signalReason,
   withNoActiveDefaults, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY, revenueBillionsText,
-  setNoActiveDealHealth, setNoActiveClosePlan,
+  setNoActiveDealHealth, setNoActiveClosePlan, ENTERPRISE_FIELDS,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -399,7 +399,7 @@ for (const n of [4, 6, 7]) {
   const none = { own: [], portfolio: [] };
   const auto = withNoActiveDefaults({}, none).opportunity;
   eq([auto.noActive, auto.noActiveAuto, auto.name], [true, true, NO_ACTIVE_OPPORTUNITY], 'no live opp: ticked on its own');
-  eq(withNoActiveDefaults({}, { own: [{}], portfolio: [] }).opportunity, undefined, 'a live opp on the company: not ticked');
+  eq(withNoActiveDefaults({}, { own: [{}], portfolio: [] }).opportunity?.noActive, undefined, 'a live opp on the company: not ticked');
   eq(withNoActiveDefaults({}, { own: [], portfolio: [{}] }).opportunity, undefined, 'a live opp on a portfolio company: not ticked');
   eq(withNoActiveDefaults({}, null).opportunity, undefined, 'opps not loaded: not ticked');
   eq(withNoActiveDefaults({ opportunity: { noActive: false } }, none).opportunity, { noActive: false }, 'unticked by hand: stays unticked');
@@ -433,6 +433,20 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   eq([cp.closePlanNoActive, cp.closePlan[0].what], [true, NO_ACTIVE_OPPORTUNITY], 'close plan: ticking replaces the activities');
   eq(setNoActiveClosePlan({ ...cp }, false), { closePlan: [{ id: 'a', what: 'Send proposal' }], closePlanNoActive: false, closePlanBeforeNoActive: null }, 'close plan: unticking brings them back');
   eq(withNoActiveDefaults({ closePlanNoActive: false, closePlan: [] }, none).closePlanNoActive, false, 'close plan unticked by hand stays unticked');
+}
+
+// Tab 4's Enterprise efficiency: "-" unless a live opp is for Enterprise workshop.
+{
+  const live = scope => ({ own: [{ scope }], portfolio: [] });
+  const keys = ENTERPRISE_FIELDS.map(fl => fl.key);
+  const na = withNoActiveDefaults({}, live('EaaS, Audits')).opportunity;
+  eq(keys.map(k => na[k]), ['-', '0', '-', '-', '-', '-', '-', '-', '-'], 'not Enterprise workshop: the section reads - (0 for the dollar field)');
+  eq([na.enterpriseNa, na.name], [true, undefined], 'only the Enterprise efficiency section, flagged');
+  eq(withNoActiveDefaults({}, live('Bill payment; Enterprise workshop')).opportunity, undefined, 'an Enterprise workshop opp: left blank to fill in');
+  eq(withNoActiveDefaults({}, { own: [{ scope: 'EV' }, { scope: 'enterprise workshop' }], portfolio: [] }).opportunity, undefined, 'any live opp for it counts, any casing');
+  eq(withNoActiveDefaults({ opportunity: { geography: 'US' } }, live('EV')).opportunity.geography, 'US', 'something typed there stands');
+  eq(withNoActiveDefaults({}, { own: [], portfolio: [{ scope: 'EV' }] }).opportunity, undefined, 'only a portfolio company opp: left alone');
+  eq(withNoActiveDefaults({}, null).opportunity, undefined, 'opps not loaded: left alone');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

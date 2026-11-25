@@ -896,7 +896,12 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
         />
         {OPPORTUNITY_SECTIONS.map((s, i) => (
           <div key={s.title} style={i ? sectionBox : undefined}>
-            <div><span style={sectionTitle}>{s.title}</span>{s.hint && <span style={sectionHint}>{s.hint}</span>}</div>
+            <div>
+              <span style={sectionTitle}>{s.title}</span>{s.hint && <span style={sectionHint}>{s.hint}</span>}
+              {s.title === 'Enterprise efficiency' && values.enterpriseNa && !noActive && (
+                <span style={sectionHint}>set to - because no live opp on {row.company} has Enterprise workshop in its scope</span>
+              )}
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem 0.8rem', marginTop: '0.6rem' }}>
               {s.fields.map(f => (
                 <div key={f.key} style={{ gridColumn: f.tall ? '1 / -1' : 'auto' }}>
