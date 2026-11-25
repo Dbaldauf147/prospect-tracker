@@ -157,11 +157,13 @@ const BFO_NAME_BLANKS = new Set(['', '-', '#n/a', 'n/a']);
  *   self      the company as accountIsCompany reads it ({ company, companyAliases })
  *   holdings  its portfolio companies, each a name or a record (a record
  *             brings the names merged into it)
+ *   likelihoodById  opp _id -> likelihood to close (0..1), the Opps table's
+ *             Chance of moving on (moveOnChancesById); optional
  *
- * The company's own opps carry more: { id, bfoName, source, startDate }
- * beside the five above.
+ * The company's own opps carry more: { id, bfoName, source, startDate,
+ * likelihood } beside the five above.
  */
-export function accountLiveOpps(oppRows, self, holdings = []) {
+export function accountLiveOpps(oppRows, self, holdings = [], { likelihoodById = null } = {}) {
   const held = (holdings || []).map(h => (typeof h === 'string' ? { company: h } : h)).filter(h => text(h?.company));
   const own = [];
   const portfolio = [];
@@ -186,6 +188,7 @@ export function accountLiveOpps(oppRows, self, holdings = []) {
         bfoName: BFO_NAME_BLANKS.has(bfo.toLowerCase()) ? '' : bfo,
         source: text(o.Source),
         startDate: text(o['Start Date']),
+        likelihood: o._id != null && likelihoodById?.has?.(o._id) ? likelihoodById.get(o._id) : null,
         // The Quoting group's three picks on the Opp details popup.
         resultsTiming: text(o['When Does the Client Want Results?']),
         peopleCommitted: text(o['People the Client Will Commit']),

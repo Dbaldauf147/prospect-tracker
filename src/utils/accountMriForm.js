@@ -597,12 +597,28 @@ export const OPPORTUNITY_FIELDS = OPPORTUNITY_SECTIONS.flatMap(s => s.fields);
 // (the opp's own Close Date when BFO has none). The owner is the account's CDM.
 export const MRI_OPPORTUNITY_OWNER = 'Dan Baldauf';
 export const OPPORTUNITY_FROM_OPPS = new Set(['name', 'owner', 'planStarted', 'workingSince', 'targetClose', 'odds', 'revenue', 'cameFrom',
-  'desiredResult', 'successCriteria', 'barrier', 'time', 'timeValidated', 'people', 'peopleValidated', 'money', 'moneyValidated']);
+  'desiredResult', 'successCriteria', 'barrier', 'milestones', 'nature', 'valueDrivers', 'time', 'timeValidated', 'people', 'peopleValidated', 'money', 'moneyValidated']);
 
 // What tab 4 says for something not known yet.
 export const TBD = 'TBD';
 // Before the opp is Quoted these aren't known yet, so they read TBD.
 const TBD_BEFORE_QUOTED = ['desiredResult', 'successCriteria', 'barrier'];
+// Upcoming key milestones: the next step for the opp's stage, as an action.
+export const NEXT_STEP_BY_STAGE = {
+  Quoting: 'Quote the customer',
+  Quoted: 'Progress to contracting',
+  Contracting: 'Send the client the agreement',
+  'Agreement Sent': 'Close the deal',
+};
+// The value drivers until the opp reaches Quoting: still qualifying it.
+export const QUALIFYING_VALUE_DRIVERS = 'Qualifying the opportunity';
+// "The nature of the opportunity": the services in its Scope, as a list.
+function scopeSummary(scope) {
+  const names = [...new Set(scopeTokens(scope))];
+  if (!names.length) return '';
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `Services in scope: ${list}`;
+}
 // Each Resources answer, the opp's pick it comes from, and its "client
 // validated?" row: Yes once there is an answer, No while it is TBD.
 const RESOURCE_PICKS = [
@@ -679,11 +695,17 @@ function trackerOpportunityRead(liveOpps, bfoHistory) {
     planStarted: [started, 'Opps'],
     workingSince: [started, 'Opps'],
     targetClose: bfoClose ? [bfoClose, 'BFO'] : [isoDay(opp.closeDate), 'Opps'],
-    odds: [percentOf(bfo?.probability), 'BFO'],
+    // Odds: the Opps table's Chance of moving on, else BFO's % Probability.
+    odds: opp.likelihood != null && Number.isFinite(opp.likelihood)
+      ? [String(Math.round(opp.likelihood * 100)), 'Chance of moving on']
+      : [percentOf(bfo?.probability), 'BFO'],
     revenue: oppAmount ? [oppAmount, 'Opps'] : [dollars(bfo?.amount), 'BFO'],
     cameFrom: [opp.source, 'Opps'],
+    milestones: [NEXT_STEP_BY_STAGE[opp.stage] || '', 'Opps'],
+    nature: [scopeSummary(opp.scope), 'Opps'],
   };
   const rank = activeStageRank(opp.stage);
+  if (rank > 0 && rank < ACTIVE_STAGE_RANK.Quoting) read.valueDrivers = [QUALIFYING_VALUE_DRIVERS, 'Opps'];
   if (rank > 0 && rank < ACTIVE_STAGE_RANK.Quoted) for (const k of TBD_BEFORE_QUOTED) read[k] = [TBD, 'Opps'];
   for (const r of RESOURCE_PICKS) {
     const v = pickValue(opp[r.from]);

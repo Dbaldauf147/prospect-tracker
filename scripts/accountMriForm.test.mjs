@@ -20,6 +20,7 @@ import {
   setNoActiveDealHealth, setNoActiveClosePlan, ENTERPRISE_FIELDS,
   lateTabsWaiting, furthestLiveStage,
   trackerOpportunity, trackerOpportunitySources, withTrackerOpportunity, primaryOwnOpp,
+  QUALIFYING_VALUE_DRIVERS,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -468,14 +469,14 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   const bfo = [{ name: 'blue owl -  RA+ climate risk', closeDate: '12/15/2026', probability: '40%' }];
   eq(trackerOpportunity(live, bfo), {
     name: 'Blue Owl - RA+ Climate Risk', owner: 'Dan Baldauf', planStarted: '2026-11-04', workingSince: '2026-11-04',
-    targetClose: '2026-12-15', odds: '40', revenue: '13750', cameFrom: 'Inbound',
+    targetClose: '2026-12-15', odds: '40', revenue: '13750', cameFrom: 'Inbound', milestones: 'Progress to contracting',
     time: 'TBD', timeValidated: 'No', people: 'TBD', peopleValidated: 'No', money: 'TBD', moneyValidated: 'No',
   }, 'tab 4 from the opp: BFO close date and % Probability');
   const noBfo = trackerOpportunity({ own: [live.own[1]] }, []);
   eq([noBfo.targetClose, noBfo.odds], ['2027-03-31', undefined], 'no BFO row: the opp\'s own close date, odds left blank');
   eq(trackerOpportunity({ own: [], portfolio: [{}] }), {}, 'no own opp: nothing');
   eq(trackerOpportunitySources(live, bfo), {
-    name: 'Opps', owner: 'Opps', planStarted: 'Opps', workingSince: 'Opps', targetClose: 'BFO', odds: 'BFO', revenue: 'Opps', cameFrom: 'Opps',
+    name: 'Opps', owner: 'Opps', planStarted: 'Opps', workingSince: 'Opps', targetClose: 'BFO', odds: 'BFO', revenue: 'Opps', cameFrom: 'Opps', milestones: 'Opps',
     time: 'Opps', timeValidated: 'Opps', people: 'Opps', peopleValidated: 'Opps', money: 'Opps', moneyValidated: 'Opps',
   }, 'sources: odds and the BFO close date from BFO');
   eq(trackerOpportunitySources({ own: [live.own[1]] }, []).targetClose, 'Opps', 'no BFO row: close date from Opps');
@@ -520,6 +521,23 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   eq([typed.time, typed.timeValidated, typed.desiredResult], ['Q3 2027', 'Yes', 'Lower bills'], 'typed answers stand, and a typed Time counts as validated');
   const kept = withTrackerOpportunity({ opportunity: { timeValidated: 'No', time: 'Soon' } }, picked).opportunity;
   eq(kept.timeValidated, 'No', 'a validated row picked by hand stands');
+}
+
+// Tab 4: odds from Chance of moving on, the next step, the scope and the value drivers.
+{
+  const at = (stage, extra = {}) => trackerOpportunity({ own: [{ stage, ...extra }], portfolio: [] }, []);
+  eq(['Quoting', 'Quoted', 'Contracting', 'Agreement Sent'].map(st => at(st).milestones),
+    ['Quote the customer', 'Progress to contracting', 'Send the client the agreement', 'Close the deal'], 'milestones: the next step for the stage');
+  eq([at('Qualifying').milestones, at('Repricing').milestones], [undefined, undefined], 'milestones: no step for other stages');
+  eq(at('Quoted', { scope: 'Bill payment, EaaS; Audits' }).nature, 'Services in scope: Bill payment, EaaS and Audits', 'nature: the services in scope');
+  eq(at('Quoted', { scope: 'EaaS' }).nature, 'Services in scope: EaaS', 'nature: one service');
+  eq(at('Quoted').nature, undefined, 'nature: no scope, left to fill in');
+  eq([at('Lead').valueDrivers, at('Qualifying').valueDrivers], [QUALIFYING_VALUE_DRIVERS, QUALIFYING_VALUE_DRIVERS], 'value drivers: qualifying before Quoting');
+  eq([at('Quoting').valueDrivers, at('Quoted').valueDrivers], [undefined, undefined], 'value drivers: left to fill in from Quoting');
+  const bfo = [{ name: 'Deal', probability: '40%' }];
+  const live = likelihood => ({ own: [{ stage: 'Quoted', bfoName: 'Deal', likelihood }], portfolio: [] });
+  eq([trackerOpportunity(live(0.237), bfo).odds, trackerOpportunitySources(live(0.237), bfo).odds], ['24', 'Chance of moving on'], 'odds: Chance of moving on first');
+  eq([trackerOpportunity(live(null), bfo).odds, trackerOpportunitySources(live(null), bfo).odds], ['40', 'BFO'], 'odds: BFO when there is no likelihood');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

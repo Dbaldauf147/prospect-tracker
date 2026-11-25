@@ -364,5 +364,11 @@ eq(fillTableSheet(s3, MRI_COMMITTEE_TABLE, []).xml === s3, true, 'no decision ma
   eq([live.own[0].resultsTiming, live.own[0].peopleCommitted, live.own[0].budget], ['3-6 months', 'Named team committed', 'Being requested'], 'own live opp carries the Quoting picks');
 }
 
+{
+  const rows = [{ _id: 7, Account: 'Rehlko', Stage: 'Quoting', Scope: 'EaaS' }, { _id: 8, Account: 'Rehlko', Stage: 'Lead', Scope: 'EV' }];
+  const live = accountLiveOpps(rows, { company: 'Rehlko' }, [], { likelihoodById: new Map([[7, 0.42]]) });
+  eq(live.own.map(o => o.likelihood), [0.42, null], 'own live opps carry their likelihood to close');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
