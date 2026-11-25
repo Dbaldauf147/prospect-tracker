@@ -17,7 +17,7 @@
 // answers in this table and in the export.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, accountTryingAgainServices, accountLiveOpps, isPortfolioCompanyContact, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
+import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, accountTryingAgainServices, accountLiveOpps, isPortfolioCompanyContact, buyingCommitteeRows, siteUtilityRows, primaryPocNames, accountStanding } from '../../utils/accountMri';
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
@@ -28,6 +28,7 @@ import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
 import { mappedTargetNames } from '../../utils/targetAccountMatch';
 import { isPrimaryPoc } from '../../utils/attendeeRoles';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
+import { sentimentFor } from '../../utils/contactSentiment';
 import { companyRosterContacts } from '../../utils/companyRoster';
 import { recordOwnedCompanies, ownedCompanyFor } from '../../utils/ownedCompanyContacts';
 import { dealsForCompany } from '../../utils/clientContracts';
@@ -64,11 +65,13 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
   }, []);
 
   // Only the tagged contacts are ever read (decision makers for tab 3, the
-  // Primary Point of Contact for tab 1), so the roster rule runs over those
-  // rather than over every contact for every account.
+  // Primary Point of Contact for tab 1, and anyone marked Champion or
+  // Detractor for those counts), so the roster rule runs over those rather
+  // than over every contact for every account.
+  const contactSentiment = settings?.contactSentiment;
   const taggedContacts = useMemo(
-    () => (hubspotContacts || []).filter(c => isPrimaryPoc(c) || isDecisionMakerContact(c)),
-    [hubspotContacts],
+    () => (hubspotContacts || []).filter(c => isPrimaryPoc(c) || isDecisionMakerContact(c) || sentimentFor(contactSentiment, c?.id ?? c?.vid)),
+    [hubspotContacts, contactSentiment],
   );
   // Each company's entry date on the Target Accounts List, for "Assigned since".
   const entryDates = useMemo(() => targetEntryDates(targetAccountsData), [targetAccountsData]);
@@ -203,6 +206,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       contacts.filter(c => (isDecisionMakerContact(c) || isPrimaryPoc(c)) && !isPortfolioCompanyContact(c, record)),
       { sentiment: settings?.contactSentiment },
     );
+    const standing = accountStanding(contacts, settings?.contactSentiment, record);
     const form = (savedForms || {})[mriSlug(r.company)] || null;
     // Live opps on the company and its portfolio companies, for the
     // Opportunity tab; null until the opps have loaded, so nothing is
@@ -244,6 +248,9 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       sites,
       profile,
       stage,
+      primaryPocs: primaryPocNames(contacts, record),
+      champions: standing.champions,
+      detractors: standing.detractors,
     };
   }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, systemServices, settings, prospects, frameworkFlags, oppsRecords, prospectByName]);
 
@@ -291,6 +298,29 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
         );
       },
     },
+    {
+      key: 'primaryPoc', label: 'Primary Point of Contact', defaultWidth: 200,
+      headerTitle: "The company's contacts tagged Primary Point of Contact.",
+      getSortValue: r => (r.primaryPocs.length ? r.primaryPocs.join(', ').toLowerCase() : null),
+      getFilterValue: r => r.primaryPocs.join(', '),
+      exportValue: r => r.primaryPocs.join(', '),
+      render: r => (r.primaryPocs.length
+        ? <span title={r.primaryPocs.join('\n')} style={{ color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{r.primaryPocs.join(', ')}</span>
+        : blank),
+    },
+    ...[
+      { key: 'champions', label: 'Champions', ink: '#047857', what: 'Champion' },
+      { key: 'detractors', label: 'Detractors', ink: '#B91C1C', what: 'Detractor' },
+    ].map(s => ({
+      key: s.key, label: s.label, defaultWidth: 110,
+      headerTitle: `How many of the company's contacts are marked ${s.what} on the contact popup. Hover a number for their names.`,
+      getSortValue: r => r[s.key].length,
+      getFilterValue: r => String(r[s.key].length),
+      exportValue: r => r[s.key].length,
+      render: r => (r[s.key].length
+        ? <span title={r[s.key].join('\n')} style={{ color: s.ink, fontWeight: 600 }}>{r[s.key].length}</span>
+        : blank),
+    })),
     ...FIELD_COLUMNS.map(f => ({
       key: f.key,
       label: f.label,

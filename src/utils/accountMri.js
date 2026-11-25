@@ -187,6 +187,41 @@ export function mainContactText(contacts) {
 }
 
 /**
+ * The names of the account's contacts tagged Primary Point of Contact, A to
+ * Z, leaving out anyone at one of its portfolio companies (the same rule as
+ * Main point of contact).
+ */
+export function primaryPocNames(contacts, record) {
+  const out = new Set();
+  for (const c of contacts || []) {
+    if (!isPrimaryPoc(c) || isPortfolioCompanyContact(c, record)) continue;
+    const name = contactName(c) || text(c?.email);
+    if (name) out.add(name);
+  }
+  return [...out].sort((x, y) => x.localeCompare(y));
+}
+
+/**
+ * The account's champions and detractors: its contacts whose standing on
+ * the contact popup (settings.contactSentiment) is Champion or Detractor,
+ * each list A to Z by name. Portfolio company people are left out.
+ */
+export function accountStanding(contacts, sentiment, record) {
+  const champions = new Set();
+  const detractors = new Set();
+  for (const c of contacts || []) {
+    if (isPortfolioCompanyContact(c, record)) continue;
+    const standing = sentimentFor(sentiment, c?.id ?? c?.vid);
+    if (!standing) continue;
+    const name = contactName(c) || text(c?.email);
+    if (!name) continue;
+    (standing === CHAMPION ? champions : standing === DETRACTOR ? detractors : null)?.add(name);
+  }
+  const sorted = set => [...set].sort((x, y) => x.localeCompare(y));
+  return { champions: sorted(champions), detractors: sorted(detractors) };
+}
+
+/**
  * Every service's status on one company as its Services board shows it:
  * the manual status set on the card, else the stage of an opp on the
  * account naming the service (the board's "(auto)"), service -> status.
