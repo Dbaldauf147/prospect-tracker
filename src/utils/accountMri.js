@@ -244,13 +244,15 @@ const dateText = d => (d instanceof Date && !Number.isNaN(d.getTime())
   : '');
 
 // What the UBM row reads: "In scope" once Bill payment is Sold, else the
-// service's status as the Services board has it (Qualifying, Not Sold ...).
+// service's status as the Services board has it (Qualifying, Not Sold ...),
+// and "No" when the service has no status at all.
 export function ubmScope(servicesExplored) {
   const statuses = servicesExplored || {};
   const key = UBM_SERVICE in statuses
     ? UBM_SERVICE
     : Object.keys(statuses).find(k => text(k).toLowerCase() === UBM_SERVICE.toLowerCase());
   const status = text(key ? statuses[key] : '').replace(/^-$/, '');
+  if (!status) return 'No';
   return status.toLowerCase() === 'sold' ? 'In scope' : status;
 }
 
@@ -285,14 +287,15 @@ function moneySummary(active, key, suffix) {
  *                 term ("Jan 1, 2025 – Mar 31, 2027") and name; "No
  *                 contract" when the company has no active agreement
  *   fee / setup   Recurring Revenue / Setup summed, with a line for each
- *                 agreement when there are several
+ *                 agreement when there are several; "0" with No contract
  *
  * `known` says the Deals list is loaded at all: with nothing loaded every
  * company would read "No contract", so the term is left blank instead.
  */
 export function contractFields(deals, { known = true } = {}) {
   const active = (deals || []).filter(d => !isInactiveAgreement(d));
-  if (!active.length) return { contractTerm: known ? 'No contract' : '', fee: '', setup: '' };
+  // No contract means nothing is billed, so Fee and Set-up read 0.
+  if (!active.length) return known ? { contractTerm: 'No contract', fee: '0', setup: '0' } : { contractTerm: '', fee: '', setup: '' };
   let soonest = null;
   let soonestEnd = null;
   for (const d of active) {

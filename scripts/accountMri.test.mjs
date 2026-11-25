@@ -146,8 +146,8 @@ eq(accountMriProfile({ record: { company: 'X', servicesExplored: { IDM: 'Sold' }
 }
 eq(profile.assignedSince, '2025-03-14', 'assigned since is the Target Accounts entry date');
 eq(ubmScope({ 'Bill payment': 'Qualifying' }), 'Qualifying', 'ubm in flight keeps its status');
-eq(ubmScope({ 'Bill payment': '-' }), '', 'ubm unexplored');
-eq(ubmScope({}), '', 'ubm no services');
+eq(ubmScope({ 'Bill payment': '-' }), 'No', 'ubm unexplored');
+eq(ubmScope({}), 'No', 'ubm no services');
 eq(accountMriProfile({ record: { company: 'X' }, serviceStatuses: { 'Bill payment': 'Sold' } }).ubm, 'In scope', 'ubm reads the board statuses');
 
 const agreements = [
@@ -160,14 +160,14 @@ eq(cf.contractTerm, 'Expires Dec 31, 2026 (Bill pay SOW)', 'soonest active end, 
 eq(cf.fee, '$150,000 / yr (2 active contracts)\nMSA: $100,000\nBill pay SOW: $50,000', 'fee: active total and each contract');
 eq(cf.setup, '$25,000 one-time', 'setup: one contract, no breakdown');
 eq(contractFields([agreements[0]]).contractTerm, 'Jan 1, 2025 – Mar 31, 2027 (MSA)', 'term with its start');
-eq(contractFields([]), { contractTerm: 'No contract', fee: '', setup: '' }, 'no contracts');
+eq(contractFields([]), { contractTerm: 'No contract', fee: '0', setup: '0' }, 'no contracts: fee and setup 0');
 eq(
   (({ fee, setup, contractTerm }) => ({ fee, setup, contractTerm }))(accountMriProfile({ record: { company: 'X' }, deals: [], dealsKnown: true })),
-  { fee: '', setup: '', contractTerm: 'No contract' },
+  { fee: '0', setup: '0', contractTerm: 'No contract' },
   'no contract: Fee and Set-up blank',
 );
 eq(contractFields([agreements[2]]).contractTerm, 'No contract', 'only expired contracts');
-eq(contractFields([], { known: false }).contractTerm, '', 'deals not loaded: blank, not No contract');
+eq(contractFields([], { known: false }), { contractTerm: '', fee: '', setup: '' }, 'deals not loaded: blank, not No contract');
 eq(contractFields([{ 'Agreement Name': 'A' }]).contractTerm, 'Active, no end date on file', 'active, undated');
 eq(accountMriProfile({ record: { company: 'X' }, deals: [] }).contractTerm, 'No contract', 'profile: no contract');
 eq(accountMriProfile({ record: { company: 'X' }, deals: agreements }).fee.split('\n')[0], '$150,000 / yr (2 active contracts)', 'profile reads deals');
