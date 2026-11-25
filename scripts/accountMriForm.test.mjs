@@ -18,6 +18,7 @@ import {
   trackerSignalReasons, signalReason,
   withNoActiveDefaults, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY, revenueBillionsText,
   setNoActiveDealHealth, setNoActiveClosePlan, ENTERPRISE_FIELDS,
+  lateTabsWaiting, furthestLiveStage,
   trackerOpportunity, trackerOpportunitySources, withTrackerOpportunity, primaryOwnOpp,
 } from '../src/utils/accountMriForm.js';
 
@@ -482,6 +483,23 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   eq(withTrackerOpportunity({ opportunity: { name: 'Typed', revenue: '' } }, t).opportunity.name, 'Typed', 'typed wins');
   eq(withTrackerOpportunity({ opportunity: { revenue: '' } }, t).opportunity.revenue, '13750', 'blank is filled');
   eq(withTrackerOpportunity({ opportunity: { noActive: true, name: NO_ACTIVE_OPPORTUNITY } }, t).opportunity.name, NO_ACTIVE_OPPORTUNITY, 'no active ticked: left alone');
+}
+
+// Tabs 6 and 7 aren't due until an opp has been quoted.
+{
+  const at = (...stages) => ({ own: stages.map(stage => ({ stage })), portfolio: [] });
+  eq(lateTabsWaiting(null), false, 'late tabs: opps not loaded, not waiting');
+  eq(lateTabsWaiting({ own: [], portfolio: [] }), false, 'late tabs: no live opp, No active opportunity answers them');
+  eq(lateTabsWaiting(at('Qualifying')), true, 'late tabs: Qualifying waits');
+  eq(lateTabsWaiting(at('Lead', 'Quoting')), true, 'late tabs: Quoting waits');
+  eq(lateTabsWaiting(at('Qualifying', 'Quoted')), false, 'late tabs: one opp quoted, due');
+  eq(lateTabsWaiting(at('Agreement Sent')), false, 'late tabs: past Quoted, due');
+  eq(lateTabsWaiting({ own: [{ stage: 'Lead' }], portfolio: [{ stage: 'Contracting' }] }), false, 'late tabs: a portfolio opp quoted, due');
+  eq(furthestLiveStage(at('Lead', 'Quoting', 'Qualifying')), 'Quoting', 'furthest live stage');
+  const blank = tabProgress({ form: {} });
+  eq([blank.dealHealth, blank.closePlan], [0, 0], 'late tabs due: blanks count');
+  const waiting = tabProgress({ form: {}, lateTabsWaiting: true });
+  eq([waiting.dealHealth, waiting.closePlan], [100, 100], 'late tabs waiting: not required');
 }
 
 // Tab 4: TBD before Quoted, and Time / People / Money from the Quoting picks.

@@ -21,7 +21,7 @@ import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, accountTr
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals, withNoActiveDefaults, trackerOpportunity, trackerOpportunitySources, withTrackerOpportunity } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, lateTabsWaiting, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals, withNoActiveDefaults, trackerOpportunity, trackerOpportunitySources, withTrackerOpportunity } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -239,6 +239,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       profile,
       committee: committeeRows(form?.committee, trackerCommittee),
       sites,
+      lateTabsWaiting: lateTabsWaiting(liveOpps),
     }));
     return {
       id: r.id,

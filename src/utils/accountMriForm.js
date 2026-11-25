@@ -808,6 +808,31 @@ export function withEnterpriseDefault(form, liveOpps) {
   return { ...f, opportunity: next };
 }
 
+// The stage an opp has to reach before tabs 6 (Deal Health) and 7 (Close
+// Plan) are asked for: until there is a quote, there is no deal to rate or
+// close.
+export const LATE_TABS_FROM_STAGE = 'Quoted';
+
+/**
+ * Whether tabs 6 and 7 aren't due yet: the account has a live opp (its own
+ * or a portfolio company's, as accountLiveOpps gives them) and none has
+ * reached Quoted. Their blanks then stay "-" and aren't flagged or counted
+ * as missing. False while the opps haven't loaded, and with no live opp at
+ * all (withNoActiveDefaults answers those tabs then).
+ */
+export function lateTabsWaiting(liveOpps) {
+  const opps = [...(liveOpps?.own || []), ...(liveOpps?.portfolio || [])];
+  if (!opps.length) return false;
+  const due = activeStageRank(LATE_TABS_FROM_STAGE);
+  return !opps.some(o => activeStageRank(o.stage) >= due);
+}
+
+/** The furthest stage among the account's live opps, '' with none. */
+export function furthestLiveStage(liveOpps) {
+  const opps = [...(liveOpps?.own || []), ...(liveOpps?.portfolio || [])];
+  return opps.reduce((best, o) => (activeStageRank(o.stage) > activeStageRank(best) ? o.stage : best), '');
+}
+
 /**
  * The form with "No active opportunity" ticked on its own, on tabs 4
  * (Opportunity), 6 (Deal Health) and 7 (Close Plan), when the company and
@@ -1018,8 +1043,10 @@ const share = (done, of) => (of > 0 ? Math.round((done / of) * 100) : 0);
  *   profile    tab 1 as shown (mergeProfile(...).values)
  *   committee  tab 3 as shown
  *   sites      tab 5 rows
+ *   lateTabsWaiting  lateTabsWaiting(liveOpps): tabs 6 and 7 aren't due
+ *              yet, so they count as done whatever is on them
  */
-export function tabProgress({ form = {}, profile = {}, committee = [], sites = [] } = {}) {
+export function tabProgress({ form = {}, profile = {}, committee = [], sites = [], lateTabsWaiting: waiting = false } = {}) {
   const signals = diagnosisSignals(form.diagnosis?.signals);
   const ratedSigns = BODY_SYSTEMS.reduce((n, s) => n + systemScore(s, signals).rated, 0);
   const deal = dealHealthScore(form.dealHealth);
@@ -1030,9 +1057,9 @@ export function tabProgress({ form = {}, profile = {}, committee = [], sites = [
     committee: committee.some(r => rowHasText(r, MRI_TABLES.committee.columns)) ? 100 : 0,
     opportunity: share(OPPORTUNITY_FIELDS.filter(f => !isBlank(form.opportunity?.[f.key])).length, OPPORTUNITY_FIELDS.length),
     sites: sites.length ? 100 : 0,
-    dealHealth: share(deal.buy.rated + deal.ours.rated, BUY_STATEMENTS.length + OURS_STATEMENTS.length),
+    dealHealth: waiting ? 100 : share(deal.buy.rated + deal.ours.rated, BUY_STATEMENTS.length + OURS_STATEMENTS.length),
     // No active opportunity answers the tab: there is nothing to close.
-    closePlan: form.closePlanNoActive ? 100 : share(steps.filter(r => r.done === 'Yes').length, steps.length),
+    closePlan: waiting || form.closePlanNoActive ? 100 : share(steps.filter(r => r.done === 'Yes').length, steps.length),
   };
 }
 
