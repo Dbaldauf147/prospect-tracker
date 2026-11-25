@@ -4,6 +4,7 @@ import { DataTable } from '../common/DataTable';
 import { sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
 import { tagReviewScore } from '../../utils/contactTagReview';
+import { isPrimaryPoc } from '../../utils/attendeeRoles';
 import { useRelationshipData } from '../../hooks/useRelationshipStrength';
 import { scoreAccount, RELATIONSHIP_CONFIG, daysLabel } from '../../utils/relationshipStrength';
 import { RelationshipBadge, ScorePill, TrendArrow } from '../Relationship/RelationshipBadge';
@@ -225,10 +226,19 @@ function RosterTable({
         const name = fullNameOf(c);
         const standing = sentimentMark(sentimentFor(settings?.contactSentiment, c.id || c.vid));
         const isDM = contactHasTag(c, 'decision maker');
+        const isPoc = isPrimaryPoc(c);
         const isCompetitor = !!competitorContactIds?.has(String(c.id || c.vid || ''));
         const sameName = duplicateNames.get(contactNameKey(c)) || 0;
         return (
           <span style={{ display: 'inline-block', fontWeight: 600, color: '#1E293B' }}>
+            {isPoc && (
+              <span
+                data-poc-star
+                title={`${name || 'This contact'} is the Main Point of Contact (tagged Primary Point of Contact)`}
+                aria-label="Main Point of Contact"
+                style={{ marginRight: '0.3rem', color: '#D97706', fontSize: '0.85rem' }}
+              >★</span>
+            )}
             {name || '-'}
             {sameName > 1 && (
               <span
