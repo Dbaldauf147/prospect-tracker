@@ -387,6 +387,8 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
           onUpdateRecord={openRow.record?.id && onUpdate ? patch => onUpdate(openRow.record.id, patch) : null}
           settings={settings}
           updateSettings={updateSettings}
+          hubspotContacts={hubspotContacts}
+          prospects={prospects}
         />
       )}
     </>
