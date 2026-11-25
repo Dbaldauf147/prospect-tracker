@@ -11,7 +11,7 @@ import {
   MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
   mriStageProgress,
   mriFormExport, diagnosisSignals, diagnosisNotes, DEFAULT_SIGNALS, dateSerial, mriSlug, formatMoneyInput, formatNumberInput, profileDisplayValue,
-  climateCommitmentLevel, disclosureLevel, trackerSignals, mergeSignals, withTrackerSignals, climateTargetSummary, trackerNotes,
+  climateCommitmentLevel, disclosureLevel, trackerSignals, mergeSignals, withTrackerSignals, climateTargetSummary, trackerNotes, disclosureFrameworkList,
   profileRecordPatch,
   footprintLevel, spreadLevel,
   footprintFromServices, trackerFootprint, mergeFootprint,
@@ -301,6 +301,13 @@ eq(mergeSignals({ 'brain.0': 'Moderate' }, { 'brain.0': 'Low' })['brain.1'], 'Lo
 eq(mergeSignals({ 'brain.0': 'Strong' }, { 'brain.1': 'Absent' })['brain.1'], 'Absent', 'a rating picked for it wins');
 eq('brain.1' in mergeSignals({ 'brain.0': 'Strong' }, { 'brain.1': '' }), false, 'cleared by hand stays cleared');
 eq('brain.1' in diagnosisSignals({}), false, 'nothing to match, nothing shown');
+
+// Immune's Intel notes: the disclosure frameworks the company reports to.
+eq(disclosureFrameworkList(['UN PRI', 'SBT', 'gresb']), 'GRESB, UN PRI', 'only GRESB, CDP, UN PRI and NZAM, in that order');
+eq(disclosureFrameworkList(['SBT']), '', 'none of the four');
+eq(trackerNotes({ frameworks: ['CDP'] }, { frameworks: new Set(['NZAM']) }).immune, 'CDP, NZAM', 'the record\'s own and the Lists-page frameworks');
+eq('immune' in trackerNotes({}), false, 'no frameworks, Immune keeps -');
+eq(diagnosisNotes(trackerNotes({}, { frameworks: ['GRESB'] })).immune, 'GRESB', 'Immune note from Frameworks');
 
 // Brain's Intel notes: the kind of targets the company has.
 eq(climateTargetSummary([
