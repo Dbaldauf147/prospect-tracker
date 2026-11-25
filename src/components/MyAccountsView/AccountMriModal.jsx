@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals, SIGNAL_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals, SIGNAL_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -194,7 +194,7 @@ function DiagnosisTab({ diagnosis, tracker = {}, trackerNoteFor = {}, onChange }
     // as '' when cleared, so that rating doesn't come straight back.
     // Intel notes have a default too (DEFAULT_INTEL_NOTE), so an emptied box
     // is kept as '' as well.
-    const keepBlank = (group === 'signals' && (DEFAULT_SIGNALS[key] || tracker[key])) || group === 'notes';
+    const keepBlank = (group === 'signals' && (DEFAULT_SIGNALS[key] || tracker[key] || SIGNAL_FOLLOWS[key])) || group === 'notes';
     if (value === '' && !keepBlank) delete next[key]; else next[key] = value;
     onChange({ ...diagnosis, [group]: next });
   };
@@ -223,6 +223,9 @@ function DiagnosisTab({ diagnosis, tracker = {}, trackerNoteFor = {}, onChange }
                       {sign.label}
                       {tracker[sign.key] && diagnosis.signals?.[sign.key] === undefined && (
                         <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 500, color: SAGE }} title={`Rated from the company's ${SIGNAL_SOURCE[sign.key] || 'record'} until you pick a rating here`}>from {SIGNAL_SOURCE[sign.key] || 'tracker'}</span>
+                      )}
+                      {SIGNAL_FOLLOWS[sign.key] && signals[sign.key] && diagnosis.signals?.[sign.key] === undefined && (
+                        <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 500, color: SAGE }} title={`Rated the same as "${system.signs.find(x => x.key === SIGNAL_FOLLOWS[sign.key])?.label}" until you pick a rating here`}>matches above</span>
                       )}
                     </span>
                     <Segmented options={MRI_LISTS.level} value={signals[sign.key] || ''} fill={LEVEL_FILL} onChange={v => set('signals', sign.key, v)} />
