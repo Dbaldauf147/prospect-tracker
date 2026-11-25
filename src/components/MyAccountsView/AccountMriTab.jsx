@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, isPortfolioCompanyContact, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
-import { companiesMatch } from '../../utils/listFlags';
+import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress } from '../../utils/accountMriForm';
@@ -110,17 +110,18 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       links: settings?.companyContactLinks,
       exclusions: settings?.companyContactExclusions,
     }).filter(c => !ownedCompanyFor(c, owned, { self: record.company, ownNames, links: settings?.companyContactLinks || {} }));
-    // The account's opps, matched on the tracker record's name as the
-    // company card matches them, and on the name this row shows, in case
-    // the two are spelled differently.
-    const oppNames = [...new Set([record.company, r.company].map(n => String(n || '').trim()).filter(Boolean))];
+    // The account's own opps: Account is the record's name, a name merged
+    // into it, or the name this row shows, as the company card's Services
+    // board reads them. A related account sharing a word of the name
+    // ("Brookfield (Core Retail)") is its own company and doesn't count.
+    const self = { company: record.company, companyAliases: [...(record.companyAliases || []), r.company] };
     const companyOpps = [];
     for (const [account, list] of oppsByAccount) {
-      if (oppNames.some(n => companiesMatch(account, n))) companyOpps.push(...list);
+      if (accountIsCompany(account, self)) companyOpps.push(...list);
     }
     // Already matched above, so each is handed over under the one name the
     // status reader matches on again.
-    const oppAccount = oppNames[0] || '';
+    const oppAccount = String(record.company || r.company || '').trim();
     const serviceStatuses = accountServiceStatuses({
       company: oppAccount,
       servicesExplored: record.servicesExplored,

@@ -85,7 +85,7 @@ import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { peFirmPortfolio, peOwnerMatchesFirm } from '../../utils/peFirmOpps';
 import { EQUIPMENT_ESTIMATE_TYPES, portfolioEquipmentEstimate, propertyTypeEquipment } from '../../data/propertyTypeEstimates';
 import { companyDedupeKey } from '../../utils/companyKey';
-import { ALIASES_FIELD, mergedCompanyAliases } from '../../utils/companyAliases';
+import { ALIASES_FIELD, mergedCompanyAliases, accountIsCompany } from '../../utils/companyAliases';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { PROSPECT_ANYWAY_FIELD, NOT_SOLD_STATUS, isProspectAnyway, withProspectAnyway } from '../../utils/serviceProspectAnyway';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
@@ -7873,13 +7873,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }
 
   // Load opps scope+stage pairs matching this company
+  // The services board reads only the opps filed under this company itself
+  // (its name or a name merged into it), not the fuzzy match the Opps list
+  // uses: "Brookfield (Core Retail)" is its own account, and its opps were
+  // setting Brookfield Asset Management's statuses.
+  const serviceOppsCompany = useMemo(
+    () => ({ company: fields.company, [ALIASES_FIELD]: fields[ALIASES_FIELD] }),
+    [fields.company, fields[ALIASES_FIELD]], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const oppsRecords = useMemo(() => {
     if (isNew || !fields.company || !oppsCache) return [];
     return oppsCache
-      .filter(r => companiesMatch(r.Account, fields.company))
+      .filter(r => accountIsCompany(r.Account, serviceOppsCompany))
       .filter(r => (r.Scope || '').trim())
       .map(r => ({ scope: (r.Scope || '').trim(), stage: (r.Stage || '').trim() }));
-  }, [fields.company, isNew, oppsCache]);
+  }, [fields.company, isNew, oppsCache, serviceOppsCompany]);
 
   // The opps themselves, for the list above the Notes section. Same Account
   // match the scope grid above uses, so the two can't disagree about which
@@ -13209,7 +13217,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         oppStage={scopeMatchedServices.get(item) || ''}
                         autoNaText={autoNaBy ? autoNaTitle(getDisplayName(item), autoNaBy) : ''}
                         categoryNaText={categoryNa ? `N/A automatically: ${categoryNa.why}, and ${getDisplayName(item)} is tagged ${categoryNa.bucket}.` : ''}
-                        opps={oppsForService(companyOpps, item)}
+                        opps={oppsForService(companyOpps.filter(o => accountIsCompany(o.account, serviceOppsCompany)), item)}
                         oppsLoaded={!!oppsCache}
                         note={(fields.serviceNotes || {})[item] || ''}
                         statuses={serviceStatuses}
