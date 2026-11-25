@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs';
 import {
   MRI_PROFILE_FIELDS, MRI_PROFILE_SHEET_PATH, accountMriProfile, fillProfileSheet,
   fillTableSheet, fillAccountMriWorkbook, buyingCommitteeRows, siteUtilityRows, MRI_COMMITTEE_TABLE, MRI_SITES_TABLE,
-  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, isPortfolioCompanyContact, mainContactText, mriFileName,
+  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, isPortfolioCompanyContact, mainContactText, mriFileName, revenueAsText,
 } from '../src/utils/accountMri.js';
 
 let passed = 0, failed = 0;
@@ -161,10 +161,10 @@ eq(cf.contractTerm, 'Expires Dec 31, 2026 (Bill pay SOW)', 'soonest active end, 
 eq(cf.fee, '$150,000 / yr (2 active contracts)\nMSA: $100,000\nBill pay SOW: $50,000', 'fee: active total and each contract');
 eq(cf.setup, '$25,000 one-time', 'setup: one contract, no breakdown');
 eq(contractFields([agreements[0]]).contractTerm, 'Jan 1, 2025 – Mar 31, 2027 (MSA)', 'term with its start');
-eq(contractFields([]), { contractTerm: 'No contract', fee: '0', setup: '0' }, 'no contracts: fee and setup 0');
+eq(contractFields([]), { contractTerm: 'No contract', fee: '$0', setup: '$0' }, 'no contracts: fee and setup 0');
 eq(
   (({ fee, setup, contractTerm }) => ({ fee, setup, contractTerm }))(accountMriProfile({ record: { company: 'X' }, deals: [], dealsKnown: true })),
-  { fee: '0', setup: '0', contractTerm: 'No contract' },
+  { fee: '$0', setup: '$0', contractTerm: 'No contract' },
   'no contract: Fee and Set-up blank',
 );
 eq(contractFields([agreements[2]]).contractTerm, 'No contract', 'only expired contracts');
@@ -205,6 +205,22 @@ eq(cell('C30'), 'No', 'C30 early out left as the template has it');
 eq(cell('A5'), 'Account name', 'labels untouched');
 eq(cell('B5'), 'Company', 'column B untouched');
 eq(ws.getCell('C5').style.fill?.fgColor?.argb, ws.getCell('C21').style.fill?.fgColor?.argb, 'filled cell keeps the entry style');
+
+// What the popup keeps for a dollar row or count ("$1.63", "2,000") is written as the number.
+{
+  const typed = fillProfileSheet(before, { revenueB: '$1.63', sites: '2,000', energySpend: '$200,000,000' }).xml;
+  const z = await JSZip.loadAsync(buf);
+  z.file(MRI_PROFILE_SHEET_PATH, typed);
+  const w = new ExcelJS.Workbook();
+  await w.xlsx.load(await z.generateAsync({ type: 'nodebuffer' }));
+  const s = w.worksheets[0];
+  eq([s.getCell('C15').value, s.getCell('C16').value, s.getCell('C17').value], [1.63, 2000, 200000000], 'formatted numbers export as numbers');
+}
+eq(
+  ['1630000000', '$1,630,000,000', '1.6B', '$1.6 billion', '', '1234.5'].map(revenueAsText),
+  ['$1,630,000,000', '$1,630,000,000', '1.6B', '$1.6 billion', '', '$1,234.5'],
+  'annual revenue text: bare numbers as dollars',
+);
 
 // A blank profile leaves the sheet exactly as it was.
 eq(fillProfileSheet(before, {}).xml === before, true, 'nothing to write, nothing changed');

@@ -10,7 +10,7 @@ import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_FIELDS, BUY_STATEMENTS, OURS_STATEMENTS, WIN_MATRIX,
   MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
   mriStageProgress,
-  mriFormExport, dateSerial, mriSlug, formatMoneyInput,
+  mriFormExport, dateSerial, mriSlug, formatMoneyInput, formatNumberInput, profileDisplayValue,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -173,6 +173,12 @@ eq(
   ['1350000', '$1,350,000', '1234.5', '1234.567', '.5', '0', '007', '-2500', 'abc', '', null, '12a3'].map(formatMoneyInput),
   ['$1,350,000', '$1,350,000', '$1,234.5', '$1,234.56', '$0.5', '$0', '$7', '-$2,500', '', '', '', '$123'],
   'money input formatting',
+);
+eq(['2000', '1234567.5', '', 'x'].map(v => formatNumberInput(v)), ['2,000', '1,234,567.5', '', ''], 'count input formatting');
+eq(
+  [profileDisplayValue('revenueB', 1.63), profileDisplayValue('energySpend', '200000000'), profileDisplayValue('sites', 2000), profileDisplayValue('hq', 'North America'), profileDisplayValue('sites', '')],
+  ['$1.63', '$200,000,000', '2,000', 'North America', ''],
+  'tab 1 display values',
 );
 eq(mriFormExport({ opportunity: { programValue: formatMoneyInput('2500000') } }).cells, mriFormExport({ opportunity: { programValue: '2500000' } }).cells, 'a formatted money value exports as the same number');
 
