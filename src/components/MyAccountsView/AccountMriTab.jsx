@@ -21,7 +21,7 @@ import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, isPortfol
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerNotes, withTrackerSignals } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, withTrackerSignals } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -179,7 +179,8 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     const profile = mergeProfile(trackerProfile, form?.profile).values;
     const siteList = (siteLists || {})[siteListSlug(record.company)];
     const sites = siteUtilityRows(siteList);
-    const signals = trackerSignals(record, { siteList, frameworks: frameworkFlags.get(String(r.company || '').toLowerCase().trim()) });
+    const signalInputs = { siteList, frameworks: frameworkFlags.get(String(r.company || '').toLowerCase().trim()) };
+    const signals = trackerSignals(record, signalInputs);
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
     const stage = mriStageProgress(tabProgress({
@@ -197,6 +198,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       trackerProfile,
       trackerCommittee,
       trackerSignals: signals,
+      trackerReasons: trackerSignalReasons(record, signalInputs),
       trackerNotes: notes,
       committee: committeeRows(form?.committee, trackerCommittee).filter(c => c.name || c.email),
       sites,
@@ -358,7 +360,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       {openRow && (
         <AccountMriModal
           key={openRow.id}
-          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerNotes: openRow.trackerNotes }}
+          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerReasons: openRow.trackerReasons, trackerNotes: openRow.trackerNotes }}
           form={openRow.form}
           onSave={next => saveForm(openRow.company, next)}
           onClose={() => setOpenId(null)}
