@@ -319,6 +319,19 @@ eq(climateTargetSummary([
 eq(climateTargetSummary([{ action: '', type: 'No target set' }]), 'No target set', 'checked and no target');
 eq(climateTargetSummary([]), '', 'targets not looked at');
 eq(trackerNotes({ climateTargets: [] }), {}, 'no Brain note when targets were not looked at');
+{
+  const L = rows => ({ headers: ['Site Name', 'State', 'Country'], rows });
+  const twoCountries = L([{ 'Site Name': 'A', State: 'NY', Country: 'USA' }, { 'Site Name': 'B', State: 'Ontario', Country: 'Canada' }]);
+  const threeStates = L([{ 'Site Name': 'A', State: 'NY', Country: 'US' }, { 'Site Name': 'B', State: 'TX', Country: 'US' }, { 'Site Name': 'C', State: 'Texas', Country: 'US' }, { 'Site Name': 'D', State: 'CA', Country: 'US' }]);
+  eq([
+    trackerNotes({ numberOfSites: '2000' }, { siteList: twoCountries }).skeleton,
+    trackerNotes({}, { siteList: threeStates }).skeleton,
+    trackerNotes({ numberOfSites: '1' }, { siteList: L([{ 'Site Name': 'A', State: 'NY' }]) }).skeleton,
+    trackerNotes({ numberOfSites: '641.8' }).skeleton,
+    trackerNotes({}, { siteList: L([{ 'Site Name': 'A', Country: 'UK' }, { 'Site Name': 'B', Country: 'UK' }]) }).skeleton,
+    'skeleton' in trackerNotes({}),
+  ], ['2,000 sites across 2 countries', '4 sites across 3 states', '1 site across 1 state', '642 sites', '2 sites across 1 country', false], 'Skeleton note: sites and where');
+}
 eq(diagnosisNotes({ ...trackerNotes({ climateTargets: [{ action: '', type: 'No target set' }] }) }).brain, 'No target set', 'Brain note from Targets');
 eq(diagnosisNotes({ ...trackerNotes({ climateTargets: [{ action: '', type: 'No target set' }] }) }).heart, '-', 'the other systems keep -');
 eq(withTrackerSignals({ diagnosis: { notes: { brain: 'typed' } } }, {}, { brain: 'from targets' }).diagnosis.notes.brain, 'typed', 'a typed Brain note wins over Targets');
