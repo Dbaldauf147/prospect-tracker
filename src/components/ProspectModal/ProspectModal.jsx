@@ -149,6 +149,7 @@ import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm, matchesCdm } from '../../utils/cdmMatch';
 import { coverageFromSettings, salespeopleForVertical, isCoverageVertical } from '../../utils/salesCoverage';
+import { mriSlug, formatMoneyInput } from '../../utils/accountMriForm';
 import { buildTargetTierResolver, tierMismatch, targetVerticalFor, targetVerticalAgrees, withTargetVerticalEquivalent } from '../../utils/targetTier';
 import { normalizeTierText } from '../../utils/tierText';
 import { targetAccountRows, suggestTargetMatches, mappedTargetNames, othersMappedToTarget, targetRowFlags } from '../../utils/targetAccountMatch';
@@ -11884,6 +11885,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>Revenue</label>
               <CommitOnBlurInput className={styles.input} value={fields.revenue ?? ''} onCommit={v => set('revenue', v)} placeholder="e.g. $1.5B" />
             </div>
+
+            {mriSlug(prospect?.company) && (
+              <div>
+                {/* The same value as the Account MRI's "Energy spend ($M/yr)"
+                    row: read from and written to that company's saved MRI
+                    form (settings.accountMri[slug].profile.energySpend), so
+                    typing it in either place shows in both. */}
+                <label
+                  className={styles.label}
+                  title="Annual energy spend in millions of dollars. The same value as the Energy spend row on this company's Account MRI: typing it here or there shows in both."
+                >Energy Spend ($M/yr)</label>
+                <CommitOnBlurInput
+                  className={styles.input}
+                  value={settings?.accountMri?.[mriSlug(prospect?.company)]?.profile?.energySpend ?? ''}
+                  onCommit={v => {
+                    const formatted = formatMoneyInput(v);
+                    updateSettingsPath({ [`accountMri.${mriSlug(prospect?.company)}.profile.energySpend`]: formatted || null });
+                  }}
+                  placeholder="e.g. $2.5"
+                />
+              </div>
+            )}
 
             <div>
               <label className={styles.label}>Rank</label>
