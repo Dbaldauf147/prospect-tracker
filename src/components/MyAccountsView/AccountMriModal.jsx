@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -183,13 +183,17 @@ function Segmented({ options, value, onChange, fill }) {
   );
 }
 
-function DiagnosisTab({ diagnosis, tracker = {}, onChange }) {
+function DiagnosisTab({ diagnosis, tracker = {}, trackerNoteFor = {}, onChange }) {
   const signals = mergeSignals(tracker, diagnosis.signals);
+  const notes = diagnosisNotes({ ...trackerNoteFor, ...(diagnosis.notes || {}) });
   const set = (group, key, value) => {
     const next = { ...(diagnosis[group] || {}) };
     // A rating with a default (DEFAULT_SIGNALS) or a tracker rating is kept
     // as '' when cleared, so that rating doesn't come straight back.
-    if (value === '' && !(group === 'signals' && (DEFAULT_SIGNALS[key] || tracker[key]))) delete next[key]; else next[key] = value;
+    // Intel notes have a default too (DEFAULT_INTEL_NOTE), so an emptied box
+    // is kept as '' as well.
+    const keepBlank = (group === 'signals' && (DEFAULT_SIGNALS[key] || tracker[key])) || group === 'notes';
+    if (value === '' && !keepBlank) delete next[key]; else next[key] = value;
     onChange({ ...diagnosis, [group]: next });
   };
   return (
@@ -233,7 +237,8 @@ function DiagnosisTab({ diagnosis, tracker = {}, onChange }) {
               <div style={{ marginTop: '0.7rem' }}>
                 <Field
                   field={{ label: 'Intel notes', type: 'textarea' }}
-                  value={diagnosis.notes?.[system.key] || ''}
+                  hint={trackerNoteFor[system.key] && diagnosis.notes?.[system.key] === undefined ? 'from Targets' : ''}
+                  value={notes[system.key]}
                   onChange={v => set('notes', system.key, v)}
                 />
               </div>
@@ -509,7 +514,8 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   );
   // The form with the tracker's Diagnosis ratings filled in where none was picked.
   const signalsFromTracker = row.trackerSignals;
-  const effectiveForm = useMemo(() => withTrackerSignals(form, signalsFromTracker), [form, signalsFromTracker]);
+  const notesFromTracker = row.trackerNotes;
+  const effectiveForm = useMemo(() => withTrackerSignals(form, signalsFromTracker, notesFromTracker), [form, signalsFromTracker, notesFromTracker]);
   const progress = useMemo(
     () => tabProgress({ form: effectiveForm, profile: merged.values, committee, sites: row.sites }),
     [effectiveForm, merged, committee, row.sites],
@@ -582,7 +588,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
       />
     );
   } else if (tab === 'diagnosis') {
-    body = <DiagnosisTab diagnosis={form.diagnosis || {}} tracker={row.trackerSignals || {}} onChange={next => setKey('diagnosis', next)} />;
+    body = <DiagnosisTab diagnosis={form.diagnosis || {}} tracker={row.trackerSignals || {}} trackerNoteFor={row.trackerNotes || {}} onChange={next => setKey('diagnosis', next)} />;
   } else if (tab === 'committee') {
     body = (
       <div>

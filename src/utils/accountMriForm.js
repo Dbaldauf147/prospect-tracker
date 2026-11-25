@@ -11,7 +11,7 @@
 //
 // Imported with extensions so this loads under plain Node for the tests.
 import { MRI_PROFILE_FIELDS } from './accountMri.js';
-import { normalizeTargets, isNoTargetRow, hasTargetValues } from './companyTargets.js';
+import { normalizeTargets, isNoTargetRow, hasTargetValues, NO_TARGET_TYPE } from './companyTargets.js';
 
 export const MRI_LISTS = {
   tier: ['Not set', 'Tier I', 'Tier II', 'Tier III'],
@@ -127,13 +127,27 @@ export const RAW_INTEL_CELL = 'A46';
 // clearing a defaulted one is saved as '' so the default doesn't come back.
 export const DEFAULT_SIGNALS = Object.fromEntries([
   'brain.2', 'brain.3',
-  'heart.2',
+  'heart.0', 'heart.2',
   'lungs.2',
   'nervous.0', 'nervous.2', 'nervous.3',
   'skeleton.1', 'skeleton.2',
   'immune.2', 'immune.3',
-  'blood.0', 'blood.1',
+  'blood.0', 'blood.1', 'blood.3',
 ].map(key => [key, 'Absent']));
+
+// What each body system's Intel notes box holds until something is typed
+// there. Emptying the box is saved as '' so the default doesn't come back.
+export const DEFAULT_INTEL_NOTE = '-';
+
+/** Each system's Intel notes as shown: what was typed, else DEFAULT_INTEL_NOTE. */
+export function diagnosisNotes(saved = {}) {
+  const out = {};
+  for (const system of BODY_SYSTEMS) {
+    const own = saved?.[system.key];
+    out[system.key] = own !== undefined ? String(own ?? '') : DEFAULT_INTEL_NOTE;
+  }
+  return out;
+}
 
 /**
  * The ratings a company's Diagnosis tab shows: DEFAULT_SIGNALS with what
@@ -183,6 +197,37 @@ export function trackerSignals(record) {
   return { [CLIMATE_COMMITMENT_SIGN]: climateCommitmentLevel(record?.climateTargets) };
 }
 
+// What kind of targets a company has, from its Targets tab, as one line
+// for Brain's Intel notes: "50% Absolute reduction (Scope 1, 2) by 2030,
+// 1.5°C; Net-zero commitment by 2050". Hidden rows are old targets and are
+// left out. "No target set" when the company was checked and has none, ''
+// when its targets have not been looked at.
+export function climateTargetSummary(climateTargets) {
+  const all = normalizeTargets(climateTargets).filter(r => !r.hidden);
+  const rows = all.filter(r => !isNoTargetRow(r) && hasTargetValues([r]));
+  if (!rows.length) return all.some(isNoTargetRow) ? NO_TARGET_TYPE : '';
+  return rows.map((r) => {
+    const name = r.action === 'Commitment'
+      ? (r.commitmentType ? `${r.commitmentType} commitment` : 'Commitment')
+      : ([r.value, r.type].filter(Boolean).join(' ') || 'Target');
+    const scopes = ['scope1', 'scope2', 'scope3'].filter(k => r[k]).map(k => k.slice(-1));
+    const year = r.targetYear1 || r.targetYear2;
+    return [
+      name,
+      scopes.length ? ` (Scope ${scopes.join(', ')})` : '',
+      year ? ` by ${year}` : '',
+      r.classification ? `, ${r.classification}` : '',
+    ].join('');
+  }).join('; ');
+}
+
+// The tracker's own Intel notes for a company record: Brain's is the kind
+// of targets it has. Only notes the tracker has something for are given.
+export function trackerNotes(record) {
+  const brain = climateTargetSummary(record?.climateTargets);
+  return brain ? { brain } : {};
+}
+
 // Tab 2's ratings as shown: the defaults (DEFAULT_SIGNALS), then the
 // tracker's ratings, then what was picked by hand. A sign cleared by hand is
 // saved as '' and so stays blank over both.
@@ -190,11 +235,20 @@ export function mergeSignals(tracker = {}, saved = {}) {
   return diagnosisSignals({ ...(tracker || {}), ...(saved || {}) });
 }
 
-// The saved form with the tracker's Diagnosis ratings laid under what was
-// picked, for the progress figures and the export (which add the defaults).
-export function withTrackerSignals(form, tracker) {
+// The saved form with the tracker's Diagnosis ratings (and Intel notes,
+// trackerNotes) laid under what was picked or typed, for the progress
+// figures and the export (which add the defaults).
+export function withTrackerSignals(form, tracker, notes = {}) {
   const f = form || {};
-  return { ...f, diagnosis: { ...(f.diagnosis || {}), signals: { ...(tracker || {}), ...(f.diagnosis?.signals || {}) } } };
+  const d = f.diagnosis || {};
+  return {
+    ...f,
+    diagnosis: {
+      ...d,
+      signals: { ...(tracker || {}), ...(d.signals || {}) },
+      notes: { ...(notes || {}), ...(d.notes || {}) },
+    },
+  };
 }
 
 // ── Tab 4 ────────────────────────────────────────────────────────────────
@@ -523,10 +577,11 @@ export function mriFormExport(form = {}) {
   };
   const d = form.diagnosis || {};
   const signals = diagnosisSignals(d.signals);
+  const notes = diagnosisNotes(d.notes);
   for (const system of BODY_SYSTEMS) {
     for (const s of system.signs) put(sheet(2), `D${s.row}`, signals[s.key]);
     put(sheet(2), `D${system.summaryRow}`, d.footprint?.[system.key]);
-    put(sheet(2), `E${system.summaryRow}`, d.notes?.[system.key]);
+    put(sheet(2), `E${system.summaryRow}`, notes[system.key]);
   }
   put(sheet(2), RAW_INTEL_CELL, d.rawIntel);
   for (const f of OPPORTUNITY_FIELDS) put(sheet(4), `B${f.row}`, form.opportunity?.[f.key], f.type);
