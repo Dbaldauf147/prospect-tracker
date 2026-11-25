@@ -1,7 +1,8 @@
 // Issues tab "No targets": a tracked client of yours whose company popup
 // Targets tab has nothing filled in. Run: node scripts/noTargetsIssue.test.mjs
-import { detectNoTargets, myAccountsNoTargetIssues } from '../src/utils/clientNoTargets.js';
+import { detectNoTargets, myAccountsNoTargetIssues, strategicNoTargetIssues } from '../src/utils/clientNoTargets.js';
 import { hasTargetValues, blankTarget, noTargetRow } from '../src/utils/companyTargets.js';
+import { strategicLookup, withoutNamStrategicRows } from '../src/utils/strategicAccounts.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -57,6 +58,34 @@ check('my accounts row shape', [pRows[0].id, pRows[0].type, pRows[0].source, pRo
 check('before the companies load, the published list stands', myAccountsNoTargetIssues({ myAccountsFlags: [flag('p1', 'Zeta')], prospects: [] }).map(r => r.company), ['Zeta']);
 check('no em dash in the detail', /—/.test(pRows[0].detail), false);
 check('nothing published, no rows', myAccountsNoTargetIssues({ myAccountsFlags: null, prospects: mine }), []);
+
+// Strategic accounts: your companies the Strategic Accounts list names,
+// treated like every other account for targets.
+const list = [
+  { Account: 'Strat One', Type: 'Global Strategic Account', Owner: 'Pat' },
+  { Account: 'Strat Two', Type: 'Global Strategic Account' },
+  { Account: 'Strat Parked', Type: 'Global Strategic Account' },
+  { Account: 'Strat Logged', Type: 'Global Strategic Account' },
+  { Account: 'Strat Theirs', Type: 'Global Strategic Account' },
+  { Account: 'Nam Only', Type: 'NAM Strategic Account' },
+  { Account: 'Already Listed', Type: 'Global Strategic Account' },
+];
+const strat = [
+  { id: 's1', company: 'Strat One', status: 'Prospect', cdm },
+  { id: 's2', company: 'Strat Two', status: 'Client', cdm, climateTargets: [blankTarget()] },
+  { id: 's3', company: 'Strat Parked', status: 'Hold Off', cdm },
+  { id: 's4', company: 'Strat Logged', status: 'Prospect', cdm, climateTargets: [noTargetRow()] },
+  { id: 's5', company: 'Strat Theirs', status: 'Prospect', cdm: 'Someone Else' },
+  { id: 's6', company: 'Nam Only', status: 'Prospect', cdm },
+  { id: 's7', company: 'Already Listed', status: 'Prospect', cdm },
+  { id: 's8', company: 'Not Strategic', status: 'Prospect', cdm },
+];
+const lookup = strategicLookup(withoutNamStrategicRows(list));
+const sRows = strategicNoTargetIssues({ prospects: strat, lookup, isCdm: c => c === cdm, skipIds: new Set(['s7']) });
+check('listed, yours, active, empty, not NAM-only, not already listed, A to Z', sRows.map(r => r.company), ['Strat One', 'Strat Two']);
+check('strategic row shape', [sRows[0].id, sRows[0].type, sRows[0].source, sRows[0].prospectId, sRows[0].resolve], ['strategic-no-targets:s1', 'No targets', 'Strategic Accounts', 's1', { kind: 'noTargets' }]);
+check('no em dash in the strategic detail', /—/.test(sRows[0].detail), false);
+check('no list loaded, no strategic rows', strategicNoTargetIssues({ prospects: strat, lookup: null, isCdm: () => true }), []);
 
 console.log(`noTargetsIssue: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -25,6 +25,9 @@ import { dmsNotOnCampaign } from '../utils/dmsCampaigns';
 import { bfoHistoryTargets, bfoHistoryMissingNameIssues } from '../utils/bfoHistory';
 import { keyContactLinkedinIssues, KEY_CONTACT_NO_LINKEDIN_KEY } from '../utils/keyContactLinkedin';
 import { keyContactNoTargetsIssues } from '../utils/keyContactNoTargets';
+import { loadList } from '../utils/uploadedListStore';
+import { readListField } from '../utils/listAccountMapping';
+import { STRATEGIC_STORAGE_KEY, strategicLookup as buildStrategicLookup, withoutNamStrategicRows } from '../utils/strategicAccounts';
 
 // The Pipeline dashboard is re-read on every window focus, and a fresh array
 // of the same services would re-run the whole issue computation each time —
@@ -312,13 +315,47 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   );
   const keyContactNoTargets = useMemo(() => JSON.parse(keyContactNoTargetsKey), [keyContactNoTargetsKey]);
 
+  // The Strategic Accounts list (IndexedDB), for the strategic accounts'
+  // "No targets" rows. Re-read on focus so an upload on the Lists page
+  // shows up; an unchanged list keeps the held array.
+  const [strategicRows, setStrategicRows] = useState(null);
+  const strategicJsonRef = useRef('null');
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => loadList(STRATEGIC_STORAGE_KEY)
+      .then(rows => {
+        if (cancelled) return;
+        const next = Array.isArray(rows) ? rows : [];
+        let json = null;
+        try { json = JSON.stringify(next); } catch { /* not comparable: take it */ }
+        if (json !== null && json === strategicJsonRef.current) return;
+        strategicJsonRef.current = json;
+        setStrategicRows(next);
+      })
+      .catch(() => {});
+    load();
+    window.addEventListener('focus', load);
+    return () => { cancelled = true; window.removeEventListener('focus', load); };
+  }, [user?.uid]);
+  // Same lookup as My Accounts > Strategic Accounts: NAM Strategic Account
+  // rows left out, the list page's mappings honoured.
+  // readListField can hand back a freshly parsed object each render, so
+  // the lookup is keyed on the mappings' content, not their identity.
+  const strategicMappingsKey = JSON.stringify(['mapping', 'dismissed', 'myAccountMapping', 'portfolioMapping']
+    .map(field => readListField(settings, STRATEGIC_STORAGE_KEY, field) || {}));
+  const strategicLookup = useMemo(() => {
+    if (!strategicRows || !strategicRows.length) return null;
+    const [mapping, dismissed, myAccountMapping, portfolioMapping] = JSON.parse(strategicMappingsKey);
+    return buildStrategicLookup(withoutNamStrategicRows(strategicRows), mapping, dismissed, [myAccountMapping, portfolioMapping]);
+  }, [strategicRows, strategicMappingsKey]);
+
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, scheduledOpps, now: issuesNow });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, strategicLookup, scheduledOpps, now: issuesNow });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, scheduledOpps, issuesNow]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, ignoredSiteListWarnings, commissionUploads, hubspotOthersActivity, hubspotGapFill, bfoHistoryMissing, keyContactLinkedin, keyContactNoTargets, strategicLookup, scheduledOpps, issuesNow]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map

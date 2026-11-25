@@ -76,3 +76,41 @@ export function myAccountsNoTargetIssues({ myAccountsFlags, prospects, skipIds }
   issues.sort((a, b) => a.company.localeCompare(b.company, undefined, { sensitivity: 'base' }));
   return issues;
 }
+
+// Issue: a strategic account (My Accounts > Strategic Accounts) with the
+// same empty Targets tab, so strategic accounts are chased for targets
+// like every other account. The Tier 2 ones on My Accounts already come
+// through myAccountsNoTargetIssues; this adds the companies of yours the
+// Strategic Accounts list names, which My Accounts may not carry at all.
+//
+// `lookup` is a strategicLookup built without the list's NAM Strategic
+// Account rows (the subtab's rule), `isCdm` whether a CDM cell is this
+// CDM. An inactive company (Old Client, Hold Off, Lost - Not Sold) is
+// left out, as it is for My Accounts. `skipIds` holds the companies a row
+// above already lists, so a company shows once.
+export function strategicNoTargetIssues({ prospects, lookup, isCdm, skipIds }) {
+  if (typeof lookup !== 'function') return [];
+  const issues = [];
+  const seen = new Set();
+  for (const p of prospects || []) {
+    if (!p?.id || !p.company || !isCdm?.(p.cdm)) continue;
+    const id = String(p.id);
+    if (seen.has(id) || skipIds?.has(id)) continue;
+    if (hasTargetValues(p.climateTargets) || isClosedStatus(p.status)) continue;
+    if (lookup(p.company).length === 0) continue;
+    seen.add(id);
+    issues.push({
+      id: `strategic-no-targets:${id}`,
+      source: 'Strategic Accounts',
+      type: 'No targets',
+      company: p.company,
+      prospectId: p.id,
+      daysUntil: null,
+      expirationDate: null,
+      resolve: { kind: 'noTargets' },
+      detail: 'Strategic account with nothing on the Targets tab of the company popup: add its sustainability targets, or log "No Target Set" if it has none',
+    });
+  }
+  issues.sort((a, b) => a.company.localeCompare(b.company, undefined, { sensitivity: 'base' }));
+  return issues;
+}

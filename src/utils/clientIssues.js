@@ -24,7 +24,7 @@ import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRow
 import { incompleteHandoffDeals } from './dealHandoff';
 import { oppScopeOffList, suggestServiceMatch } from './oppScopeOffList';
 import { oppCompanyMissingIssues } from './oppCompanyMissing.js';
-import { detectNoTargets, myAccountsNoTargetIssues } from './clientNoTargets.js';
+import { detectNoTargets, myAccountsNoTargetIssues, strategicNoTargetIssues } from './clientNoTargets.js';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -886,7 +886,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 //
 // Service Exploration Coverage is deliberately not among them — see
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], ignoredSiteListWarnings = [], commissionUploads = null, hubspotOthersActivity = [], hubspotGapFill = [], bfoHistoryMissing = [], keyContactLinkedin = [], keyContactNoTargets = [], scheduledOpps = null, now = new Date() }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [], oversizedSiteLists = [], ignoredSiteListWarnings = [], commissionUploads = null, hubspotOthersActivity = [], hubspotGapFill = [], bfoHistoryMissing = [], keyContactLinkedin = [], keyContactNoTargets = [], strategicLookup = null, scheduledOpps = null, now = new Date() }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
   // handed to the opp-derived detectors so every issue row names its opp by
@@ -945,6 +945,12 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   // list that page publishes (clientNoTargets myAccountsNoTargetIssues),
   // less any company a row above already lists.
   for (const r of keyContactRows) noTargetIds.add(String(r.prospectId));
-  issues.push(...myAccountsNoTargetIssues({ myAccountsFlags, prospects, skipIds: noTargetIds }));
+  const myAccountsRows = myAccountsNoTargetIssues({ myAccountsFlags, prospects, skipIds: noTargetIds });
+  issues.push(...myAccountsRows);
+  // Strategic accounts (the Strategic Accounts list's companies of yours)
+  // with nothing on their Targets tab, which My Accounts may not carry,
+  // less any company a row above already lists.
+  for (const r of myAccountsRows) noTargetIds.add(String(r.prospectId));
+  issues.push(...strategicNoTargetIssues({ prospects, lookup: strategicLookup, isCdm: cdm => matchesCdm(cdm, cdmName), skipIds: noTargetIds }));
   return issues;
 }
