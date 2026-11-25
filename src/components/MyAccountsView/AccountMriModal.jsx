@@ -32,6 +32,10 @@ const LEVEL_FILL = { Absent: INK, Low: '#8A8578', Moderate: AMBER, Strong: BRICK
 
 const labelStyle = { display: 'block', fontSize: '0.66rem', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: MUTED, marginBottom: 4 };
 const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '0.5rem 0.65rem', fontSize: '0.84rem', fontFamily: 'inherit', color: INK, background: FIELD, border: `1px solid ${LINE}`, borderRadius: 2 };
+// Anything still to fill in on the form is outlined in red.
+const MISSING = '#DC2626';
+const isMissing = v => v == null || String(v).trim() === '';
+const missingOutline = v => (isMissing(v) ? { borderColor: MISSING, boxShadow: `0 0 0 1px ${MISSING}` } : null);
 const sectionTitle = { fontSize: '0.86rem', fontWeight: 700, color: INK };
 const sectionHint = { fontSize: '0.7rem', fontWeight: 600, color: MUTED, marginLeft: 8 };
 const sectionBox = { borderTop: `1px solid ${LINE}`, paddingTop: '0.9rem', marginTop: '1.1rem' };
@@ -71,14 +75,15 @@ function MoneyInput({ value, onChange, prefix = '$' }) {
         caretDigits.current = (before.match(/[\d.]/g) || []).length;
         onChange(format(e.target.value));
       }}
-      style={inputStyle}
+      style={{ ...inputStyle, ...missingOutline(shown) }}
     />
   );
 }
 
 // One control for every kind of field the form has.
 function Field({ field, value, onChange, hint, onReset }) {
-  const common = { value: value ?? '', onChange: e => onChange(e.target.value), style: inputStyle };
+  const style = { ...inputStyle, ...missingOutline(value) };
+  const common = { value: value ?? '', onChange: e => onChange(e.target.value), style };
   let control;
   if (field.type === 'select') {
     const options = MRI_LISTS[field.list] || [];
@@ -92,7 +97,7 @@ function Field({ field, value, onChange, hint, onReset }) {
       </select>
     );
   } else if (field.type === 'textarea') {
-    control = <textarea {...common} rows={field.tall ? 5 : 3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.4 }} />;
+    control = <textarea {...common} rows={field.tall ? 5 : 3} style={{ ...style, resize: 'vertical', lineHeight: 1.4 }} />;
   } else if (field.type === 'date') {
     control = <input type="date" {...common} />;
   } else if (field.type === 'money') {
@@ -161,7 +166,7 @@ function ProfileTab({ profile, typed, tracker, onChange, onReset }) {
 
 function Segmented({ options, value, onChange, fill }) {
   return (
-    <div style={{ display: 'inline-flex', border: `1px solid ${LINE}`, borderRadius: 2, overflow: 'hidden', flexShrink: 0 }}>
+    <div style={{ display: 'inline-flex', border: `1px solid ${LINE}`, borderRadius: 2, overflow: 'hidden', flexShrink: 0, ...missingOutline(value) }}>
       {options.map((o) => {
         const on = value === o;
         return (
@@ -278,7 +283,7 @@ function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, u
         if (c.list) {
           const options = MRI_LISTS[c.list];
           return (
-            <select value={value} onChange={e => patch(r.id, c.key, e.target.value)} style={cellInput}>
+            <select value={value} onChange={e => patch(r.id, c.key, e.target.value)} style={{ ...cellInput, ...missingOutline(value) }}>
               <option value="">-</option>
               {value && !options.includes(value) && <option value={value}>{value}</option>}
               {options.map(o => <option key={o} value={o}>{o}</option>)}
@@ -290,7 +295,7 @@ function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, u
             type={c.type === 'date' ? 'date' : c.type === 'number' ? 'number' : 'text'}
             value={value}
             onChange={e => patch(r.id, c.key, e.target.value)}
-            style={cellInput}
+            style={{ ...cellInput, ...missingOutline(value) }}
           />
         );
       },
@@ -340,7 +345,7 @@ function RatingBlock({ title, statements, list, ratings, block, onRate }) {
           <div key={`${s.key}l`} style={{ ...td, fontWeight: 600 }}>{s.label}</div>,
           <div key={`${s.key}m`} style={{ ...td, color: MUTED }}>{s.meaning}</div>,
           <div key={`${s.key}r`} style={td}>
-            <select value={ratings?.[s.key] || ''} onChange={e => onRate(s.key, e.target.value)} style={cellInput}>
+            <select value={ratings?.[s.key] || ''} onChange={e => onRate(s.key, e.target.value)} style={{ ...cellInput, ...missingOutline(ratings?.[s.key]) }}>
               <option value="">-</option>
               {list.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
@@ -422,7 +427,7 @@ const SITE_COLUMNS = [
   getFilterValue: r => String(r[key] ?? ''),
   exportValue: r => r[key] ?? '',
   render: r => (r[key] == null || r[key] === ''
-    ? <span style={{ color: '#CBD5E1' }}>-</span>
+    ? <span title="Missing" style={{ color: '#CBD5E1', display: 'block', border: `1px solid ${MISSING}`, borderRadius: 2, padding: '0 4px' }}>-</span>
     : <span style={{ color: '#475569' }}>{numeric ? Number(r[key]).toLocaleString() : r[key]}</span>),
 }));
 
