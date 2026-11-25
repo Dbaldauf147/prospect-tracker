@@ -34,6 +34,7 @@ import { dealsForCompany } from '../../utils/clientContracts';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import { DataTable } from '../common/DataTable';
+import { computeListFlags } from '../../utils/listFlags';
 import { LISTED_ROW_STYLE, LISTED_COMPANY_CELL, LISTED_NAME_INK } from './strategicListedStyle';
 
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -74,6 +75,29 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
   const targetMap = settings?.targetMap;
   const siteLists = settings?.companySiteLists;
   const savedForms = settings?.accountMri;
+
+  // The frameworks each company is flagged with (its own list plus the
+  // confirmed Lists-page mappings, the My Accounts Frameworks column), for
+  // the Immune System signs that read them. Redone when a mapping changes.
+  const [flagVersion, setFlagVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setFlagVersion(v => v + 1);
+    window.addEventListener('my-accounts-coverage-changed', bump);
+    window.addEventListener('storage', bump);
+    return () => {
+      window.removeEventListener('my-accounts-coverage-changed', bump);
+      window.removeEventListener('storage', bump);
+    };
+  }, []);
+  const [frameworkFlags, setFrameworkFlags] = useState(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    const records = rows.map(r => r.record || { company: r.company });
+    computeListFlags(rows.map(r => r.company), { prospects: records }).then((flags) => {
+      if (!cancelled) setFrameworkFlags(flags);
+    });
+    return () => { cancelled = true; };
+  }, [rows, flagVersion]);
 
   // What the Services and UBM rows read: each service's status as the
   // company card's Services board shows it, the manual status else the
@@ -155,7 +179,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     const profile = mergeProfile(trackerProfile, form?.profile).values;
     const siteList = (siteLists || {})[siteListSlug(record.company)];
     const sites = siteUtilityRows(siteList);
-    const signals = trackerSignals(record, { siteList });
+    const signals = trackerSignals(record, { siteList, frameworks: frameworkFlags.get(String(r.company || '').toLowerCase().trim()) });
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
     const stage = mriStageProgress(tabProgress({
@@ -179,7 +203,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       profile,
       stage,
     };
-  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, settings, prospects]);
+  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, settings, prospects, frameworkFlags]);
 
   // The company whose Account MRI popup is open.
   const [openId, setOpenId] = useState(null);

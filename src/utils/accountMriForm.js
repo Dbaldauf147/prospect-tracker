@@ -257,17 +257,32 @@ export function spreadLevel(geo) {
   return '';
 }
 
+// Immune's "Regulatory disclosure exposure" and "Investor / customer ESG
+// scrutiny" from the frameworks the company reports to: Strong when it
+// reports to any of CDP, GRESB, NZAM or UN PRI, Absent when it reports to
+// none of them.
+export const DISCLOSURE_SIGNS = ['immune.0', 'immune.1'];
+export const DISCLOSURE_FRAMEWORKS = ['CDP', 'GRESB', 'NZAM', 'UN PRI'];
+export function disclosureLevel(frameworks) {
+  const have = new Set([...(frameworks || [])].map(f => String(f || '').trim().toUpperCase()));
+  return DISCLOSURE_FRAMEWORKS.some(f => have.has(f)) ? 'Strong' : 'Absent';
+}
+
 // Where each tracker rating comes from, for the tag beside the sign.
 export const SIGNAL_SOURCE = {
   [CLIMATE_COMMITMENT_SIGN]: 'Targets',
   [FOOTPRINT_SIGN]: 'Sites',
   [SPREAD_SIGN]: 'site list',
+  ...Object.fromEntries(DISCLOSURE_SIGNS.map(k => [k, 'Frameworks'])),
 };
 
 // The tracker's own Diagnosis ratings for a company record and its saved
 // site list (settings.companySiteLists entry). The site count is the
-// record's Sites field, else how many sites the list has.
-export function trackerSignals(record, { siteList = null } = {}) {
+// record's Sites field, else how many sites the list has. `frameworks` is
+// every framework the company is flagged with (its own list plus the
+// Lists-page mappings, as the Frameworks column shows); the record's own
+// list is read either way.
+export function trackerSignals(record, { siteList = null, frameworks = null } = {}) {
   const geo = siteGeography(siteList);
   const count = footprintLevel(record?.numberOfSites) ? record.numberOfSites : geo.sites;
   const out = { [CLIMATE_COMMITMENT_SIGN]: climateCommitmentLevel(record?.climateTargets) };
@@ -275,6 +290,8 @@ export function trackerSignals(record, { siteList = null } = {}) {
   if (footprint) out[FOOTPRINT_SIGN] = footprint;
   const spread = spreadLevel(geo);
   if (spread) out[SPREAD_SIGN] = spread;
+  const disclosure = disclosureLevel([...(record?.frameworks || []), ...(frameworks || [])]);
+  for (const k of DISCLOSURE_SIGNS) out[k] = disclosure;
   return out;
 }
 
