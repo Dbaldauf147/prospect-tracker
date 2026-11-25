@@ -11,6 +11,7 @@
 //
 // Imported with extensions so this loads under plain Node for the tests.
 import { MRI_PROFILE_FIELDS } from './accountMri.js';
+import { normalizeTargets, isNoTargetRow, hasTargetValues } from './companyTargets.js';
 
 export const MRI_LISTS = {
   tier: ['Not set', 'Tier I', 'Tier II', 'Tier III'],
@@ -162,6 +163,38 @@ export function systemScore(system, signals = {}) {
     sum += at;
   }
   return { sum, rated, pct: Math.round((sum / (system.signs.length * 3)) * 100) };
+}
+
+// The sign "Public climate / net-zero commitment" read from the company's
+// Targets tab: Strong for a net-zero or SBTi (science-based) target or
+// commitment, Moderate for any other target, Absent when it has none (or
+// only a "No target set" row). Hidden rows are old targets and don't count.
+export const CLIMATE_COMMITMENT_SIGN = 'brain.0';
+const STRONG_TARGET = /net[\s-]*zero|\bsbti?\b|science[\s-]*based/i;
+export function climateCommitmentLevel(climateTargets) {
+  const rows = normalizeTargets(climateTargets).filter(r => !r.hidden && !isNoTargetRow(r) && hasTargetValues([r]));
+  if (!rows.length) return 'Absent';
+  if (rows.some(r => [r.type, r.commitmentType, r.status].some(v => STRONG_TARGET.test(v)))) return 'Strong';
+  return 'Moderate';
+}
+
+// The tracker's own Diagnosis ratings for a company record.
+export function trackerSignals(record) {
+  return { [CLIMATE_COMMITMENT_SIGN]: climateCommitmentLevel(record?.climateTargets) };
+}
+
+// Tab 2's ratings as shown: the defaults (DEFAULT_SIGNALS), then the
+// tracker's ratings, then what was picked by hand. A sign cleared by hand is
+// saved as '' and so stays blank over both.
+export function mergeSignals(tracker = {}, saved = {}) {
+  return diagnosisSignals({ ...(tracker || {}), ...(saved || {}) });
+}
+
+// The saved form with the tracker's Diagnosis ratings laid under what was
+// picked, for the progress figures and the export (which add the defaults).
+export function withTrackerSignals(form, tracker) {
+  const f = form || {};
+  return { ...f, diagnosis: { ...(f.diagnosis || {}), signals: { ...(tracker || {}), ...(f.diagnosis?.signals || {}) } } };
 }
 
 // ── Tab 4 ────────────────────────────────────────────────────────────────

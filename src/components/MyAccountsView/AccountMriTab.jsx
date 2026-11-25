@@ -21,7 +21,7 @@ import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, isPortfol
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, withTrackerSignals } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -151,12 +151,13 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       contacts.filter(c => isDecisionMakerContact(c) && !isPortfolioCompanyContact(c, record)),
     );
     const form = (savedForms || {})[mriSlug(r.company)] || null;
+    const signals = trackerSignals(record);
     const profile = mergeProfile(trackerProfile, form?.profile).values;
     const sites = siteUtilityRows((siteLists || {})[siteListSlug(record.company)]);
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
     const stage = mriStageProgress(tabProgress({
-      form: form || {},
+      form: withTrackerSignals(form, signals),
       profile,
       committee: committeeRows(form?.committee, trackerCommittee),
       sites,
@@ -169,6 +170,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       form,
       trackerProfile,
       trackerCommittee,
+      trackerSignals: signals,
       committee: committeeRows(form?.committee, trackerCommittee).filter(c => c.name || c.email),
       sites,
       profile,
