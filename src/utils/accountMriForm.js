@@ -605,6 +605,7 @@ export const TBD = 'TBD';
 const TBD_BEFORE_QUOTED = ['desiredResult', 'successCriteria', 'barrier'];
 // Upcoming key milestones: the next step for the opp's stage, as an action.
 export const NEXT_STEP_BY_STAGE = {
+  Qualifying: 'Qualify the opportunity',
   Quoting: 'Quote the customer',
   Quoted: 'Progress to contracting',
   Contracting: 'Send the client the agreement',
