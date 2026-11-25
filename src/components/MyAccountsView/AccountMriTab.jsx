@@ -185,8 +185,10 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     });
     // People at the account's portfolio companies sit on their own company's
     // committee, not this one (the roster's fuzzy name match can bring them in).
+    // The Primary Point of Contact sits on it too, as the relationship owner.
     const trackerCommittee = buyingCommitteeRows(
-      contacts.filter(c => isDecisionMakerContact(c) && !isPortfolioCompanyContact(c, record)),
+      contacts.filter(c => (isDecisionMakerContact(c) || isPrimaryPoc(c)) && !isPortfolioCompanyContact(c, record)),
+      { sentiment: settings?.contactSentiment },
     );
     const form = (savedForms || {})[mriSlug(r.company)] || null;
     const footprint = trackerFootprint(systemServices, serviceStatuses);
@@ -293,7 +295,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     })),
     {
       key: 'decisionMakers', label: 'Decision Makers', defaultWidth: 150,
-      headerTitle: 'The buying committee: the contacts tagged Decision Maker, or the list kept in the Account MRI popup once it has been edited. The export lists them on tab 3.',
+      headerTitle: 'The buying committee: the contacts tagged Decision Maker or Primary Point of Contact, or the list kept in the Account MRI popup once it has been edited. The export lists them on tab 3.',
       getSortValue: r => r.committee.length,
       getFilterValue: r => r.committee.map(c => c.name).join(', '),
       exportValue: r => r.committee.map(c => c.name).join(', '),

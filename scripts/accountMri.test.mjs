@@ -242,7 +242,19 @@ const committee = buyingCommitteeRows([
   {},
 ]);
 eq(committee.map(c => c.name), ['Amy Adams', 'noname@x.example', 'Zed Young'], 'committee A to Z, nameless contact by email, empty dropped');
-eq(committee[2], { name: 'Zed Young', title: 'CFO', email: 'zed@x.example', phone: '555-0102' }, 'committee row');
+eq(committee[2], { name: 'Zed Young', title: 'CFO', email: 'zed@x.example', phone: '555-0102', support: 'Neutral (Non-Committal)', relationship: '3 - Neutral', relOwner: '-' }, 'committee row');
+{
+  const rows = buyingCommitteeRows([
+    { id: 1, firstname: 'Pat', lastname: 'Poc', dans_tags: 'Primary Point of Contact' },
+    { id: 2, firstname: 'Dee', lastname: 'Maker', dans_tags: 'Decision Maker' },
+    { id: 3, firstname: 'Cal', lastname: 'Critic', dans_tags: 'Decision Maker; Primary Point of Contact' },
+  ], { sentiment: { 1: 'champion', 3: 'detractor' } });
+  eq(rows.map(r => [r.name, r.support, r.relationship, r.decisionRole ?? null, r.relOwner]), [
+    ['Cal Critic', 'Adversary (Anti-Champion)', '1 - Very Weak', 'Decider', 'Yes'],
+    ['Dee Maker', 'Neutral (Non-Committal)', '3 - Neutral', 'Decider', '-'],
+    ['Pat Poc', 'Advocate (Champion)', '5 - Very Strong', null, 'Yes'],
+  ], 'committee: standing, decision role and rel. owner from the contact');
+}
 
 // Tab 5: the saved site list.
 const analysisList = {

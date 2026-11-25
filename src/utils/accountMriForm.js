@@ -696,8 +696,27 @@ const rowHasText = (row, columns) => columns.some(c => !isBlank(row?.[c.key]));
  * wrote before the popup existed).
  */
 export function committeeRows(saved, trackerRows = []) {
-  return Array.isArray(saved) ? saved : trackerRows;
+  if (!Array.isArray(saved)) return trackerRows;
+  // A saved row takes the tracker's support, relationship, decision role and
+  // rel. owner for any of them never set on it (a field somebody cleared
+  // holds '' and stays cleared), so lists saved before those were filled
+  // catch up.
+  const byId = new Map();
+  for (const r of trackerRows) {
+    for (const id of [committeeKey(r.email), committeeKey(r.name)]) if (id && !byId.has(id)) byId.set(id, r);
+  }
+  return saved.map((row) => {
+    const from = byId.get(committeeKey(row?.email)) || byId.get(committeeKey(row?.name));
+    if (!from) return row;
+    let out = row;
+    for (const key of TRACKER_COMMITTEE_FIELDS) {
+      if (out[key] == null && from[key] != null) out = { ...out, [key]: from[key] };
+    }
+    return out;
+  });
 }
+const TRACKER_COMMITTEE_FIELDS = ['support', 'relationship', 'decisionRole', 'relOwner'];
+const committeeKey = v => String(v || '').trim().toLowerCase();
 
 /**
  * `rows` with any tracker decision maker it does not already hold added at

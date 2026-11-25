@@ -101,6 +101,10 @@ eq(dealHealthScore({}, 'Customer – Expand').stageCap, 0.8, 'stage cap for a cu
 const dms = [{ name: 'Ann Lee', email: 'ann@x.example' }, { name: 'Bo Diaz', email: '' }];
 eq(committeeRows(undefined, dms), dms, 'no saved committee: the tracker\'s decision makers');
 eq(committeeRows([], dms), [], 'an emptied committee stays empty');
+eq(committeeRows(
+  [{ name: 'Ann', email: 'ann@x.example', support: '' }, { name: 'Zoe' }],
+  [{ name: 'Ann', email: 'ANN@x.example', support: 'Neutral (Non-Committal)', relationship: '3 - Neutral', relOwner: 'Yes' }],
+), [{ name: 'Ann', email: 'ann@x.example', support: '', relationship: '3 - Neutral', relOwner: 'Yes' }, { name: 'Zoe' }], 'a saved committee takes the tracker values it never set, keeps cleared ones');
 eq(addMissingDecisionMakers([{ name: 'Ann', email: 'ANN@x.example', support: 'Unknown' }], dms).map(r => r.name), ['Ann', 'Bo Diaz'], 'only the missing decision makers are added, matched on email then name');
 
 // Progress.
