@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, mriFormExport, formatMoneyInput, formatNumberInput,
+  addMissingDecisionMakers, tabProgress, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -178,11 +178,13 @@ function Segmented({ options, value, onChange, fill }) {
   );
 }
 
-function DiagnosisTab({ diagnosis, onChange }) {
-  const signals = diagnosis.signals || {};
+function DiagnosisTab({ diagnosis, tracker = {}, onChange }) {
+  const signals = mergeSignals(tracker, diagnosis.signals);
   const set = (group, key, value) => {
     const next = { ...(diagnosis[group] || {}) };
-    if (value === '') delete next[key]; else next[key] = value;
+    // Clearing a sign the tracker rates keeps it blank rather than letting
+    // the tracker's rating come back.
+    if (value === '' && !(group === 'signals' && tracker[key])) delete next[key]; else next[key] = value;
     onChange({ ...diagnosis, [group]: next });
   };
   return (
@@ -206,7 +208,12 @@ function DiagnosisTab({ diagnosis, onChange }) {
               <div style={{ marginTop: '0.6rem', display: 'grid', gap: '0.4rem' }}>
                 {system.signs.map(sign => (
                   <div key={sign.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ flex: 1, fontSize: '0.8rem', color: INK }}>{sign.label}</span>
+                    <span style={{ flex: 1, fontSize: '0.8rem', color: INK }}>
+                      {sign.label}
+                      {tracker[sign.key] && diagnosis.signals?.[sign.key] === undefined && (
+                        <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 500, color: SAGE }} title="Rated from the company's Targets tab until you pick a rating here">from Targets</span>
+                      )}
+                    </span>
                     <Segmented options={MRI_LISTS.level} value={signals[sign.key] || ''} fill={LEVEL_FILL} onChange={v => set('signals', sign.key, v)} />
                   </div>
                 ))}
@@ -495,9 +502,12 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
     () => committeeRows(form.committee, row.committee).map((r, i) => (r.id ? r : { ...r, id: `t_${String(r.email || r.name || i).toLowerCase()}` })),
     [form.committee, row.committee],
   );
+  // The form with the tracker's Diagnosis ratings filled in where none was picked.
+  const signalsFromTracker = row.trackerSignals;
+  const effectiveForm = useMemo(() => withTrackerSignals(form, signalsFromTracker), [form, signalsFromTracker]);
   const progress = useMemo(
-    () => tabProgress({ form, profile: merged.values, committee, sites: row.sites }),
-    [form, merged, committee, row.sites],
+    () => tabProgress({ form: effectiveForm, profile: merged.values, committee, sites: row.sites }),
+    [effectiveForm, merged, committee, row.sites],
   );
 
   const setKey = useCallback((key, value) => change(prev => ({ ...prev, [key]: value })), [change]);
@@ -542,7 +552,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
         profile: merged.values,
         committee,
         sites: row.sites,
-        extra: mriFormExport(form),
+        extra: mriFormExport(effectiveForm),
       });
     } catch (err) {
       setError(err?.message || 'The export failed.');
@@ -567,7 +577,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
       />
     );
   } else if (tab === 'diagnosis') {
-    body = <DiagnosisTab diagnosis={form.diagnosis || {}} onChange={next => setKey('diagnosis', next)} />;
+    body = <DiagnosisTab diagnosis={form.diagnosis || {}} tracker={row.trackerSignals || {}} onChange={next => setKey('diagnosis', next)} />;
   } else if (tab === 'committee') {
     body = (
       <div>

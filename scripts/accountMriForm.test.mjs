@@ -11,6 +11,7 @@ import {
   MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
   mriStageProgress,
   mriFormExport, dateSerial, mriSlug, formatMoneyInput, formatNumberInput, profileDisplayValue,
+  climateCommitmentLevel, trackerSignals, mergeSignals, withTrackerSignals,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -173,6 +174,33 @@ eq(
   ['1350000', '$1,350,000', '1234.5', '1234.567', '.5', '0', '007', '-2500', 'abc', '', null, '12a3'].map(formatMoneyInput),
   ['$1,350,000', '$1,350,000', '$1,234.5', '$1,234.56', '$0.5', '$0', '$7', '-$2,500', '', '', '', '$123'],
   'money input formatting',
+);
+// Tab 2's "Public climate / net-zero commitment" from the Targets tab.
+eq(
+  [
+    undefined,
+    [],
+    [{ type: 'No target set' }],
+    [{ type: 'Net zero', targetYear1: '2050' }],
+    [{ type: 'Net-zero' }],
+    [{ type: 'SBTi near-term' }],
+    [{ action: 'Commitment', type: 'SBTi commitment', commitmentType: 'Net-zero' }],
+    [{ type: 'Renewable energy', value: '100%' }],
+    [{ type: 'Carbon neutral' }, { type: 'Net zero', hidden: true }],
+    [{ type: 'Net zero', hidden: true }],
+    [{ action: 'Target' }],
+  ].map(climateCommitmentLevel),
+  ['Absent', 'Absent', 'Absent', 'Strong', 'Strong', 'Strong', 'Strong', 'Moderate', 'Moderate', 'Absent', 'Absent'],
+  'climate commitment level from targets',
+);
+eq(trackerSignals({ climateTargets: [{ type: 'Net zero' }] }), { 'brain.0': 'Strong' }, 'tracker signals');
+eq(mergeSignals({ 'brain.0': 'Strong' }, { 'brain.1': 'Low' }), { 'brain.0': 'Strong', 'brain.1': 'Low' }, 'tracker rating fills an unpicked sign');
+eq(mergeSignals({ 'brain.0': 'Strong' }, { 'brain.0': 'Low' }), { 'brain.0': 'Low' }, 'a picked rating wins');
+eq(mergeSignals({ 'brain.0': 'Strong' }, { 'brain.0': '' }), {}, 'a sign cleared by hand stays blank');
+eq(
+  mriFormExport(withTrackerSignals({}, { 'brain.0': 'Strong' })).cells,
+  mriFormExport({ diagnosis: { signals: { 'brain.0': 'Strong' } } }).cells,
+  'the tracker rating exports',
 );
 eq(['2000', '1234567.5', '', 'x'].map(v => formatNumberInput(v)), ['2,000', '1,234,567.5', '', ''], 'count input formatting');
 eq(
