@@ -186,6 +186,10 @@ export function accountLiveOpps(oppRows, self, holdings = []) {
         bfoName: BFO_NAME_BLANKS.has(bfo.toLowerCase()) ? '' : bfo,
         source: text(o.Source),
         startDate: text(o['Start Date']),
+        // The Quoting group's three picks on the Opp details popup.
+        resultsTiming: text(o['When Does the Client Want Results?']),
+        peopleCommitted: text(o['People the Client Will Commit']),
+        budget: text(o['Client Has Budget?']),
       });
       continue;
     }
