@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, setNoActiveOpportunity, noActiveDisplay, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, energyShareNote, PROFILE_RECORD_FIELDS, profileRecordPatch,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, withOpportunityDefault, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, energyShareNote, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -701,7 +701,10 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
     return heart ? { ...rest, heart } : rest;
   }, [row.trackerNotes, merged.values]);
   const footprintFromTracker = row.trackerFootprint;
-  const effectiveForm = useMemo(() => withTrackerSignals(form, signalsFromTracker, notesFromTracker, footprintFromTracker), [form, signalsFromTracker, notesFromTracker, footprintFromTracker]);
+  const effectiveForm = useMemo(
+    () => withOpportunityDefault(withTrackerSignals(form, signalsFromTracker, notesFromTracker, footprintFromTracker), row.liveOpps),
+    [form, signalsFromTracker, notesFromTracker, footprintFromTracker, row.liveOpps],
+  );
   const progress = useMemo(
     () => tabProgress({ form: effectiveForm, profile: merged.values, committee, sites: row.sites }),
     [effectiveForm, merged, committee, row.sites],
@@ -808,10 +811,39 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
       </div>
     );
   } else if (tab === 'opportunity') {
-    const values = form.opportunity || {};
+    // What the tab shows, the "No active opportunity" box ticked on its
+    // own when there is no live opp (withOpportunityDefault).
+    const values = effectiveForm.opportunity || {};
     const noActive = !!values.noActive;
+    const portfolioOpps = row.liveOpps?.portfolio || [];
     body = (
       <div>
+        {portfolioOpps.length > 0 && (
+          <div style={{ marginBottom: '0.9rem', padding: '0.6rem 0.75rem', border: `1px solid ${LINE}`, background: FIELD }}>
+            <div style={{ marginBottom: '0.4rem' }}>
+              <span style={sectionTitle}>Portfolio company opportunities</span>
+              <span style={sectionHint}>live opps on {row.company}'s portfolio companies</span>
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', color: INK }}>
+              <thead>
+                <tr>
+                  {['Company', 'Stage', 'Scope', 'Quoted amount', 'Close date'].map(h => (
+                    <th key={h} style={{ ...labelStyle, display: 'table-cell', marginBottom: 0, textAlign: 'left', padding: '0.25rem 0.5rem 0.25rem 0' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {portfolioOpps.map((o, i) => (
+                  <tr key={`${o.account}-${i}`} style={{ borderTop: `1px solid ${LINE}` }}>
+                    {[o.account, o.stage, o.scope, o.amount, o.closeDate].map((v, j) => (
+                      <td key={j} style={{ padding: '0.3rem 0.5rem 0.3rem 0', verticalAlign: 'top' }}>{v || '-'}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: '0.9rem', padding: '0.45rem 0.7rem', border: `1px solid ${noActive ? INK : LINE}`, borderRadius: 2, background: noActive ? FIELD : 'transparent', fontSize: '0.8rem', fontWeight: 600, color: INK, cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -819,7 +851,11 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
             onChange={e => change(prev => ({ ...prev, opportunity: setNoActiveOpportunity(prev.opportunity, e.target.checked) }))}
           />
           No active opportunity
-          <span style={{ fontWeight: 500, color: MUTED }}>{noActive ? 'every field is set to - or 0; untick to edit again' : 'fills every field below with - or 0'}</span>
+          <span style={{ fontWeight: 500, color: MUTED }}>{noActive
+            ? (values.noActiveAuto
+              ? `ticked because ${row.company} and its portfolio companies have no live opp; untick to edit`
+              : 'every field is set to - or 0; untick to edit again')
+            : 'fills every field below with - or 0'}</span>
         </label>
         {OPPORTUNITY_SECTIONS.map((s, i) => (
           <div key={s.title} style={i ? sectionBox : undefined}>

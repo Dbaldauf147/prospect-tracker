@@ -593,7 +593,25 @@ export function noActiveOpportunityValues() {
 export function setNoActiveOpportunity(opportunity = {}, on) {
   const o = opportunity || {};
   if (on) return { ...noActiveOpportunityValues(), noActive: true, beforeNoActive: o.noActive ? o.beforeNoActive : o };
-  return { ...(o.beforeNoActive || {}) };
+  // Unticked by hand is kept as noActive: false, so the box isn't ticked
+  // again on its own (withOpportunityDefault).
+  return { ...(o.beforeNoActive || {}), noActive: false };
+}
+
+/**
+ * The form with "No active opportunity" ticked on its own when the company
+ * and its portfolio companies have no live opp (`liveOpps` from
+ * accountLiveOpps; null while the opps haven't loaded, which ticks
+ * nothing). Only while nobody has touched the box or typed on the tab:
+ * ticked or unticked by hand, or a field filled in, and the form is left as
+ * it is. The auto-ticked tab carries noActiveAuto, and is never saved.
+ */
+export function withOpportunityDefault(form, liveOpps) {
+  const f = form || {};
+  const o = f.opportunity || {};
+  if (!liveOpps || liveOpps.own?.length || liveOpps.portfolio?.length) return f;
+  if (o.noActive !== undefined || OPPORTUNITY_FIELDS.some(fl => !isBlank(o[fl.key]))) return f;
+  return { ...f, opportunity: { ...noActiveOpportunityValues(), noActive: true, noActiveAuto: true } };
 }
 
 // A no-opportunity value as the read-only field shows it.

@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs';
 import {
   MRI_PROFILE_FIELDS, MRI_PROFILE_SHEET_PATH, accountMriProfile, fillProfileSheet,
   fillTableSheet, fillAccountMriWorkbook, buyingCommitteeRows, siteUtilityRows, MRI_COMMITTEE_TABLE, MRI_SITES_TABLE,
-  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, accountTryingAgainServices, isPortfolioCompanyContact, mainContactText, mriFileName, revenueAsText,
+  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, accountTryingAgainServices, accountLiveOpps, isPortfolioCompanyContact, mainContactText, mriFileName, revenueAsText,
 } from '../src/utils/accountMri.js';
 
 let passed = 0, failed = 0;
@@ -323,6 +323,20 @@ const fit = fillTableSheet(await zip.file(MRI_COMMITTEE_TABLE.path).async('strin
 eq([fit.written, fit.added, fit.xml.includes('<xm:sqref>E6:E30</xm:sqref>')], [25, 0, true], 'a full committee fits without adding rows');
 const s3 = await zip.file(MRI_COMMITTEE_TABLE.path).async('string');
 eq(fillTableSheet(s3, MRI_COMMITTEE_TABLE, []).xml === s3, true, 'no decision makers, tab untouched');
+
+{
+  const live = accountLiveOpps([
+    { Account: 'Brookfield', Stage: 'Quoted', Scope: 'EaaS' },
+    { Account: 'Brookfield', Stage: 'Not Sold', Scope: 'EV' },
+    { Account: 'Brookfield Properties', Stage: 'Qualifying', Scope: 'Audits', 'Quoted Amount': '$40,000', 'Close Date': '2027-01-31' },
+    { Account: 'Old Name Co', Stage: 'Lead', Scope: 'IDM' },
+    { Account: 'Brookfield Renewable', Stage: 'Sold', Scope: 'RECs' },
+    { Account: 'Someone Else', Stage: 'Quoted', Scope: 'UBM' },
+  ], { company: 'Brookfield' }, ['Brookfield Properties', { company: 'Brookfield Renewable' }, { company: 'Oaktree', companyAliases: ['Old Name Co'] }]);
+  eq(live.own.map(o => o.stage), ['Quoted'], 'live opps: the company\'s own, closed ones left out');
+  eq(live.portfolio.map(o => o.account), ['Brookfield Properties', 'Old Name Co'], 'live opps: portfolio companies, by name or merged name');
+  eq(live.portfolio[0], { account: 'Brookfield Properties', stage: 'Qualifying', scope: 'Audits', amount: '$40,000', closeDate: '2027-01-31' }, 'live opp row');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

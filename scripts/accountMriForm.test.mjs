@@ -16,6 +16,7 @@ import {
   footprintLevel, spreadLevel,
   footprintFromServices, trackerFootprint, mergeFootprint,
   trackerSignalReasons, signalReason,
+  withOpportunityDefault, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -390,6 +391,19 @@ for (const n of [4, 6, 7]) {
   eq(signalReason('lungs.0', ctx({})).startsWith('Not rated yet'), true, 'hover: an unrated sign says so');
   eq(signalReason('brain.1', ctx({})).startsWith('Strong: matches "brain.0"'), true, 'hover: a following sign names the one it matches');
   eq(signalReason('brain.1', ctx({})).includes('the Targets tab has one target'), true, 'hover: and why that one is rated');
+}
+
+// Tab 4: "No active opportunity" ticked on its own.
+{
+  const none = { own: [], portfolio: [] };
+  const auto = withOpportunityDefault({}, none).opportunity;
+  eq([auto.noActive, auto.noActiveAuto, auto.name], [true, true, NO_ACTIVE_OPPORTUNITY], 'no live opp: ticked on its own');
+  eq(withOpportunityDefault({}, { own: [{}], portfolio: [] }).opportunity, undefined, 'a live opp on the company: not ticked');
+  eq(withOpportunityDefault({}, { own: [], portfolio: [{}] }).opportunity, undefined, 'a live opp on a portfolio company: not ticked');
+  eq(withOpportunityDefault({}, null).opportunity, undefined, 'opps not loaded: not ticked');
+  eq(withOpportunityDefault({ opportunity: { noActive: false } }, none).opportunity, { noActive: false }, 'unticked by hand: stays unticked');
+  eq(withOpportunityDefault({ opportunity: { owner: 'Dan' } }, none).opportunity, { owner: 'Dan' }, 'something typed: left as it is');
+  eq(setNoActiveOpportunity({}, false), { noActive: false }, 'unticking keeps that it was unticked');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
