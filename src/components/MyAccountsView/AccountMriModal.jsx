@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
+  MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, setNoActiveOpportunity, noActiveDisplay, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
   addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, energyShareNote, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
@@ -798,15 +798,32 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
     );
   } else if (tab === 'opportunity') {
     const values = form.opportunity || {};
+    const noActive = !!values.noActive;
     body = (
       <div>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: '0.9rem', padding: '0.45rem 0.7rem', border: `1px solid ${noActive ? INK : LINE}`, borderRadius: 2, background: noActive ? FIELD : 'transparent', fontSize: '0.8rem', fontWeight: 600, color: INK, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={noActive}
+            onChange={e => change(prev => ({ ...prev, opportunity: setNoActiveOpportunity(prev.opportunity, e.target.checked) }))}
+          />
+          No active opportunity
+          <span style={{ fontWeight: 500, color: MUTED }}>{noActive ? 'every field is set to - or 0; untick to edit again' : 'fills every field below with - or 0'}</span>
+        </label>
         {OPPORTUNITY_SECTIONS.map((s, i) => (
           <div key={s.title} style={i ? sectionBox : undefined}>
             <div><span style={sectionTitle}>{s.title}</span>{s.hint && <span style={sectionHint}>{s.hint}</span>}</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem 0.8rem', marginTop: '0.6rem' }}>
               {s.fields.map(f => (
                 <div key={f.key} style={{ gridColumn: f.tall ? '1 / -1' : 'auto' }}>
-                  <Field field={f} value={values[f.key]} onChange={v => change(prev => ({ ...prev, opportunity: { ...(prev.opportunity || {}), [f.key]: v } }))} />
+                  {noActive ? (
+                    <div style={{ minWidth: 0 }}>
+                      <label style={labelStyle}>{f.label}</label>
+                      <input type="text" readOnly disabled value={noActiveDisplay(f, values[f.key])} style={{ ...inputStyle, color: MUTED }} />
+                    </div>
+                  ) : (
+                    <Field field={f} value={values[f.key]} onChange={v => change(prev => ({ ...prev, opportunity: { ...(prev.opportunity || {}), [f.key]: v } }))} />
+                  )}
                 </div>
               ))}
             </div>
