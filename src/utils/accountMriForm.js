@@ -12,6 +12,7 @@
 // Imported with extensions so this loads under plain Node for the tests.
 import { MRI_PROFILE_FIELDS, NO_COMPETITOR, siteGeography } from './accountMri.js';
 import { normalizeTargets, isNoTargetRow, hasTargetValues, NO_TARGET_TYPE } from './companyTargets.js';
+import { activeStageRank } from './oppStages.js';
 
 export const MRI_LISTS = {
   tier: ['Not set', 'Tier I', 'Tier II', 'Tier III'],
@@ -586,6 +587,90 @@ export const OPPORTUNITY_SECTIONS = [
   },
 ];
 export const OPPORTUNITY_FIELDS = OPPORTUNITY_SECTIONS.flatMap(s => s.fields);
+
+// ── Tab 4 from the Opps tab ─────────────────────────────────────────────
+// The account's own live opp fills the background fields nobody has typed
+// over: its BFO Opportunity Name, Deal Size, Start Date (the plan and the
+// work both started with the opp), Lead Source, the likelihood to close that
+// the Opps popup works out, and the close date BFO holds for it (BFO
+// History, matched on the opp name; the opp's own Close Date when BFO has
+// none). The owner is the account's CDM.
+export const MRI_OPPORTUNITY_OWNER = 'Dan Baldauf';
+export const OPPORTUNITY_FROM_OPPS = new Set(['name', 'owner', 'planStarted', 'workingSince', 'targetClose', 'odds', 'revenue', 'cameFrom']);
+
+const oppKey = v => String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+const isoDay = (raw) => {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return '';
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const dollars = (raw) => {
+  const n = Number(String(raw ?? '').replace(/[$,\s]/g, ''));
+  return String(raw ?? '').trim() && Number.isFinite(n) && n > 0 ? String(Math.round(n * 100) / 100) : '';
+};
+const percentOf = (raw) => {
+  const n = Number(String(raw ?? '').replace(/[%\s]/g, ''));
+  return String(raw ?? '').trim() && Number.isFinite(n) ? String(Math.round(n)) : '';
+};
+
+/**
+ * The opp tab 4 is about: of the account's own live opps (accountLiveOpps'
+ * `own`), the furthest along the pipeline, the most recently started on a
+ * tie. null when there is none.
+ */
+export function primaryOwnOpp(liveOpps) {
+  const own = liveOpps?.own || [];
+  if (!own.length) return null;
+  const started = o => { const t = Date.parse(isoDay(o.startDate)); return Number.isNaN(t) ? -Infinity : t; };
+  return [...own].sort((a, b) => activeStageRank(b.stage) - activeStageRank(a.stage) || started(b) - started(a))[0];
+}
+
+/**
+ * Tab 4's background fields as the account's own live opp gives them,
+ * { key: value } with only what the opp has (empty when it has no live opp).
+ *   bfoHistory  the company's BFO History rows (record.bfoHistory.rows)
+ */
+export function trackerOpportunity(liveOpps, bfoHistory = []) {
+  const opp = primaryOwnOpp(liveOpps);
+  if (!opp) return {};
+  const bfo = opp.bfoName
+    ? (bfoHistory || []).find(r => oppKey(r?.name) && oppKey(r.name) === oppKey(opp.bfoName))
+    : null;
+  const started = isoDay(opp.startDate);
+  const odds = opp.likelihood != null && Number.isFinite(opp.likelihood)
+    ? String(Math.round(opp.likelihood * 100))
+    : percentOf(bfo?.probability);
+  const out = {
+    name: opp.bfoName,
+    owner: MRI_OPPORTUNITY_OWNER,
+    planStarted: started,
+    workingSince: started,
+    targetClose: isoDay(bfo?.closeDate) || isoDay(opp.closeDate),
+    odds,
+    revenue: dollars(opp.amount) || dollars(bfo?.amount),
+    cameFrom: opp.source,
+  };
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => !isBlank(v)));
+}
+
+/**
+ * The form with tab 4's blank fields filled from the opp (trackerOpportunity).
+ * Anything typed wins; a tab ticked "No active opportunity" is left alone.
+ */
+export function withTrackerOpportunity(form, tracker) {
+  const f = form || {};
+  const o = f.opportunity || {};
+  if (o.noActive || !tracker || !Object.keys(tracker).length) return f;
+  const filled = { ...o };
+  for (const [k, v] of Object.entries(tracker)) if (isBlank(o[k])) filled[k] = v;
+  return { ...f, opportunity: filled };
+}
 
 // What tab 4 holds when the account has no active opportunity: the name
 // says so, every number is 0 and everything else is "-", so the tab reads

@@ -18,6 +18,7 @@ import {
   trackerSignalReasons, signalReason,
   withNoActiveDefaults, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY, revenueBillionsText,
   setNoActiveDealHealth, setNoActiveClosePlan,
+  trackerOpportunity, withTrackerOpportunity, primaryOwnOpp,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -433,6 +434,32 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   eq([cp.closePlanNoActive, cp.closePlan[0].what], [true, NO_ACTIVE_OPPORTUNITY], 'close plan: ticking replaces the activities');
   eq(setNoActiveClosePlan({ ...cp }, false), { closePlan: [{ id: 'a', what: 'Send proposal' }], closePlanNoActive: false, closePlanBeforeNoActive: null }, 'close plan: unticking brings them back');
   eq(withNoActiveDefaults({ closePlanNoActive: false, closePlan: [] }, none).closePlanNoActive, false, 'close plan unticked by hand stays unticked');
+}
+
+// Tab 4 filled from the account's own live opp.
+{
+  const { accountLiveOpps } = await import('../src/utils/accountMri.js');
+  const live = accountLiveOpps([
+    { _id: 1, Account: 'Blue Owl Capital', Stage: 'Not Started', 'BFO Link': '-', Source: 'Referral', 'Start Date': '2026-01-05' },
+    { _id: 2, Account: 'Blue Owl Capital', Stage: 'Quoted', 'BFO Link': 'Blue Owl - RA+ Climate Risk', Source: 'Inbound',
+      'Start Date': '11/4/2026', 'Quoted Amount': '$13,750', 'Close Date': '2027-03-31' },
+    { _id: 3, Account: 'Blue Owl Capital', Stage: 'Sold', 'BFO Link': 'Old one' },
+  ], { company: 'Blue Owl Capital' }, [], { likelihoodById: new Map([[2, 0.237]]) });
+  eq(live.own.map(o => o.id), [1, 2], 'own live opps carry their id');
+  eq(live.own[0].bfoName, '', 'a dash BFO name is no name');
+  eq(primaryOwnOpp(live).id, 2, 'the furthest-along own opp is the one');
+  const bfo = [{ name: 'blue owl -  RA+ climate risk', closeDate: '12/15/2026', probability: '40%' }];
+  eq(trackerOpportunity(live, bfo), {
+    name: 'Blue Owl - RA+ Climate Risk', owner: 'Dan Baldauf', planStarted: '2026-11-04', workingSince: '2026-11-04',
+    targetClose: '2026-12-15', odds: '24', revenue: '13750', cameFrom: 'Inbound',
+  }, 'tab 4 from the opp: BFO close date and the likelihood to close');
+  const noBfo = trackerOpportunity({ own: [{ ...live.own[1], likelihood: null }] }, []);
+  eq([noBfo.targetClose, noBfo.odds], ['2027-03-31', undefined], 'no BFO row: the opp\'s own close date, odds left blank');
+  eq(trackerOpportunity({ own: [], portfolio: [{}] }), {}, 'no own opp: nothing');
+  const t = trackerOpportunity(live, bfo);
+  eq(withTrackerOpportunity({ opportunity: { name: 'Typed', revenue: '' } }, t).opportunity.name, 'Typed', 'typed wins');
+  eq(withTrackerOpportunity({ opportunity: { revenue: '' } }, t).opportunity.revenue, '13750', 'blank is filled');
+  eq(withTrackerOpportunity({ opportunity: { noActive: true, name: NO_ACTIVE_OPPORTUNITY } }, t).opportunity.name, NO_ACTIVE_OPPORTUNITY, 'no active ticked: left alone');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
