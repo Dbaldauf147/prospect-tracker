@@ -14,13 +14,15 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, SIGNAL_SOURCE, NOTE_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
 
 // The MRI tool's own look: warm paper, ink, one brick red for the scores.
 const INK = '#1F1D1A';
+// Each Diagnosis sign's name by key, for the hover text.
+const SIGN_LABEL = Object.fromEntries(BODY_SYSTEMS.flatMap(sys => sys.signs.map(x => [x.key, x.label])));
 const MUTED = '#6B675F';
 const PAPER = '#F2F0EB';
 const FIELD = '#FAF9F5';
@@ -166,7 +168,9 @@ function ProfileTab({ profile, typed, tracker, onChange, onCommit, onReset }) {
   );
 }
 
-function Segmented({ options, value, onChange, fill }) {
+// `why` (optional) is hover text explaining the current value; each button
+// shows it above what clicking that button does.
+function Segmented({ options, value, onChange, fill, why = '' }) {
   return (
     <div style={{ display: 'inline-flex', border: `1px solid ${LINE}`, borderRadius: 2, overflow: 'hidden', flexShrink: 0, ...missingOutline(value) }}>
       {options.map((o) => {
@@ -176,7 +180,7 @@ function Segmented({ options, value, onChange, fill }) {
             key={o}
             type="button"
             onClick={() => onChange(on ? '' : o)}
-            title={on ? 'Click again to clear' : o}
+            title={`${why ? `${why}\n\n` : ''}${on ? 'Click again to clear' : `Click to rate ${o}`}`}
             style={{ fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit', padding: '0.22rem 0.5rem', border: 'none', cursor: 'pointer', background: on ? (fill?.[o] || INK) : FIELD, color: on ? '#fff' : MUTED }}
           >{o}</button>
         );
@@ -239,8 +243,10 @@ function SystemServices({ system, assigned, options, statuses, onChange }) {
   );
 }
 
-function DiagnosisTab({ diagnosis, tracker = {}, trackerNoteFor = {}, trackerFootprintFor = {}, systemServices = {}, serviceOptions = [], serviceStatuses = {}, onAssignServices, onChange }) {
+function DiagnosisTab({ diagnosis, tracker = {}, trackerReasons = {}, trackerNoteFor = {}, trackerFootprintFor = {}, systemServices = {}, serviceOptions = [], serviceStatuses = {}, onAssignServices, onChange }) {
   const signals = mergeSignals(tracker, diagnosis.signals);
+  // Why each sign shows what it shows, for its hover text.
+  const why = key => signalReason(key, { saved: diagnosis.signals || {}, tracker, reasons: trackerReasons, signals, labelOf: k => SIGN_LABEL[k] || k });
   const notes = diagnosisNotes({ ...trackerNoteFor, ...(diagnosis.notes || {}) });
   const set = (group, key, value) => {
     const next = { ...(diagnosis[group] || {}) };
@@ -274,16 +280,16 @@ function DiagnosisTab({ diagnosis, tracker = {}, trackerNoteFor = {}, trackerFoo
               <div style={{ marginTop: '0.6rem', display: 'grid', gap: '0.4rem' }}>
                 {system.signs.map(sign => (
                   <div key={sign.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ flex: 1, fontSize: '0.8rem', color: INK }}>
+                    <span style={{ flex: 1, fontSize: '0.8rem', color: INK, cursor: 'help' }} title={why(sign.key)}>
                       {sign.label}
                       {tracker[sign.key] && diagnosis.signals?.[sign.key] === undefined && (
-                        <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 500, color: SAGE }} title={`Rated from the company's ${SIGNAL_SOURCE[sign.key] || 'record'} until you pick a rating here`}>from {SIGNAL_SOURCE[sign.key] || 'tracker'}</span>
+                        <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 500, color: SAGE }}>from {SIGNAL_SOURCE[sign.key] || 'tracker'}</span>
                       )}
                       {SIGNAL_FOLLOWS[sign.key] && signals[sign.key] && diagnosis.signals?.[sign.key] === undefined && (
-                        <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 500, color: SAGE }} title={`Rated the same as "${system.signs.find(x => x.key === SIGNAL_FOLLOWS[sign.key])?.label}" until you pick a rating here`}>matches above</span>
+                        <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 500, color: SAGE }}>matches above</span>
                       )}
                     </span>
-                    <Segmented options={MRI_LISTS.level} value={signals[sign.key] || ''} fill={LEVEL_FILL} onChange={v => set('signals', sign.key, v)} />
+                    <Segmented options={MRI_LISTS.level} value={signals[sign.key] || ''} fill={LEVEL_FILL} why={why(sign.key)} onChange={v => set('signals', sign.key, v)} />
                   </div>
                 ))}
               </div>
@@ -700,6 +706,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
       <DiagnosisTab
         diagnosis={form.diagnosis || {}}
         tracker={row.trackerSignals || {}}
+        trackerReasons={row.trackerReasons || {}}
         trackerNoteFor={row.trackerNotes || {}}
         trackerFootprintFor={row.trackerFootprint || {}}
         systemServices={settings?.mriSystemServices || {}}

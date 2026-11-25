@@ -295,6 +295,75 @@ export function trackerSignals(record, { siteList = null, frameworks = null } = 
   return out;
 }
 
+// Why the tracker rated each sign it rates (trackerSignals, same inputs),
+// as a sentence with the company's own figures, for the popup's hover text.
+// A sign the tracker rates but couldn't this time (Skeleton's, with no site
+// count or locations) gets what was missing instead, starting lower case.
+export function trackerSignalReasons(record, { siteList = null, frameworks = null } = {}) {
+  const out = {};
+  const signals = trackerSignals(record, { siteList, frameworks });
+
+  const targets = normalizeTargets(record?.climateTargets).filter(r => !r.hidden && !isNoTargetRow(r) && hasTargetValues([r]));
+  const summary = climateTargetSummary(record?.climateTargets);
+  const climateRule = 'Rule: Strong for a net-zero or SBTi (science-based) target or commitment, Moderate for any other target, Absent for none.';
+  out[CLIMATE_COMMITMENT_SIGN] = targets.length
+    ? `${signals[CLIMATE_COMMITMENT_SIGN]}: the Targets tab has ${targets.length === 1 ? 'one target' : `${targets.length} targets`} (${summary}). ${climateRule}`
+    : `Absent: the Targets tab has no current target${summary === NO_TARGET_TYPE ? ' ("No target set")' : ''}. ${climateRule}`;
+
+  const geo = siteGeography(siteList);
+  const fromField = !!footprintLevel(record?.numberOfSites);
+  const footprintRule = 'Rule: Strong over 100 sites, Moderate for 50 to 100, Low under 50.';
+  if (signals[FOOTPRINT_SIGN]) {
+    const n = Number(String(fromField ? record.numberOfSites : geo.sites).replace(/[,\s]/g, ''));
+    out[FOOTPRINT_SIGN] = `${signals[FOOTPRINT_SIGN]}: ${n.toLocaleString('en-US')} site${n === 1 ? '' : 's'} (${fromField ? "the company's Sites field" : 'open sites on its saved site list, as the Sites field is empty'}). ${footprintRule}`;
+  } else {
+    out[FOOTPRINT_SIGN] = `the company's Sites field is empty and it has no saved site list to count. ${footprintRule}`;
+  }
+  const spreadRule = 'Rule: Strong across more than one country, Moderate across more than one state, Low in one state.';
+  if (signals[SPREAD_SIGN]) {
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    out[SPREAD_SIGN] = `${signals[SPREAD_SIGN]}: the saved site list has ${plural(geo.sites, 'open site', 'open sites')} across ${plural(geo.countries, 'country', 'countries')} and ${plural(geo.states, 'state / province', 'states / provinces')}. ${spreadRule}`;
+  } else {
+    out[SPREAD_SIGN] = `${geo.sites ? "the saved site list doesn't say which state or country its sites are in" : 'the company has no saved site list'}. ${spreadRule}`;
+  }
+
+  const all = [...new Set([...(record?.frameworks || []), ...(frameworks || [])].map(f => String(f || '').trim()).filter(Boolean))];
+  const hits = all.filter(f => DISCLOSURE_FRAMEWORKS.includes(f.toUpperCase()));
+  const disclosure = hits.length
+    ? `Strong: the company reports to ${hits.join(', ')}.`
+    : `Absent: the company reports to none of ${DISCLOSURE_FRAMEWORKS.join(', ')}${all.length ? ` (its frameworks: ${all.join(', ')})` : ' (no frameworks on file)'}.`;
+  for (const k of DISCLOSURE_SIGNS) out[k] = `${disclosure} Rule: Strong when it reports to any of ${DISCLOSURE_FRAMEWORKS.join(', ')}, Absent when it reports to none. Frameworks are the company's own plus its Lists-page mappings.`;
+  return out;
+}
+
+/**
+ * The hover text for one Diagnosis sign: why it shows what it shows.
+ * `saved` is what was picked on this MRI, `tracker` / `reasons` the
+ * tracker's ratings and why (trackerSignalReasons), `signals` what the tab
+ * shows (mergeSignals), `labelOf(key)` a sign's name.
+ */
+export function signalReason(key, { saved = {}, tracker = {}, reasons = {}, signals = {}, labelOf = k => k } = {}) {
+  const shown = signals[key] || '';
+  const own = saved?.[key];
+  const trackerNote = tracker[key] && reasons[key] ? `\n\nThe tracker would rate it ${reasons[key]}` : '';
+  if (own === '') return `Cleared by hand, so it is not rated.${trackerNote}`;
+  if (own !== undefined) return `${own}: picked by hand on this Account MRI.${trackerNote}`;
+  const source = SIGNAL_FOLLOWS[key];
+  if (source) {
+    if (!shown) return `Not rated yet. It matches "${labelOf(source)}" until rated here, and that is not rated either.`;
+    const why = signalReason(source, { saved, tracker, reasons, signals, labelOf });
+    return `${shown}: matches "${labelOf(source)}" until you pick a rating here.\n\n"${labelOf(source)}" is ${why}`;
+  }
+  if (tracker[key] && reasons[key]) return `${reasons[key]}\n\nRated by the tracker until you pick a rating here.`;
+  if (!tracker[key] && reasons[key]) {
+    const missing = `Not rated by the tracker: ${reasons[key]}`;
+    return shown ? `${shown} by default: this sign starts ${shown} for every company until a rating is picked.\n\n${missing}` : `${missing}\n\nPick a rating.`;
+  }
+  if (DEFAULT_SIGNALS[key] && shown === DEFAULT_SIGNALS[key]) return `${shown} by default: this sign starts ${shown} for every company until a rating is picked.`;
+  if (shown) return `${shown}.`;
+  return 'Not rated yet: nothing in the tracker rates this sign. Pick a rating.';
+}
+
 // What kind of targets a company has, from its Targets tab, as one line
 // for Brain's Intel notes: "50% Absolute reduction (Scope 1, 2) by 2030,
 // 1.5°C; Net-zero commitment by 2050". Hidden rows are old targets and are

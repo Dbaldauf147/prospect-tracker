@@ -15,6 +15,7 @@ import {
   profileRecordPatch,
   footprintLevel, spreadLevel,
   footprintFromServices, trackerFootprint, mergeFootprint,
+  trackerSignalReasons, signalReason,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -329,6 +330,38 @@ const untouched = await JSZip.loadAsync(templateBytes);
 for (const n of [4, 6, 7]) {
   const path = `xl/worksheets/sheet${n}.xml`;
   eq(await bare.file(path).async('string') === await untouched.file(path).async('string'), true, `an empty form leaves tab ${n} byte for byte`);
+}
+
+
+// ── Why each Diagnosis sign shows what it shows (hover text) ──
+{
+  const rec = { frameworks: ['SBT', 'GRESB'], numberOfSites: '2000', climateTargets: [{ type: 'Net zero', targetYear1: '2050' }] };
+  const siteList = list([{ 'Site Name': 'A', State: 'NY', Country: 'USA' }, { 'Site Name': 'B', State: 'Ontario', Country: 'Canada' }]);
+  const r = trackerSignalReasons(rec, { siteList, frameworks: new Set(['CDP']) });
+  eq(r['immune.0'].startsWith('Strong: the company reports to GRESB, CDP.'), true, 'why: disclosure names the frameworks that count');
+  eq(r['immune.1'], r['immune.0'], 'why: both Immune signs give the same reason');
+  eq(r['skeleton.0'].startsWith("Strong: 2,000 sites (the company's Sites field)."), true, 'why: footprint gives the count and where it came from');
+  eq(r['skeleton.3'].startsWith('Strong: the saved site list has 2 open sites across 2 countries'), true, 'why: spread gives the countries');
+  eq(r['brain.0'].startsWith('Strong: the Targets tab has one target (Net zero'), true, 'why: climate names the target');
+  const none = trackerSignalReasons({ frameworks: ['SBT'] });
+  eq(none['immune.0'].startsWith('Absent: the company reports to none of CDP, GRESB, NZAM, UN PRI (its frameworks: SBT).'), true, 'why: disclosure Absent lists what it does have');
+  eq(none['brain.0'].startsWith('Absent: the Targets tab has no current target.'), true, 'why: no targets');
+  eq(none['skeleton.0'].startsWith("the company's Sites field is empty"), true, 'why: footprint says what is missing');
+  eq(none['skeleton.3'].startsWith('the company has no saved site list'), true, 'why: spread says what is missing');
+  eq(signalReason('skeleton.3', { tracker: trackerSignals({}), reasons: none, signals: mergeSignals(trackerSignals({}), {}) }).startsWith('Not rated by the tracker: the company has no saved site list.'), true, 'hover: an unrated tracker sign says what is missing');
+  eq(signalReason('skeleton.2', { tracker: {}, reasons: none, signals: mergeSignals({}, {}) }).startsWith('Absent by default'), true, 'hover: a defaulted sign with no tracker rule');
+
+  const tracker = trackerSignals(rec, { siteList });
+  const reasons = trackerSignalReasons(rec, { siteList });
+  const ctx = saved => ({ saved, tracker, reasons, signals: mergeSignals(tracker, saved), labelOf: k => k });
+  eq(signalReason('immune.0', ctx({})).startsWith('Strong: the company reports to GRESB.'), true, 'hover: tracker rating gives its reason');
+  eq(signalReason('immune.0', ctx({ 'immune.0': 'Low' })).startsWith('Low: picked by hand on this Account MRI.'), true, 'hover: hand-picked says so');
+  eq(signalReason('immune.0', ctx({ 'immune.0': 'Low' })).includes('The tracker would rate it Strong:'), true, 'hover: hand-picked still shows what the tracker would say');
+  eq(signalReason('immune.0', ctx({ 'immune.0': '' })).startsWith('Cleared by hand'), true, 'hover: cleared by hand');
+  eq(signalReason('heart.0', ctx({})).startsWith('Absent by default'), true, 'hover: a default Absent says it is the default');
+  eq(signalReason('lungs.0', ctx({})).startsWith('Not rated yet'), true, 'hover: an unrated sign says so');
+  eq(signalReason('brain.1', ctx({})).startsWith('Strong: matches "brain.0"'), true, 'hover: a following sign names the one it matches');
+  eq(signalReason('brain.1', ctx({})).includes('the Targets tab has one target'), true, 'hover: and why that one is rated');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

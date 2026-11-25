@@ -21,7 +21,7 @@ import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, isPortfol
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerNotes, trackerFootprint, withTrackerSignals } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -194,7 +194,8 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     const siteList = (siteLists || {})[siteListSlug(record.company)];
     const sites = siteUtilityRows(siteList);
     const frameworks = frameworkFlags.get(String(r.company || '').toLowerCase().trim());
-    const signals = trackerSignals(record, { siteList, frameworks });
+    const signalInputs = { siteList, frameworks };
+    const signals = trackerSignals(record, signalInputs);
     const notes = trackerNotes(record, { frameworks });
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
@@ -213,6 +214,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       trackerProfile,
       trackerCommittee,
       trackerSignals: signals,
+      trackerReasons: trackerSignalReasons(record, signalInputs),
       trackerNotes: notes,
       trackerFootprint: footprint,
       serviceStatuses,
@@ -376,7 +378,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       {openRow && (
         <AccountMriModal
           key={openRow.id}
-          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerNotes: openRow.trackerNotes, trackerFootprint: openRow.trackerFootprint, serviceStatuses: openRow.serviceStatuses }}
+          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerReasons: openRow.trackerReasons, trackerNotes: openRow.trackerNotes, trackerFootprint: openRow.trackerFootprint, serviceStatuses: openRow.serviceStatuses }}
           serviceOptions={serviceOptions}
           form={openRow.form}
           onSave={next => saveForm(openRow.company, next)}
