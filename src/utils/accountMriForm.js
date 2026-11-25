@@ -108,15 +108,28 @@ export function mergeProfile(tracker = {}, saved = {}) {
 // (Stage, Existing client), from other lists (Tier, Services, contracts,
 // contacts) or have no field on the record, so they stay the MRI's own.
 const plainNumber = v => String(v ?? '').replace(/[$,\s]/g, '');
+
+/**
+ * The company's Revenue ($B) as it is stored: a bare amount in billions
+ * (".5", "$40.6" typed by hand) becomes "$0.5B" / "$40.6B", so every screen
+ * reading the free-text Revenue sees the scale. An amount of a million or
+ * more is dollars, and anything worded ("850M", "$1.5B") is kept as typed.
+ */
+export function revenueBillionsText(raw) {
+  const s = String(raw ?? '').trim();
+  const n = plainNumber(s);
+  if (n === '') return '';
+  if (!/^(\d+\.?\d*|\.\d+)$/.test(n)) return s;
+  const value = Number(n);
+  if (!Number.isFinite(value) || value >= 1e6) return s;
+  return `$${value}B`;
+}
 export const PROFILE_RECORD_FIELDS = {
   vertical: v => ({ vertical: v }),
   salesperson: v => ({ cdm: v }),
   hq: v => ({ hqRegion: v }),
   // Revenue ($B) "$40.6" is $40.6 billion; the record's Revenue is free text.
-  revenueB: (v) => {
-    const n = plainNumber(v);
-    return { revenue: n === '' ? '' : Number.isFinite(Number(n)) ? `$${n}B` : String(v) };
-  },
+  revenueB: v => ({ revenue: revenueBillionsText(v) }),
   revenueText: v => ({ revenue: v }),
   sites: v => ({ numberOfSites: plainNumber(v) }),
   background: v => ({ notes: v }),

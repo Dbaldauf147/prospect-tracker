@@ -77,7 +77,11 @@ function MoneyInput({ value, onChange, onBlur, prefix = '$' }) {
       value={shown}
       onChange={e => {
         const before = e.target.value.slice(0, e.target.selectionStart ?? e.target.value.length);
-        caretDigits.current = (before.match(/[\d.]/g) || []).length;
+        // A value that starts at its decimal point (".5") is shown with a
+        // 0 in front ("$0.5"), one more character than was typed before
+        // the caret; counting it keeps the caret after the point.
+        const leadingPoint = /^[^\d]*\./.test(e.target.value) && before.includes('.');
+        caretDigits.current = (before.match(/[\d.]/g) || []).length + (leadingPoint ? 1 : 0);
         onChange(format(e.target.value));
       }}
       onBlur={onBlur}

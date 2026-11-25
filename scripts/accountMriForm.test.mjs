@@ -16,7 +16,7 @@ import {
   footprintLevel, spreadLevel,
   footprintFromServices, trackerFootprint, mergeFootprint,
   trackerSignalReasons, signalReason,
-  withOpportunityDefault, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY,
+  withOpportunityDefault, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY, revenueBillionsText,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -405,6 +405,10 @@ for (const n of [4, 6, 7]) {
   eq(withOpportunityDefault({ opportunity: { owner: 'Dan' } }, none).opportunity, { owner: 'Dan' }, 'something typed: left as it is');
   eq(setNoActiveOpportunity({}, false), { noActive: false }, 'unticking keeps that it was unticked');
 }
+
+eq(['.5', '$.5', '40.6', '$1.5B', '850M', '1630000000', 'n/a', ''].map(revenueBillionsText),
+  ['$0.5B', '$0.5B', '$40.6B', '$1.5B', '850M', '1630000000', 'n/a', ''], 'company Revenue ($B): bare amounts stored as billions');
+eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B) .5 writes $0.5B');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
