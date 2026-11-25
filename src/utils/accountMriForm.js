@@ -13,7 +13,7 @@
 import { MRI_PROFILE_FIELDS, NO_COMPETITOR, siteGeography } from './accountMri.js';
 import { normalizeTargets, isNoTargetRow, hasTargetValues, NO_TARGET_TYPE } from './companyTargets.js';
 import { scopeTokens, scopeTokenMatchesService } from './scopeMatch.js';
-import { activeStageRank } from './oppStages.js';
+import { activeStageRank, ACTIVE_STAGE_RANK } from './oppStages.js';
 
 export const MRI_LISTS = {
   tier: ['Not set', 'Tier I', 'Tier II', 'Tier III'],
@@ -596,7 +596,22 @@ export const OPPORTUNITY_FIELDS = OPPORTUNITY_SECTIONS.flatMap(s => s.fields);
 // BFO History (matched on the opp name) its % Probability and close date
 // (the opp's own Close Date when BFO has none). The owner is the account's CDM.
 export const MRI_OPPORTUNITY_OWNER = 'Dan Baldauf';
-export const OPPORTUNITY_FROM_OPPS = new Set(['name', 'owner', 'planStarted', 'workingSince', 'targetClose', 'odds', 'revenue', 'cameFrom']);
+export const OPPORTUNITY_FROM_OPPS = new Set(['name', 'owner', 'planStarted', 'workingSince', 'targetClose', 'odds', 'revenue', 'cameFrom',
+  'desiredResult', 'successCriteria', 'barrier', 'time', 'timeValidated', 'people', 'peopleValidated', 'money', 'moneyValidated']);
+
+// What tab 4 says for something not known yet.
+export const TBD = 'TBD';
+// Before the opp is Quoted these aren't known yet, so they read TBD.
+const TBD_BEFORE_QUOTED = ['desiredResult', 'successCriteria', 'barrier'];
+// Each Resources answer, the opp's pick it comes from, and its "client
+// validated?" row: Yes once there is an answer, No while it is TBD.
+const RESOURCE_PICKS = [
+  { key: 'time', from: 'resultsTiming', validated: 'timeValidated' },
+  { key: 'people', from: 'peopleCommitted', validated: 'peopleValidated' },
+  { key: 'money', from: 'budget', validated: 'moneyValidated' },
+];
+// "Unknown" on a pick is no answer.
+const pickValue = v => (isBlank(v) || String(v).trim().toLowerCase() === 'unknown' ? '' : String(v).trim());
 
 const oppKey = v => String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 const isoDay = (raw) => {
@@ -654,6 +669,13 @@ export function trackerOpportunity(liveOpps, bfoHistory = []) {
     revenue: dollars(opp.amount) || dollars(bfo?.amount),
     cameFrom: opp.source,
   };
+  const rank = activeStageRank(opp.stage);
+  if (rank > 0 && rank < ACTIVE_STAGE_RANK.Quoted) for (const k of TBD_BEFORE_QUOTED) out[k] = TBD;
+  for (const r of RESOURCE_PICKS) {
+    const v = pickValue(opp[r.from]);
+    out[r.key] = v || TBD;
+    out[r.validated] = v ? 'Yes' : 'No';
+  }
   return Object.fromEntries(Object.entries(out).filter(([, v]) => !isBlank(v)));
 }
 
@@ -667,6 +689,13 @@ export function withTrackerOpportunity(form, tracker) {
   if (o.noActive || !tracker || !Object.keys(tracker).length) return f;
   const filled = { ...o };
   for (const [k, v] of Object.entries(tracker)) if (isBlank(o[k])) filled[k] = v;
+  // A validated row left blank follows its answer as it now reads, typed or
+  // from the opp: Yes when there is one, No while it is TBD.
+  for (const r of RESOURCE_PICKS) {
+    if (!isBlank(o[r.validated]) || tracker[r.validated] === undefined) continue;
+    const answer = String(filled[r.key] ?? '').trim();
+    filled[r.validated] = answer && answer !== TBD ? 'Yes' : 'No';
+  }
   return { ...f, opportunity: filled };
 }
 

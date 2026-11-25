@@ -359,5 +359,10 @@ eq(fillTableSheet(s3, MRI_COMMITTEE_TABLE, []).xml === s3, true, 'no decision ma
   eq(accountStanding(people, undefined, acct), { champions: [], detractors: [] }, 'nobody marked');
 }
 
+{
+  const live = accountLiveOpps([{ Account: 'Rehlko', Stage: 'Quoting', Scope: 'EaaS', 'When Does the Client Want Results?': '3-6 months', 'People the Client Will Commit': 'Named team committed', 'Client Has Budget?': 'Being requested' }], { company: 'Rehlko' });
+  eq([live.own[0].resultsTiming, live.own[0].peopleCommitted, live.own[0].budget], ['3-6 months', 'Named team committed', 'Being requested'], 'own live opp carries the Quoting picks');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
