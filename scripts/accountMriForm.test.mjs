@@ -468,18 +468,40 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   eq(trackerOpportunity(live, bfo), {
     name: 'Blue Owl - RA+ Climate Risk', owner: 'Dan Baldauf', planStarted: '2026-11-04', workingSince: '2026-11-04',
     targetClose: '2026-12-15', odds: '40', revenue: '13750', cameFrom: 'Inbound',
+    time: 'TBD', timeValidated: 'No', people: 'TBD', peopleValidated: 'No', money: 'TBD', moneyValidated: 'No',
   }, 'tab 4 from the opp: BFO close date and % Probability');
   const noBfo = trackerOpportunity({ own: [live.own[1]] }, []);
   eq([noBfo.targetClose, noBfo.odds], ['2027-03-31', undefined], 'no BFO row: the opp\'s own close date, odds left blank');
   eq(trackerOpportunity({ own: [], portfolio: [{}] }), {}, 'no own opp: nothing');
   eq(trackerOpportunitySources(live, bfo), {
     name: 'Opps', owner: 'Opps', planStarted: 'Opps', workingSince: 'Opps', targetClose: 'BFO', odds: 'BFO', revenue: 'Opps', cameFrom: 'Opps',
+    time: 'Opps', timeValidated: 'Opps', people: 'Opps', peopleValidated: 'Opps', money: 'Opps', moneyValidated: 'Opps',
   }, 'sources: odds and the BFO close date from BFO');
   eq(trackerOpportunitySources({ own: [live.own[1]] }, []).targetClose, 'Opps', 'no BFO row: close date from Opps');
   const t = trackerOpportunity(live, bfo);
   eq(withTrackerOpportunity({ opportunity: { name: 'Typed', revenue: '' } }, t).opportunity.name, 'Typed', 'typed wins');
   eq(withTrackerOpportunity({ opportunity: { revenue: '' } }, t).opportunity.revenue, '13750', 'blank is filled');
   eq(withTrackerOpportunity({ opportunity: { noActive: true, name: NO_ACTIVE_OPPORTUNITY } }, t).opportunity.name, NO_ACTIVE_OPPORTUNITY, 'no active ticked: left alone');
+}
+
+// Tab 4: TBD before Quoted, and Time / People / Money from the Quoting picks.
+{
+  const opp = extra => ({ own: [{ stage: 'Qualifying', ...extra }], portfolio: [] });
+  const early = trackerOpportunity(opp({}));
+  eq([early.desiredResult, early.successCriteria, early.barrier], ['TBD', 'TBD', 'TBD'], 'before Quoted: desired result, success criteria and barrier read TBD');
+  const quoted = trackerOpportunity({ own: [{ stage: 'Quoted' }], portfolio: [] });
+  eq([quoted.desiredResult, quoted.successCriteria, quoted.barrier], [undefined, undefined, undefined], 'Quoted: left to fill in');
+  const later = trackerOpportunity({ own: [{ stage: 'Contracting' }], portfolio: [] });
+  eq(later.barrier, undefined, 'past Quoted: left to fill in');
+  eq([early.time, early.timeValidated, early.people, early.peopleValidated, early.money, early.moneyValidated],
+    ['TBD', 'No', 'TBD', 'No', 'TBD', 'No'], 'no Quoting picks: TBD, not validated');
+  const picked = trackerOpportunity(opp({ resultsTiming: '1-3 months', peopleCommitted: 'Sponsor only', budget: 'Unknown' }));
+  eq([picked.time, picked.timeValidated, picked.people, picked.peopleValidated, picked.money, picked.moneyValidated],
+    ['1-3 months', 'Yes', 'Sponsor only', 'Yes', 'TBD', 'No'], 'picks fill Time / People / Money and mark them validated; Unknown is no answer');
+  const typed = withTrackerOpportunity({ opportunity: { time: 'Q3 2027', desiredResult: 'Lower bills' } }, early).opportunity;
+  eq([typed.time, typed.timeValidated, typed.desiredResult], ['Q3 2027', 'Yes', 'Lower bills'], 'typed answers stand, and a typed Time counts as validated');
+  const kept = withTrackerOpportunity({ opportunity: { timeValidated: 'No', time: 'Soon' } }, picked).opportunity;
+  eq(kept.timeValidated, 'No', 'a validated row picked by hand stands');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
