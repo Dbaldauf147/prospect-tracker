@@ -257,9 +257,9 @@ eq(
 );
 eq(trackerSignals({ climateTargets: [{ type: 'Net zero' }] }), { 'brain.0': 'Strong', 'immune.0': 'Absent', 'immune.1': 'Absent' }, 'tracker signals');
 eq(
-  [[], ['CDP'], ['GRESB'], ['NZAM'], ['UN PRI'], ['un pri'], ['SBT', 'CSRD', 'Ecovadis', 'CA SB'], ['SBT', 'GRESB']].map(disclosureLevel),
-  ['Absent', 'Strong', 'Strong', 'Strong', 'Strong', 'Strong', 'Absent', 'Strong'],
-  'disclosure level from CDP / GRESB / NZAM / UN PRI',
+  [[], ['CDP'], ['GRESB'], ['NZAM'], ['UN PRI'], ['un pri'], ['SBT', 'Ecovadis', 'RECA'], ['SBT', 'GRESB'], ['CSRD'], ['CA SB']].map(disclosureLevel),
+  ['Absent', 'Strong', 'Strong', 'Strong', 'Strong', 'Strong', 'Absent', 'Strong', 'Strong', 'Strong'],
+  'disclosure level from CDP / GRESB / NZAM / UN PRI / CSRD / CA SB',
 );
 eq((({ 'immune.0': a, 'immune.1': b }) => [a, b])(trackerSignals({ frameworks: ['UN PRI'] })), ['Strong', 'Strong'], "the record's own frameworks count");
 eq((({ 'immune.0': a, 'immune.1': b }) => [a, b])(trackerSignals({ frameworks: ['SBT'] }, { frameworks: new Set(['CDP']) })), ['Strong', 'Strong'], 'a Lists-page flag counts');
@@ -308,6 +308,8 @@ eq(disclosureFrameworkList(['UN PRI', 'SBT', 'gresb']), 'GRESB, UN PRI', 'only G
 eq(disclosureFrameworkList(['SBT']), '', 'none of the four');
 eq(trackerNotes({ frameworks: ['CDP'] }, { frameworks: new Set(['NZAM']) }).immune, 'CDP, NZAM', 'the record\'s own and the Lists-page frameworks');
 eq('immune' in trackerNotes({}), false, 'no frameworks, Immune keeps -');
+eq([['CSRD'], ['ca sb'], ['RECA', 'SBT']].map(f => trackerSignals({ frameworks: f })['immune.0']), ['Strong', 'Strong', 'Absent'], 'CSRD and CA SB count as disclosure frameworks');
+eq(trackerNotes({ frameworks: ['CA SB', 'CSRD', 'GRESB'] }).immune, 'GRESB, CSRD, CA SB', 'Immune note lists CSRD and CA SB');
 eq(diagnosisNotes(trackerNotes({}, { frameworks: ['GRESB'] })).immune, 'GRESB', 'Immune note from Frameworks');
 
 // Brain's Intel notes: the kind of targets the company has.
@@ -357,7 +359,7 @@ for (const n of [4, 6, 7]) {
   eq(r['skeleton.3'].startsWith('Strong: the saved site list has 2 open sites across 2 countries'), true, 'why: spread gives the countries');
   eq(r['brain.0'].startsWith('Strong: the Targets tab has one target (Net zero'), true, 'why: climate names the target');
   const none = trackerSignalReasons({ frameworks: ['SBT'] });
-  eq(none['immune.0'].startsWith('Absent: the company reports to none of CDP, GRESB, NZAM, UN PRI (its frameworks: SBT).'), true, 'why: disclosure Absent lists what it does have');
+  eq(none['immune.0'].startsWith('Absent: the company reports to none of CDP, GRESB, NZAM, UN PRI, CSRD, CA SB (its frameworks: SBT).'), true, 'why: disclosure Absent lists what it does have');
   eq(none['brain.0'].startsWith('Absent: the Targets tab has no current target.'), true, 'why: no targets');
   eq(none['skeleton.0'].startsWith("the company's Sites field is empty"), true, 'why: footprint says what is missing');
   eq(none['skeleton.3'].startsWith('the company has no saved site list'), true, 'why: spread says what is missing');
