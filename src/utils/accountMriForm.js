@@ -10,7 +10,7 @@
 // formulas); scripts/accountMriForm.test.mjs holds them to it.
 //
 // Imported with extensions so this loads under plain Node for the tests.
-import { MRI_PROFILE_FIELDS, NO_COMPETITOR } from './accountMri.js';
+import { MRI_PROFILE_FIELDS, NO_COMPETITOR, siteGeography } from './accountMri.js';
 import { normalizeTargets, isNoTargetRow, hasTargetValues, NO_TARGET_TYPE } from './companyTargets.js';
 
 export const MRI_LISTS = {
@@ -220,8 +220,34 @@ export function climateCommitmentLevel(climateTargets) {
   return 'Moderate';
 }
 
-// The signs "Regulatory disclosure exposure" and "Investor / customer ESG
-// scrutiny" read from the frameworks the company reports to: Strong when it
+// The tracker's own Diagnosis ratings for a company record.
+// Skeleton's "Footprint scale (sites / sq ft)" from the company's site
+// count: Strong over 100 sites, Moderate for 50 to 100, Low under 50. ''
+// when the count isn't known.
+export const FOOTPRINT_SIGN = 'skeleton.0';
+export function footprintLevel(siteCount) {
+  const n = Number(String(siteCount ?? '').replace(/[,\s]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n > 100) return 'Strong';
+  if (n >= 50) return 'Moderate';
+  return 'Low';
+}
+
+// Skeleton's "Geographic spread" from where the company's listed sites are
+// (siteGeography): Strong across more than one country, Moderate across
+// more than one state, Low in one state (or a single site). '' when the
+// list doesn't say where its sites are.
+export const SPREAD_SIGN = 'skeleton.3';
+export function spreadLevel(geo) {
+  if (!geo?.sites) return '';
+  if (geo.countries > 1) return 'Strong';
+  if (geo.states > 1) return 'Moderate';
+  if (geo.states === 1 || geo.sites === 1) return 'Low';
+  return '';
+}
+
+// Immune's "Regulatory disclosure exposure" and "Investor / customer ESG
+// scrutiny" from the frameworks the company reports to: Strong when it
 // reports to any of CDP, GRESB, NZAM or UN PRI, Absent when it reports to
 // none of them.
 export const DISCLOSURE_SIGNS = ['immune.0', 'immune.1'];
@@ -231,25 +257,31 @@ export function disclosureLevel(frameworks) {
   return DISCLOSURE_FRAMEWORKS.some(f => have.has(f)) ? 'Strong' : 'Absent';
 }
 
-// Where each tracker-rated sign is read from, for the popup's "from ..." hint.
-export const SIGNAL_SOURCES = {
-  [CLIMATE_COMMITMENT_SIGN]: { label: 'Targets', title: "Rated from the company's Targets tab until you pick a rating here" },
-  ...Object.fromEntries(DISCLOSURE_SIGNS.map(k => [k, {
-    label: 'Frameworks',
-    title: `Strong when the company reports to ${DISCLOSURE_FRAMEWORKS.join(', ')}, Absent when it reports to none of them, until you pick a rating here`,
-  }])),
+// Where each tracker rating comes from, for the tag beside the sign.
+export const SIGNAL_SOURCE = {
+  [CLIMATE_COMMITMENT_SIGN]: 'Targets',
+  [FOOTPRINT_SIGN]: 'Sites',
+  [SPREAD_SIGN]: 'site list',
+  ...Object.fromEntries(DISCLOSURE_SIGNS.map(k => [k, 'Frameworks'])),
 };
 
-// The tracker's own Diagnosis ratings for a company record. `frameworks`
-// is every framework the company is flagged with (its own list plus the
+// The tracker's own Diagnosis ratings for a company record and its saved
+// site list (settings.companySiteLists entry). The site count is the
+// record's Sites field, else how many sites the list has. `frameworks` is
+// every framework the company is flagged with (its own list plus the
 // Lists-page mappings, as the Frameworks column shows); the record's own
-// list is used when it isn't given.
-export function trackerSignals(record, frameworks) {
-  const level = disclosureLevel([...(record?.frameworks || []), ...(frameworks || [])]);
-  return {
-    [CLIMATE_COMMITMENT_SIGN]: climateCommitmentLevel(record?.climateTargets),
-    ...Object.fromEntries(DISCLOSURE_SIGNS.map(k => [k, level])),
-  };
+// list is read either way.
+export function trackerSignals(record, { siteList = null, frameworks = null } = {}) {
+  const geo = siteGeography(siteList);
+  const count = footprintLevel(record?.numberOfSites) ? record.numberOfSites : geo.sites;
+  const out = { [CLIMATE_COMMITMENT_SIGN]: climateCommitmentLevel(record?.climateTargets) };
+  const footprint = footprintLevel(count);
+  if (footprint) out[FOOTPRINT_SIGN] = footprint;
+  const spread = spreadLevel(geo);
+  if (spread) out[SPREAD_SIGN] = spread;
+  const disclosure = disclosureLevel([...(record?.frameworks || []), ...(frameworks || [])]);
+  for (const k of DISCLOSURE_SIGNS) out[k] = disclosure;
+  return out;
 }
 
 // What kind of targets a company has, from its Targets tab, as one line

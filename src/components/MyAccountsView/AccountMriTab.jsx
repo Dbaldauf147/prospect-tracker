@@ -175,10 +175,11 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       contacts.filter(c => isDecisionMakerContact(c) && !isPortfolioCompanyContact(c, record)),
     );
     const form = (savedForms || {})[mriSlug(r.company)] || null;
-    const signals = trackerSignals(record, frameworkFlags.get(String(r.company || '').toLowerCase().trim()));
     const notes = trackerNotes(record);
     const profile = mergeProfile(trackerProfile, form?.profile).values;
-    const sites = siteUtilityRows((siteLists || {})[siteListSlug(record.company)]);
+    const siteList = (siteLists || {})[siteListSlug(record.company)];
+    const sites = siteUtilityRows(siteList);
+    const signals = trackerSignals(record, { siteList, frameworks: frameworkFlags.get(String(r.company || '').toLowerCase().trim()) });
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
     const stage = mriStageProgress(tabProgress({

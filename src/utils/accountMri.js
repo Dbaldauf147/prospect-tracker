@@ -15,6 +15,7 @@
 // Imported with extensions so this loads under plain Node for the tests.
 import { isPrimaryPoc } from './attendeeRoles.js';
 import { isActiveSiteStatus, pickSiteStatusColumn } from './siteStatus.js';
+import { normalizeState } from './utilityRates.js';
 import { asDate, asNumber, isInactiveAgreement } from './dealsFormat.js';
 import { scopeServiceStatuses } from './scopeServiceStatus.js';
 import { companiesMatch } from './listFlags.js';
@@ -630,6 +631,37 @@ export function siteUtilityRows(entry) {
       fuelUnits: fuel == null ? '' : (unitIn(fuelCol) || unitIn(cell(row, fuelUnitCol)) || cell(row, fuelUnitCol)),
     };
   });
+}
+
+// The United States written any of the usual ways, as one country.
+const US_NAMES = new Set(['us', 'usa', 'united states', 'united states of america', 'america']);
+const countryKey = v => {
+  const k = text(v).toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ');
+  return US_NAMES.has(k) ? 'us' : k;
+};
+
+/**
+ * How spread out a company's active sites are, from its saved site list
+ * (the same list and columns siteUtilityRows reads): how many `sites`, and
+ * how many different `countries` and `states` they are in. A state written
+ * as a code or a name ("NY", "New York") counts once.
+ */
+export function siteGeography(entry) {
+  const headers = (entry?.headers || []).filter(h => typeof h === 'string');
+  const listed = (entry?.rows || []).filter(r => r && typeof r === 'object');
+  const statusCol = pickSiteStatusColumn(headers);
+  const rows = statusCol ? listed.filter(r => isActiveSiteStatus(r[statusCol])) : listed;
+  const stateCol = findHeader(headers, [/^st\s*\/\s*prov/i, /^state\s*\(analysis/i, /^state$/i, /^province$/i, /state\s*\/\s*prov/i, /\bstate\b/i, /\bprovince\b/i]);
+  const countryCol = findHeader(headers, [/^country\s*\(analysis/i, /^country$/i, /\bcountry\b/i]);
+  const countries = new Set();
+  const states = new Set();
+  for (const row of rows) {
+    const country = countryCol ? countryKey(row[countryCol]) : '';
+    if (country) countries.add(country);
+    const state = stateCol ? text(row[stateCol]) : '';
+    if (state) states.add(`${country}|${normalizeState(state) || state.toLowerCase()}`);
+  }
+  return { sites: rows.length, countries: countries.size, states: states.size };
 }
 
 /**

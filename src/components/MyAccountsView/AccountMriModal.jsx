@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals, SIGNAL_SOURCES, PROFILE_RECORD_FIELDS, profileRecordPatch,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals, SIGNAL_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -222,7 +222,7 @@ function DiagnosisTab({ diagnosis, tracker = {}, trackerNoteFor = {}, onChange }
                     <span style={{ flex: 1, fontSize: '0.8rem', color: INK }}>
                       {sign.label}
                       {tracker[sign.key] && diagnosis.signals?.[sign.key] === undefined && (
-                        <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 500, color: SAGE }} title={SIGNAL_SOURCES[sign.key]?.title || 'Rated by the tracker until you pick a rating here'}>from {SIGNAL_SOURCES[sign.key]?.label || 'tracker'}</span>
+                        <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 500, color: SAGE }} title={`Rated from the company's ${SIGNAL_SOURCE[sign.key] || 'record'} until you pick a rating here`}>from {SIGNAL_SOURCE[sign.key] || 'tracker'}</span>
                       )}
                     </span>
                     <Segmented options={MRI_LISTS.level} value={signals[sign.key] || ''} fill={LEVEL_FILL} onChange={v => set('signals', sign.key, v)} />
