@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, energyShareNote, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -623,7 +623,12 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   );
   // The form with the tracker's Diagnosis ratings filled in where none was picked.
   const signalsFromTracker = row.trackerSignals;
-  const notesFromTracker = row.trackerNotes;
+  // Heart's note follows tab 1's Energy spend and Revenue as they are typed.
+  const notesFromTracker = useMemo(() => {
+    const { heart: _saved, ...rest } = row.trackerNotes || {};
+    const heart = energyShareNote(merged.values);
+    return heart ? { ...rest, heart } : rest;
+  }, [row.trackerNotes, merged.values]);
   const footprintFromTracker = row.trackerFootprint;
   const effectiveForm = useMemo(() => withTrackerSignals(form, signalsFromTracker, notesFromTracker, footprintFromTracker), [form, signalsFromTracker, notesFromTracker, footprintFromTracker]);
   const progress = useMemo(
@@ -707,7 +712,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
         diagnosis={form.diagnosis || {}}
         tracker={row.trackerSignals || {}}
         trackerReasons={row.trackerReasons || {}}
-        trackerNoteFor={row.trackerNotes || {}}
+        trackerNoteFor={notesFromTracker}
         trackerFootprintFor={row.trackerFootprint || {}}
         systemServices={settings?.mriSystemServices || {}}
         serviceOptions={serviceOptions}

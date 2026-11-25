@@ -11,7 +11,7 @@ import {
   MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows, addMissingDecisionMakers, tabProgress,
   mriStageProgress,
   mriFormExport, diagnosisSignals, diagnosisNotes, DEFAULT_SIGNALS, dateSerial, mriSlug, formatMoneyInput, formatNumberInput, profileDisplayValue,
-  climateCommitmentLevel, disclosureLevel, trackerSignals, mergeSignals, withTrackerSignals, climateTargetSummary, trackerNotes, disclosureFrameworkList,
+  climateCommitmentLevel, disclosureLevel, trackerSignals, mergeSignals, withTrackerSignals, climateTargetSummary, trackerNotes, disclosureFrameworkList, energyShareNote,
   profileRecordPatch,
   footprintLevel, spreadLevel,
   footprintFromServices, trackerFootprint, mergeFootprint,
@@ -302,6 +302,15 @@ eq(mergeSignals({ 'brain.0': 'Moderate' }, { 'brain.0': 'Low' })['brain.1'], 'Lo
 eq(mergeSignals({ 'brain.0': 'Strong' }, { 'brain.1': 'Absent' })['brain.1'], 'Absent', 'a rating picked for it wins');
 eq('brain.1' in mergeSignals({ 'brain.0': 'Strong' }, { 'brain.1': '' }), false, 'cleared by hand stays cleared');
 eq('brain.1' in diagnosisSignals({}), false, 'nothing to match, nothing shown');
+
+// Heart's Intel notes: energy spend as a share of revenue.
+eq(energyShareNote({ energySpend: '40', revenueB: '1.63' }), 'Energy spend is 2.5% of revenue ($40M of $1.63B)', 'in the rows\' units: $M and $B');
+eq(energyShareNote({ energySpend: '$200,000,000', revenueB: '$40.6' }), 'Energy spend is 0.49% of revenue ($200M of $40.6B)', 'energy spend written out in dollars');
+eq(energyShareNote({ energySpend: '150', revenueB: 1.2 }), 'Energy spend is 13% of revenue ($150M of $1.2B)', 'a share of 10% or more is a whole number');
+eq(energyShareNote({ energySpend: '', revenueB: '1.63' }), '', 'no energy spend, no note');
+eq(energyShareNote({ energySpend: '40' }), '', 'no revenue, no note');
+eq(trackerNotes({}, { profile: { energySpend: '40', revenueB: '1.63' } }).heart, 'Energy spend is 2.5% of revenue ($40M of $1.63B)', 'Heart note from tab 1');
+eq(diagnosisNotes(trackerNotes({}, { profile: {} })).heart, '-', 'Heart keeps - without both figures');
 
 // Immune's Intel notes: the disclosure frameworks the company reports to.
 eq(disclosureFrameworkList(['UN PRI', 'SBT', 'gresb']), 'GRESB, UN PRI', 'only GRESB, CDP, UN PRI and NZAM, in that order');

@@ -392,8 +392,10 @@ export function climateTargetSummary(climateTargets) {
 // of targets it has, Immune's the disclosure frameworks it reports to
 // (`frameworks` as trackerSignals takes them). Only notes the tracker has
 // something for are given.
-export function trackerNotes(record, { frameworks = null } = {}) {
+export function trackerNotes(record, { frameworks = null, profile = null } = {}) {
   const out = {};
+  const heart = energyShareNote(profile);
+  if (heart) out.heart = heart;
   const brain = climateTargetSummary(record?.climateTargets);
   if (brain) out.brain = brain;
   const immune = disclosureFrameworkList([...(record?.frameworks || []), ...(frameworks || [])]);
@@ -408,8 +410,29 @@ export function disclosureFrameworkList(frameworks) {
   return ['GRESB', 'CDP', 'UN PRI', 'NZAM'].filter(f => have.has(f)).join(', ');
 }
 
+// Heart's Intel notes: energy spend as a share of revenue, from tab 1's
+// Energy spend ($M/yr) and Revenue ($B) as shown (`profile`, typed or the
+// tracker's). Each is read in its row's unit ("40" is $40M a year, "1.63"
+// is $1.63B), and a figure written out in full dollars ("200,000,000") is
+// read as dollars. '' when either is missing.
+const asAmount = (v) => {
+  const n = Number(String(v ?? '').replace(/[$,\s]/g, ''));
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+const shortDollars = (d) => (d >= 1e9 ? `$${+(d / 1e9).toFixed(2)}B` : `$${+(d / 1e6).toFixed(1)}M`);
+export function energyShareNote(profile) {
+  const energy = asAmount(profile?.energySpend);
+  const revenue = asAmount(profile?.revenueB);
+  if (energy == null || revenue == null) return '';
+  const energyDollars = energy >= 1e5 ? energy : energy * 1e6;
+  const revenueDollars = revenue >= 1e5 ? revenue : revenue * 1e9;
+  const pct = (energyDollars / revenueDollars) * 100;
+  const shown = pct >= 10 ? pct.toFixed(0) : pct >= 1 ? pct.toFixed(1) : pct.toFixed(2);
+  return `Energy spend is ${+shown}% of revenue (${shortDollars(energyDollars)} of ${shortDollars(revenueDollars)})`;
+}
+
 // Where each tracker Intel note comes from, for the tag beside the box.
-export const NOTE_SOURCE = { brain: 'Targets', immune: 'Frameworks' };
+export const NOTE_SOURCE = { brain: 'Targets', heart: 'Energy spend / Revenue', immune: 'Frameworks' };
 
 // Tab 2's ratings as shown: the defaults (DEFAULT_SIGNALS), then the
 // tracker's ratings, then what was picked by hand. A sign cleared by hand is
