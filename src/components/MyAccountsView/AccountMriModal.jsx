@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals, SIGNAL_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals, SIGNAL_SOURCE, NOTE_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -242,7 +242,7 @@ function DiagnosisTab({ diagnosis, tracker = {}, trackerNoteFor = {}, onChange }
               <div style={{ marginTop: '0.7rem' }}>
                 <Field
                   field={{ label: 'Intel notes', type: 'textarea' }}
-                  hint={trackerNoteFor[system.key] && diagnosis.notes?.[system.key] === undefined ? 'from Targets' : ''}
+                  hint={trackerNoteFor[system.key] && diagnosis.notes?.[system.key] === undefined ? `from ${NOTE_SOURCE[system.key] || 'tracker'}` : ''}
                   value={notes[system.key]}
                   onChange={v => set('notes', system.key, v)}
                 />
