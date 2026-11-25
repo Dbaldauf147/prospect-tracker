@@ -16,7 +16,8 @@ import {
   footprintLevel, spreadLevel,
   footprintFromServices, trackerFootprint, mergeFootprint,
   trackerSignalReasons, signalReason,
-  withOpportunityDefault, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY, revenueBillionsText,
+  withNoActiveDefaults, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY, revenueBillionsText,
+  setNoActiveDealHealth, setNoActiveClosePlan,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -396,19 +397,43 @@ for (const n of [4, 6, 7]) {
 // Tab 4: "No active opportunity" ticked on its own.
 {
   const none = { own: [], portfolio: [] };
-  const auto = withOpportunityDefault({}, none).opportunity;
+  const auto = withNoActiveDefaults({}, none).opportunity;
   eq([auto.noActive, auto.noActiveAuto, auto.name], [true, true, NO_ACTIVE_OPPORTUNITY], 'no live opp: ticked on its own');
-  eq(withOpportunityDefault({}, { own: [{}], portfolio: [] }).opportunity, undefined, 'a live opp on the company: not ticked');
-  eq(withOpportunityDefault({}, { own: [], portfolio: [{}] }).opportunity, undefined, 'a live opp on a portfolio company: not ticked');
-  eq(withOpportunityDefault({}, null).opportunity, undefined, 'opps not loaded: not ticked');
-  eq(withOpportunityDefault({ opportunity: { noActive: false } }, none).opportunity, { noActive: false }, 'unticked by hand: stays unticked');
-  eq(withOpportunityDefault({ opportunity: { owner: 'Dan' } }, none).opportunity, { owner: 'Dan' }, 'something typed: left as it is');
+  eq(withNoActiveDefaults({}, { own: [{}], portfolio: [] }).opportunity, undefined, 'a live opp on the company: not ticked');
+  eq(withNoActiveDefaults({}, { own: [], portfolio: [{}] }).opportunity, undefined, 'a live opp on a portfolio company: not ticked');
+  eq(withNoActiveDefaults({}, null).opportunity, undefined, 'opps not loaded: not ticked');
+  eq(withNoActiveDefaults({ opportunity: { noActive: false } }, none).opportunity, { noActive: false }, 'unticked by hand: stays unticked');
+  eq(withNoActiveDefaults({ opportunity: { owner: 'Dan' } }, none).opportunity, { owner: 'Dan' }, 'something typed: left as it is');
   eq(setNoActiveOpportunity({}, false), { noActive: false }, 'unticking keeps that it was unticked');
 }
 
 eq(['.5', '$.5', '40.6', '$1.5B', '850M', '1630000000', 'n/a', ''].map(revenueBillionsText),
   ['$0.5B', '$0.5B', '$40.6B', '$1.5B', '850M', '1630000000', 'n/a', ''], 'company Revenue ($B): bare amounts stored as billions');
 eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B) .5 writes $0.5B');
+
+// Tabs 6 and 7 follow tab 4.
+{
+  const none = { own: [], portfolio: [] };
+  const f = withNoActiveDefaults({}, none);
+  eq([f.dealHealth.noActive, f.dealHealth.noActiveAuto, f.dealHealth.buy.businessCase, f.dealHealth.ours.technical], [true, true, 'Unknown', 'Unknown'], 'deal health: no live opp, every rating Unknown');
+  eq([f.closePlanNoActive, f.closePlanNoActiveAuto, f.closePlan.map(r => r.what)], [true, true, [NO_ACTIVE_OPPORTUNITY]], 'close plan: no live opp, one No Active Opportunity row');
+  const p = tabProgress({ form: f });
+  eq([p.opportunity, p.dealHealth, p.closePlan], [100, 100, 100], 'no active opportunity answers tabs 4, 6 and 7');
+  const live = withNoActiveDefaults({}, { own: [{}], portfolio: [] });
+  eq([live.dealHealth, live.closePlan], [undefined, undefined], 'a live opp: tabs 6 and 7 left alone');
+  const rated = withNoActiveDefaults({ dealHealth: { buy: { process: 'Agree' } } }, none);
+  eq(rated.dealHealth, { buy: { process: 'Agree' } }, 'deal health with a rating: left as it is');
+  const planned = withNoActiveDefaults({ closePlan: [{ id: 'a', what: 'Send proposal' }] }, none);
+  eq(planned.closePlan, [{ id: 'a', what: 'Send proposal' }], 'close plan with an activity: left as it is');
+  eq(withNoActiveDefaults({ closePlan: [{ id: 'a' }] }, none).closePlanNoActive, true, 'a blank activity row does not count');
+  eq(setNoActiveDealHealth(f.dealHealth, false), { noActive: false }, 'deal health: unticking keeps that it was unticked');
+  const ticked = setNoActiveDealHealth({ buy: { process: 'Agree' } }, true);
+  eq(setNoActiveDealHealth(ticked, false), { buy: { process: 'Agree' }, noActive: false }, 'deal health: unticking brings the ratings back');
+  const cp = setNoActiveClosePlan({ closePlan: [{ id: 'a', what: 'Send proposal' }] }, true);
+  eq([cp.closePlanNoActive, cp.closePlan[0].what], [true, NO_ACTIVE_OPPORTUNITY], 'close plan: ticking replaces the activities');
+  eq(setNoActiveClosePlan({ ...cp }, false), { closePlan: [{ id: 'a', what: 'Send proposal' }], closePlanNoActive: false, closePlanBeforeNoActive: null }, 'close plan: unticking brings them back');
+  eq(withNoActiveDefaults({ closePlanNoActive: false, closePlan: [] }, none).closePlanNoActive, false, 'close plan unticked by hand stays unticked');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

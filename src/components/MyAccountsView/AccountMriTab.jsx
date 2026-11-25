@@ -21,7 +21,7 @@ import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, accountTr
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals, withOpportunityDefault } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals, withNoActiveDefaults } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -225,7 +225,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
     const stage = mriStageProgress(tabProgress({
-      form: withOpportunityDefault(withTrackerSignals(form, signals, notes, footprint), liveOpps),
+      form: withNoActiveDefaults(withTrackerSignals(form, signals, notes, footprint), liveOpps),
       profile,
       committee: committeeRows(form?.committee, trackerCommittee),
       sites,
@@ -382,7 +382,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
         sites: one.sites,
         // The tracker's ratings and notes, and the defaults, go out even for
         // a company nothing has been saved for yet.
-        extra: mriFormExport(withOpportunityDefault(withTrackerSignals(one.form, one.trackerSignals, one.trackerNotes, one.trackerFootprint), one.liveOpps)),
+        extra: mriFormExport(withNoActiveDefaults(withTrackerSignals(one.form, one.trackerSignals, one.trackerNotes, one.trackerFootprint), one.liveOpps)),
       });
     } catch (err) {
       setError(err?.message || 'The export failed.');

@@ -12,9 +12,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, setNoActiveOpportunity, noActiveDisplay, BUY_STATEMENTS, OURS_STATEMENTS,
+  MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, setNoActiveOpportunity, setNoActiveDealHealth, setNoActiveClosePlan, NO_ACTIVE_OPPORTUNITY, noActiveDisplay, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, withOpportunityDefault, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, energyShareNote, PROFILE_RECORD_FIELDS, profileRecordPatch,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, withNoActiveDefaults, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, energyShareNote, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -470,7 +470,55 @@ function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, u
   );
 }
 
-function RatingBlock({ title, statements, list, ratings, block, onRate }) {
+// Live opps on the account's portfolio companies, shown on the tabs that
+// follow an opportunity (4, 6, 7) when there are any.
+function PortfolioOpps({ company, opps }) {
+  if (!opps?.length) return null;
+  return (
+    <div style={{ marginBottom: '0.9rem', padding: '0.6rem 0.75rem', border: `1px solid ${LINE}`, background: FIELD }}>
+      <div style={{ marginBottom: '0.4rem' }}>
+        <span style={sectionTitle}>Portfolio company opportunities</span>
+        <span style={sectionHint}>live opps on {company}'s portfolio companies</span>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', color: INK }}>
+        <thead>
+          <tr>
+            {['Company', 'Stage', 'Scope', 'Quoted amount', 'Close date'].map(h => (
+              <th key={h} style={{ ...labelStyle, display: 'table-cell', marginBottom: 0, textAlign: 'left', padding: '0.25rem 0.5rem 0.25rem 0' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {opps.map((o, i) => (
+            <tr key={`${o.account}-${i}`} style={{ borderTop: `1px solid ${LINE}` }}>
+              {[o.account, o.stage, o.scope, o.amount, o.closeDate].map((v, j) => (
+                <td key={j} style={{ padding: '0.3rem 0.5rem 0.3rem 0', verticalAlign: 'top' }}>{v || '-'}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// The "No active opportunity" box tabs 4, 6 and 7 each carry. `auto` is a
+// box ticked on its own (withNoActiveDefaults), which says why.
+function NoActiveBox({ checked, auto, company, what, offText, onChange }) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: '0.9rem', padding: '0.45rem 0.7rem', border: `1px solid ${checked ? INK : LINE}`, borderRadius: 2, background: checked ? FIELD : 'transparent', fontSize: '0.8rem', fontWeight: 600, color: INK, cursor: 'pointer' }}>
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} />
+      No active opportunity
+      <span style={{ fontWeight: 500, color: MUTED }}>{checked
+        ? (auto
+          ? `ticked because ${company} and its portfolio companies have no live opp; untick to edit`
+          : `${what}; untick to edit again`)
+        : offText}</span>
+    </label>
+  );
+}
+
+function RatingBlock({ title, statements, list, ratings, block, onRate, disabled = false }) {
   const th = { textAlign: 'left', fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: MUTED, padding: '0.35rem 0.5rem', borderBottom: `1px solid ${LINE}` };
   const td = { padding: '0.45rem 0.5rem', borderBottom: `1px solid ${LINE}`, fontSize: '0.8rem', color: INK, verticalAlign: 'top' };
   const tint = block.level === 'HIGH' ? SAGE : block.level === 'MED' ? AMBER : BRICK;
@@ -484,7 +532,7 @@ function RatingBlock({ title, statements, list, ratings, block, onRate }) {
           <div key={`${s.key}l`} style={{ ...td, fontWeight: 600 }}>{s.label}</div>,
           <div key={`${s.key}m`} style={{ ...td, color: MUTED }}>{s.meaning}</div>,
           <div key={`${s.key}r`} style={td}>
-            <select value={ratings?.[s.key] || ''} onChange={e => onRate(s.key, e.target.value)} style={{ ...cellInput, ...missingOutline(ratings?.[s.key]) }}>
+            <select value={ratings?.[s.key] || ''} disabled={disabled} onChange={e => onRate(s.key, e.target.value)} style={{ ...cellInput, ...(disabled ? { color: MUTED } : missingOutline(ratings?.[s.key])) }}>
               <option value="">-</option>
               {list.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
@@ -503,7 +551,13 @@ function RatingBlock({ title, statements, list, ratings, block, onRate }) {
   );
 }
 
-function DealHealthTab({ dealHealth, stage, onChange, grid }) {
+// Where a list would be, on a tab with no active opportunity.
+function NoActiveNote({ text = 'None: no active opportunity.' }) {
+  return <div style={{ padding: '0.7rem 0.8rem', border: `1px solid ${LINE}`, background: FIELD, fontSize: '0.8rem', color: MUTED }}>{text}</div>;
+}
+
+function DealHealthTab({ dealHealth, stage, onChange, grid, company, portfolioOpps = [] }) {
+  const noActive = !!dealHealth.noActive;
   const score = dealHealthScore(dealHealth, stage);
   const rate = (group, key, value) => {
     const next = { ...(dealHealth[group] || {}) };
@@ -514,9 +568,18 @@ function DealHealthTab({ dealHealth, stage, onChange, grid }) {
   const cell = { padding: '0.4rem 0.9rem', fontSize: '0.8rem', textAlign: 'center', border: `1px solid ${LINE}` };
   return (
     <div>
-      <RatingBlock title="Will they buy? (Sales Probability Index)" statements={BUY_STATEMENTS} list={MRI_LISTS.agree} ratings={dealHealth.buy} block={score.buy} onRate={(k, v) => rate('buy', k, v)} />
+      <PortfolioOpps company={company} opps={portfolioOpps} />
+      <NoActiveBox
+        checked={noActive}
+        auto={!!dealHealth.noActiveAuto}
+        company={company}
+        what="every rating is Unknown"
+        offText="rates everything Unknown, with no decision steps or yellow lights"
+        onChange={on => onChange(setNoActiveDealHealth(dealHealth, on))}
+      />
+      <RatingBlock title="Will they buy? (Sales Probability Index)" statements={BUY_STATEMENTS} list={MRI_LISTS.agree} ratings={dealHealth.buy} block={score.buy} onRate={(k, v) => rate('buy', k, v)} disabled={noActive} />
       <div style={{ marginTop: '1.1rem' }}>
-        <RatingBlock title="Will they buy ours?" statements={OURS_STATEMENTS} list={MRI_LISTS.advantage} ratings={dealHealth.ours} block={score.ours} onRate={(k, v) => rate('ours', k, v)} />
+        <RatingBlock title="Will they buy ours?" statements={OURS_STATEMENTS} list={MRI_LISTS.advantage} ratings={dealHealth.ours} block={score.ours} onRate={(k, v) => rate('ours', k, v)} disabled={noActive} />
       </div>
       <div style={{ ...sectionBox, display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
         <div>
@@ -545,11 +608,11 @@ function DealHealthTab({ dealHealth, stage, onChange, grid }) {
       </div>
       <div style={sectionBox}>
         <div style={{ marginBottom: '0.5rem' }}><span style={sectionTitle}>Decision process & criteria</span><span style={sectionHint}>from Opportunity Plan › Decision Grid</span></div>
-        {grid('decisionGrid', dealHealth.decisionGrid || [], rows => onChange({ ...dealHealth, decisionGrid: rows }), '+ Add step', 'No decision steps yet')}
+        {noActive ? <NoActiveNote /> : grid('decisionGrid', dealHealth.decisionGrid || [], rows => onChange({ ...dealHealth, decisionGrid: rows }), '+ Add step', 'No decision steps yet')}
       </div>
       <div style={sectionBox}>
         <div style={{ marginBottom: '0.5rem' }}><span style={sectionTitle}>Yellow lights</span><span style={sectionHint}>from Opportunity Plan › Yellow Lights</span></div>
-        {grid('yellowLights', dealHealth.yellowLights || [], rows => onChange({ ...dealHealth, yellowLights: rows }), '+ Add yellow light', 'No yellow lights yet')}
+        {noActive ? <NoActiveNote /> : grid('yellowLights', dealHealth.yellowLights || [], rows => onChange({ ...dealHealth, yellowLights: rows }), '+ Add yellow light', 'No yellow lights yet')}
       </div>
     </div>
   );
@@ -706,7 +769,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   }, [row.trackerNotes, merged.values]);
   const footprintFromTracker = row.trackerFootprint;
   const effectiveForm = useMemo(
-    () => withOpportunityDefault(withTrackerSignals(form, signalsFromTracker, notesFromTracker, footprintFromTracker), row.liveOpps),
+    () => withNoActiveDefaults(withTrackerSignals(form, signalsFromTracker, notesFromTracker, footprintFromTracker), row.liveOpps),
     [form, signalsFromTracker, notesFromTracker, footprintFromTracker, row.liveOpps],
   );
   const progress = useMemo(
@@ -816,51 +879,21 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
     );
   } else if (tab === 'opportunity') {
     // What the tab shows, the "No active opportunity" box ticked on its
-    // own when there is no live opp (withOpportunityDefault).
+    // own when there is no live opp (withNoActiveDefaults).
     const values = effectiveForm.opportunity || {};
     const noActive = !!values.noActive;
     const portfolioOpps = row.liveOpps?.portfolio || [];
     body = (
       <div>
-        {portfolioOpps.length > 0 && (
-          <div style={{ marginBottom: '0.9rem', padding: '0.6rem 0.75rem', border: `1px solid ${LINE}`, background: FIELD }}>
-            <div style={{ marginBottom: '0.4rem' }}>
-              <span style={sectionTitle}>Portfolio company opportunities</span>
-              <span style={sectionHint}>live opps on {row.company}'s portfolio companies</span>
-            </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', color: INK }}>
-              <thead>
-                <tr>
-                  {['Company', 'Stage', 'Scope', 'Quoted amount', 'Close date'].map(h => (
-                    <th key={h} style={{ ...labelStyle, display: 'table-cell', marginBottom: 0, textAlign: 'left', padding: '0.25rem 0.5rem 0.25rem 0' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {portfolioOpps.map((o, i) => (
-                  <tr key={`${o.account}-${i}`} style={{ borderTop: `1px solid ${LINE}` }}>
-                    {[o.account, o.stage, o.scope, o.amount, o.closeDate].map((v, j) => (
-                      <td key={j} style={{ padding: '0.3rem 0.5rem 0.3rem 0', verticalAlign: 'top' }}>{v || '-'}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: '0.9rem', padding: '0.45rem 0.7rem', border: `1px solid ${noActive ? INK : LINE}`, borderRadius: 2, background: noActive ? FIELD : 'transparent', fontSize: '0.8rem', fontWeight: 600, color: INK, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={noActive}
-            onChange={e => change(prev => ({ ...prev, opportunity: setNoActiveOpportunity(prev.opportunity, e.target.checked) }))}
-          />
-          No active opportunity
-          <span style={{ fontWeight: 500, color: MUTED }}>{noActive
-            ? (values.noActiveAuto
-              ? `ticked because ${row.company} and its portfolio companies have no live opp; untick to edit`
-              : 'every field is set to - or 0; untick to edit again')
-            : 'fills every field below with - or 0'}</span>
-        </label>
+        <PortfolioOpps company={row.company} opps={portfolioOpps} />
+        <NoActiveBox
+          checked={noActive}
+          auto={!!values.noActiveAuto}
+          company={row.company}
+          what="every field is set to - or 0"
+          onChange={on => change(prev => ({ ...prev, opportunity: setNoActiveOpportunity(prev.opportunity, on) }))}
+          offText="fills every field below with - or 0"
+        />
         {OPPORTUNITY_SECTIONS.map((s, i) => (
           <div key={s.title} style={i ? sectionBox : undefined}>
             <div><span style={sectionTitle}>{s.title}</span>{s.hint && <span style={sectionHint}>{s.hint}</span>}</div>
@@ -889,12 +922,23 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   } else if (tab === 'sites') {
     body = <SitesTab sites={row.sites} company={row.company} settings={settings} updateSettings={updateSettings} />;
   } else if (tab === 'dealHealth') {
-    body = <DealHealthTab dealHealth={form.dealHealth || {}} stage={merged.values.stage} onChange={next => setKey('dealHealth', next)} grid={grid} />;
+    body = <DealHealthTab dealHealth={effectiveForm.dealHealth || {}} stage={merged.values.stage} onChange={next => setKey('dealHealth', next)} grid={grid} company={row.company} portfolioOpps={row.liveOpps?.portfolio || []} />;
   } else {
     body = (
       <div>
+        <PortfolioOpps company={row.company} opps={row.liveOpps?.portfolio || []} />
+        <NoActiveBox
+          checked={!!effectiveForm.closePlanNoActive}
+          auto={!!effectiveForm.closePlanNoActiveAuto}
+          company={row.company}
+          what={`the plan reads "${NO_ACTIVE_OPPORTUNITY}"`}
+          offText={`replaces the activities with one reading "${NO_ACTIVE_OPPORTUNITY}"`}
+          onChange={on => change(prev => ({ ...prev, ...setNoActiveClosePlan(prev, on) }))}
+        />
         <div style={{ marginBottom: '0.5rem' }}><span style={sectionTitle}>Activities to close</span><span style={sectionHint}>from Opportunity Plan › Close Plan</span></div>
-        {grid('closePlan', form.closePlan || [], setClosePlan, '+ Add activity', 'No activities yet')}
+        {effectiveForm.closePlanNoActive
+          ? <NoActiveNote text={`${NO_ACTIVE_OPPORTUNITY}: nothing to close.`} />
+          : grid('closePlan', form.closePlan || [], setClosePlan, '+ Add activity', 'No activities yet')}
       </div>
     );
   }
