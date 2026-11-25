@@ -215,13 +215,14 @@ function servicesWith(servicesExplored, statuses) {
 
 /**
  * The "Services in scope" cell: a "Sold:" line and a "Not Sold:" line, each
- * listing its services ("None" when it has none). '' when no service is
- * either.
+ * listing its services ("None" when it has none). "-" when no service is
+ * either, so the cell says none have been explored rather than sitting
+ * blank (and outlined as still to fill in).
  */
 export function servicesInScope(servicesExplored) {
   const sold = servicesWith(servicesExplored, ['Sold']);
   const notSold = servicesWith(servicesExplored, ['Not Sold']);
-  if (!sold.length && !notSold.length) return '';
+  if (!sold.length && !notSold.length) return '-';
   return `Sold: ${sold.join(', ') || 'None'}\nNot Sold: ${notSold.join(', ') || 'None'}`;
 }
 
