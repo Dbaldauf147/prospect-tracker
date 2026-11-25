@@ -20,6 +20,11 @@ import { scopeServiceStatuses } from './scopeServiceStatus.js';
 import { companiesMatch } from './listFlags.js';
 import { exactCompanyKey } from './companyRoster.js';
 
+// The team every account sits in: the same for all of them, so the Team
+// and Sub-team rows fill with these until somebody types something else.
+export const MRI_TEAM = 'Keith McHugh';
+export const MRI_SUB_TEAM = 'Real Estate, Private Equity';
+
 // The service the template's UBM row reads.
 export const UBM_SERVICE = 'Bill payment';
 
@@ -31,8 +36,8 @@ export const MRI_PROFILE_FIELDS = [
   { row: 5, key: 'accountName', label: 'Account name', source: 'Company' },
   { row: 6, key: 'vertical', label: 'Vertical', source: 'Vertical' },
   { row: 7, key: 'salesperson', label: 'Salesperson', source: 'CDM' },
-  { row: 8, key: 'team', label: 'Team (director)', source: '' },
-  { row: 9, key: 'subTeam', label: 'Sub-team', source: '' },
+  { row: 8, key: 'team', label: 'Team (director)', source: 'Team default' },
+  { row: 9, key: 'subTeam', label: 'Sub-team', source: 'Team default' },
   { row: 10, key: 'tier', label: 'Tier', source: 'Tier' },
   { row: 11, key: 'existingClient', label: 'Existing client', source: 'Client?' },
   { row: 12, key: 'stage', label: 'Stage', source: 'Status' },
@@ -353,6 +358,8 @@ export function accountMriProfile({ record, tier = '', contacts = [], deals = nu
     accountName: text(p.company),
     vertical: text(p.vertical),
     salesperson: text(p.cdm),
+    team: MRI_TEAM,
+    subTeam: MRI_SUB_TEAM,
     tier: mriTier(tier || p.tier),
     existingClient: status ? (status.toLowerCase() === 'client' ? 'Yes' : 'No') : '',
     stage: mriStage(status),
