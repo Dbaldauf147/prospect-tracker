@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, accountTryingAgainServices, accountLiveOpps, isPortfolioCompanyContact, buyingCommitteeRows, siteUtilityRows, primaryPocNames, accountStanding } from '../../utils/accountMri';
 import { accountIsCompany } from '../../utils/companyAliases';
+import { moveOnChancesById } from '../../utils/moveOnChance';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, lateTabsWaiting, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals, withNoActiveDefaults, trackerOpportunity, trackerOpportunitySources, withTrackerOpportunity } from '../../utils/accountMriForm';
@@ -158,6 +159,18 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     return map;
   }, [prospects]);
 
+  // Likelihood to close per open opp (opp _id -> 0..1), the figure the Opps
+  // table's Chance of moving on popup shows; it fills Current % odds to
+  // close on the Opportunity tab.
+  const likelihoodById = useMemo(() => {
+    const out = new Map();
+    if (!(oppsRecords || []).length) return out;
+    try {
+      for (const [id, o] of moveOnChancesById(oppsRecords).byId) if (o.likelihood != null) out.set(id, o.likelihood);
+    } catch { /* no history to learn from: odds fall back to BFO */ }
+    return out;
+  }, [oppsRecords]);
+
   const mriRows = useMemo(() => rows.map(r => {
     const record = r.record || { company: r.company, status: r.status, cdm: r.cdm };
     // The account's own people only: anyone the company card lists under
@@ -221,7 +234,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     // ticked "No active opportunity" for want of them.
     const holdings = owned.filter(o => o.kind === 'holding')
       .map(o => prospectByName.get(o.name.toLowerCase()) || o.name);
-    const liveOpps = (oppsRecords || []).length ? accountLiveOpps(oppsRecords, self, holdings) : null;
+    const liveOpps = (oppsRecords || []).length ? accountLiveOpps(oppsRecords, self, holdings, { likelihoodById }) : null;
     const trackerOpp = trackerOpportunity(liveOpps, record.bfoHistory?.rows);
     const trackerOppFrom = trackerOpportunitySources(liveOpps, record.bfoHistory?.rows);
     const footprint = trackerFootprint(systemServices, serviceStatuses);
@@ -265,7 +278,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       champions: standing.champions,
       detractors: standing.detractors,
     };
-  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, systemServices, settings, prospects, frameworkFlags, oppsRecords, prospectByName]);
+  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, systemServices, settings, prospects, frameworkFlags, oppsRecords, prospectByName, likelihoodById]);
 
   // The company whose Account MRI popup is open.
   const [openId, setOpenId] = useState(null);
