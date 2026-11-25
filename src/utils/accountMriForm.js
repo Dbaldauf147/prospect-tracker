@@ -122,6 +122,32 @@ export const BODY_SYSTEMS = SYSTEMS.map(([key, name, focus, signs], i) => ({
 }));
 export const RAW_INTEL_CELL = 'A46';
 
+// The vital signs every company starts rated Absent, before anything is
+// known about it. A rating picked for a company replaces its default, and
+// clearing a defaulted one is saved as '' so the default doesn't come back.
+export const DEFAULT_SIGNALS = Object.fromEntries([
+  'brain.2', 'brain.3',
+  'heart.2',
+  'lungs.2',
+  'nervous.0', 'nervous.2', 'nervous.3',
+  'skeleton.1', 'skeleton.2',
+  'immune.2', 'immune.3',
+  'blood.0', 'blood.1',
+].map(key => [key, 'Absent']));
+
+/**
+ * The ratings a company's Diagnosis tab shows: DEFAULT_SIGNALS with what
+ * was picked for it laid over them. A key saved as '' (a default cleared
+ * by hand) is left out.
+ */
+export function diagnosisSignals(saved = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries({ ...DEFAULT_SIGNALS, ...(saved || {}) })) {
+    if (value) out[key] = value;
+  }
+  return out;
+}
+
 /**
  * One body system's reading: `sum` of its four ratings (Absent 0 to Strong
  * 3, the template's "Signal score (of 12)"), `rated` how many are rated,
@@ -157,22 +183,18 @@ export function trackerSignals(record) {
   return { [CLIMATE_COMMITMENT_SIGN]: climateCommitmentLevel(record?.climateTargets) };
 }
 
-// Tab 2's ratings as shown and exported: what was clicked where something
-// was, else the tracker's rating. A sign cleared by hand is kept as '' so
-// the tracker's rating does not come back over it.
+// Tab 2's ratings as shown: the defaults (DEFAULT_SIGNALS), then the
+// tracker's ratings, then what was picked by hand. A sign cleared by hand is
+// saved as '' and so stays blank over both.
 export function mergeSignals(tracker = {}, saved = {}) {
-  const out = { ...tracker };
-  for (const [k, v] of Object.entries(saved || {})) {
-    if (v === '' || v == null) delete out[k]; else out[k] = v;
-  }
-  return out;
+  return diagnosisSignals({ ...(tracker || {}), ...(saved || {}) });
 }
 
-// The saved form with the tracker's Diagnosis ratings filled in, for the
-// progress figures and the export.
+// The saved form with the tracker's Diagnosis ratings laid under what was
+// picked, for the progress figures and the export (which add the defaults).
 export function withTrackerSignals(form, tracker) {
   const f = form || {};
-  return { ...f, diagnosis: { ...(f.diagnosis || {}), signals: mergeSignals(tracker, f.diagnosis?.signals) } };
+  return { ...f, diagnosis: { ...(f.diagnosis || {}), signals: { ...(tracker || {}), ...(f.diagnosis?.signals || {}) } } };
 }
 
 // ── Tab 4 ────────────────────────────────────────────────────────────────
@@ -390,7 +412,7 @@ const share = (done, of) => (of > 0 ? Math.round((done / of) * 100) : 0);
  *   sites      tab 5 rows
  */
 export function tabProgress({ form = {}, profile = {}, committee = [], sites = [] } = {}) {
-  const signals = form.diagnosis?.signals || {};
+  const signals = diagnosisSignals(form.diagnosis?.signals);
   const ratedSigns = BODY_SYSTEMS.reduce((n, s) => n + systemScore(s, signals).rated, 0);
   const deal = dealHealthScore(form.dealHealth);
   const steps = (form.closePlan || []).filter(r => rowHasText(r, MRI_TABLES.closePlan.columns));
@@ -500,8 +522,9 @@ export function mriFormExport(form = {}) {
     if (cell) (cells[path] ||= []).push({ ref, ...cell });
   };
   const d = form.diagnosis || {};
+  const signals = diagnosisSignals(d.signals);
   for (const system of BODY_SYSTEMS) {
-    for (const s of system.signs) put(sheet(2), `D${s.row}`, d.signals?.[s.key]);
+    for (const s of system.signs) put(sheet(2), `D${s.row}`, signals[s.key]);
     put(sheet(2), `D${system.summaryRow}`, d.footprint?.[system.key]);
     put(sheet(2), `E${system.summaryRow}`, d.notes?.[system.key]);
   }

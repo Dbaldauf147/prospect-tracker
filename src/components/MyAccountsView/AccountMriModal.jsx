@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -182,9 +182,9 @@ function DiagnosisTab({ diagnosis, tracker = {}, onChange }) {
   const signals = mergeSignals(tracker, diagnosis.signals);
   const set = (group, key, value) => {
     const next = { ...(diagnosis[group] || {}) };
-    // Clearing a sign the tracker rates keeps it blank rather than letting
-    // the tracker's rating come back.
-    if (value === '' && !(group === 'signals' && tracker[key])) delete next[key]; else next[key] = value;
+    // A rating with a default (DEFAULT_SIGNALS) or a tracker rating is kept
+    // as '' when cleared, so that rating doesn't come straight back.
+    if (value === '' && !(group === 'signals' && (DEFAULT_SIGNALS[key] || tracker[key]))) delete next[key]; else next[key] = value;
     onChange({ ...diagnosis, [group]: next });
   };
   return (
