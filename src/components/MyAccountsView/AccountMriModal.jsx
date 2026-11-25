@@ -675,6 +675,17 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
     if (next) dirtyRef.current = next;
     flush();
   }, [writeToRecord, flush]);
+  // A company field typed before the MRI wrote them back (or while it
+  // couldn't) is still sitting in the saved form, showing "use tracker"
+  // and never reaching the company. Hand those over once, on open.
+  useEffect(() => {
+    // A blank one is left alone: writing it would wipe the company's value.
+    const saved = formRef.current.profile || {};
+    const stranded = Object.keys(saved).filter(k => PROFILE_RECORD_FIELDS[k] && String(saved[k] ?? '').trim() !== '');
+    if (!stranded.length) return;
+    const next = writeToRecord(stranded, formRef.current);
+    if (next) change(() => next);
+  }, [writeToRecord, change]);
 
   const merged = useMemo(() => mergeProfile(row.profile, form.profile), [row.profile, form.profile]);
   const committee = useMemo(
