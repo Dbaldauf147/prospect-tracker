@@ -119,6 +119,10 @@ eq(profile.existingClient, 'Yes', 'profile client');
 eq(profile.sites, 1038, 'profile sites');
 eq(profile.competitors, 'Engie; Enel X', 'competitors, firm not repeated');
 eq(profile.currentProvider, 'Engie; Enel X', 'current provider is the competitors');
+{
+  const none = accountMriProfile({ record: { company: 'X' } });
+  eq([none.currentProvider, none.competitors], ['No competitor known', 'No competitor known'], 'no competitor: both rows say so');
+}
 eq(profile.fee, '$450,000 / yr', 'fee');
 eq(profile.setup, '$60,000 one-time', 'setup');
 eq(profile.ubm, 'In scope', 'ubm: Bill payment sold is in scope');

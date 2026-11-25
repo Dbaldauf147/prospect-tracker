@@ -25,6 +25,9 @@ import { exactCompanyKey } from './companyRoster.js';
 export const MRI_TEAM = 'Keith McHugh';
 export const MRI_SUB_TEAM = 'Real Estate, Private Equity';
 
+// What Current provider and Key competitors read when the account has no competitor.
+export const NO_COMPETITOR = 'No competitor known';
+
 // The service the template's UBM row reads.
 export const UBM_SERVICE = 'Bill payment';
 
@@ -346,6 +349,8 @@ export function accountMriProfile({ record, tier = '', contacts = [], deals = nu
     const firm = text(c?.firm);
     if (firm && !competitors.some(x => x.toLowerCase().includes(firm.toLowerCase()))) competitors.push(firm);
   }
+  // With no competitor on the account, both rows say so rather than sit blank.
+  const competitorText = competitors.filter(Boolean).join('; ') || NO_COMPETITOR;
   let contract;
   if (deals) contract = contractFields(deals, { known: dealsKnown });
   else {
@@ -375,8 +380,8 @@ export function accountMriProfile({ record, tier = '', contacts = [], deals = nu
     revenueText: text(p.revenue),
     // The competitor on the account is who they buy from today, so it fills
     // Current provider too until somebody types something else there.
-    currentProvider: competitors.filter(Boolean).join('; '),
-    competitors: competitors.filter(Boolean).join('; '),
+    currentProvider: competitorText,
+    competitors: competitorText,
     background: text(p.notes),
     services: servicesInScope(services),
     fee: contract.fee,
