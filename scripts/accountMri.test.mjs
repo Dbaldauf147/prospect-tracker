@@ -35,7 +35,7 @@ eq(plainMentions('@![Engie] on @[Bill payment]\nand Enel X'), 'Engie on Bill pay
 const board = { 'Bill payment': 'Sold', IDM: 'Qualifying', 'API/ETL': 'N/A', X: '-', A: 'Sold', RECs: 'Not Sold', Audits: 'Exploring' };
 eq(servicesInScope(board), 'Sold: A, Bill payment\nNot Sold: RECs', 'sold and not sold, a line each, A to Z');
 eq(servicesInScope({ RECs: 'Not Sold' }), 'Sold: None\nNot Sold: RECs', 'an empty bucket says None');
-eq(servicesInScope({ IDM: 'Qualifying', 'API/ETL': 'N/A', X: '-' }), '', 'in-flight services are not in scope');
+eq(servicesInScope({ IDM: 'Qualifying', 'API/ETL': 'N/A', X: '-' }), '-', 'in-flight services are not in scope');
 eq(upsellOpportunities({ ...board, ESG: 'Renewal', UCA: 'Renewal' }, 'Dana Reyes'), 'Qualifying: IDM\nRenewal: ESG, UCA\nResponsible: Dana Reyes', 'qualifying, then renewal, then the salesperson');
 eq(upsellOpportunities(board), 'Qualifying: IDM', 'no salesperson, no responsible line');
 eq(upsellOpportunities({ Audits: 'Exploring', Q: 'Quoted' }, 'Dana Reyes'), '-', 'other in-flight statuses are not upsell');
@@ -88,7 +88,7 @@ eq(
   { 'Bill payment': 'Sold', 'Site audits': 'Not Sold' },
   'only the rows the board shows: no retired names, no hidden services, the board\'s own labels',
 );
-eq(servicesInScope({}), '', 'no services');
+eq(servicesInScope({}), '-', 'no services');
 eq(
   mainContactText([
     { firstname: 'Jamie', lastname: 'Lee', email: 'jamie@x.example', phone: '555-0100', dans_tags: 'Primary Point of Contact' },
