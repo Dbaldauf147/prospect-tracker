@@ -49,7 +49,7 @@ const pill = (text, tint) => (
   <span key={text} style={{ fontSize: '0.68rem', fontWeight: 700, color: tint.ink, background: tint.bg, border: `1px solid ${tint.border}`, padding: '0 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{text}</span>
 );
 
-export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, settings, updateSettings, updateSettingsPath, onSelect, filterBar, hubspotContacts, oppsRecords, targetAccountsData }) {
+export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, settings, updateSettings, updateSettingsPath, onSelect, onUpdate, filterBar, hubspotContacts, oppsRecords, targetAccountsData }) {
   // Which of the two views is open; remembered on this machine.
   const [view, setView] = useState(readSavedView);
   const pickView = (key) => {
@@ -202,6 +202,7 @@ export function StrategicAccountsTab({ accounts, prospects, cdmName, keep, setti
           updateSettings={updateSettings}
           updateSettingsPath={updateSettingsPath}
           onSelect={onSelect}
+          onUpdate={onUpdate}
         />
       ) : (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>

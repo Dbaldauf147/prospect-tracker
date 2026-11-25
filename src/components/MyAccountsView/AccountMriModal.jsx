@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -47,7 +47,7 @@ const pct = n => `${Math.round(n * 100)}%`;
 // A money box that formats as it is typed: "$1,350,000". The caret is put
 // back after the same number of digits it followed, so typing or deleting
 // in the middle doesn't throw it to the end when a comma comes or goes.
-function MoneyInput({ value, onChange, prefix = '$' }) {
+function MoneyInput({ value, onChange, onBlur, prefix = '$' }) {
   const ref = useRef(null);
   const caretDigits = useRef(null);
   const format = v => (prefix === '$' ? formatMoneyInput(v) : formatNumberInput(v, prefix));
@@ -75,15 +75,16 @@ function MoneyInput({ value, onChange, prefix = '$' }) {
         caretDigits.current = (before.match(/[\d.]/g) || []).length;
         onChange(format(e.target.value));
       }}
+      onBlur={onBlur}
       style={{ ...inputStyle, ...missingOutline(shown) }}
     />
   );
 }
 
 // One control for every kind of field the form has.
-function Field({ field, value, onChange, hint, onReset }) {
+function Field({ field, value, onChange, onBlur, hint, onReset }) {
   const style = { ...inputStyle, ...missingOutline(value) };
-  const common = { value: value ?? '', onChange: e => onChange(e.target.value), style };
+  const common = { value: value ?? '', onChange: e => onChange(e.target.value), onBlur, style };
   let control;
   if (field.type === 'select') {
     const options = MRI_LISTS[field.list] || [];
@@ -101,9 +102,9 @@ function Field({ field, value, onChange, hint, onReset }) {
   } else if (field.type === 'date') {
     control = <input type="date" {...common} />;
   } else if (field.type === 'money') {
-    control = <MoneyInput value={value} onChange={onChange} />;
+    control = <MoneyInput value={value} onChange={onChange} onBlur={onBlur} />;
   } else if (field.type === 'count') {
-    control = <MoneyInput value={value} onChange={onChange} prefix="" />;
+    control = <MoneyInput value={value} onChange={onChange} onBlur={onBlur} prefix="" />;
   } else if (field.type === 'number' || field.type === 'percent') {
     control = <input type="number" step="any" {...common} />;
   } else {
@@ -126,7 +127,7 @@ function Field({ field, value, onChange, hint, onReset }) {
 // Fields that read better across the whole width of their section.
 const FULL_WIDTH = new Set(['mainContact', 'competitors', 'background', 'services', 'upsell']);
 
-function ProfileTab({ profile, typed, tracker, onChange, onReset }) {
+function ProfileTab({ profile, typed, tracker, onChange, onCommit, onReset }) {
   const section = key => PROFILE_SECTIONS.find(s => s.key === key);
   const draw = (s, columns) => (
     <div>
@@ -141,6 +142,7 @@ function ProfileTab({ profile, typed, tracker, onChange, onReset }) {
                 field={f}
                 value={profile[f.key]}
                 onChange={v => onChange(f.key, v)}
+                onBlur={() => onCommit?.(f.key)}
                 hint={!own && hasTracker ? `from ${f.source}` : ''}
                 onReset={own && f.source ? () => onReset(f.key) : null}
               />
@@ -158,7 +160,7 @@ function ProfileTab({ profile, typed, tracker, onChange, onReset }) {
       </div>
       <div style={sectionBox}>{draw(section('commercials'), 4)}</div>
       <div style={{ fontSize: '0.72rem', color: MUTED, marginTop: '0.9rem' }}>
-        Fields marked "from ..." show the tracker's own value. Typing in one keeps what you typed for this Account MRI only; the company record is not changed.
+        Fields marked "from ..." show the tracker's own value. Vertical, Salesperson, HQ, Revenue, # Sites, Key competitors and Other context are saved to the company itself, so the company popup shows what you type; anything else typed here is kept for this Account MRI only.
       </div>
     </div>
   );
@@ -481,7 +483,7 @@ function SitesTab({ sites, company, settings, updateSettings }) {
  * profile (the tracker's tab 1), committee (its decision makers), sites }.
  * `form` is what is saved for it and `onSave(next)` saves it.
  */
-export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenCompany, settings, updateSettings }) {
+export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenCompany, onUpdateRecord, settings, updateSettings }) {
   const [tab, setTab] = useState('profile');
   const [form, setForm] = useState(() => savedForm || {});
   const [busy, setBusy] = useState(false);
@@ -505,7 +507,42 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
       return next;
     });
   }, [flush]);
-  useEffect(() => flush, [flush]);
+
+  // Rows that are the company's own field (PROFILE_RECORD_FIELDS) are typed
+  // into the MRI form while the box has focus, then written to the company
+  // record when it loses focus (or the popup closes) and dropped from the
+  // form, so the row reads the company's value again, now the typed one.
+  const formRef = useRef(form);
+  useEffect(() => { formRef.current = form; }, [form]);
+  const recordRef = useRef(onUpdateRecord);
+  useEffect(() => { recordRef.current = onUpdateRecord; }, [onUpdateRecord]);
+  const typedForRecord = useRef(new Set());
+  const writeToRecord = useCallback((keys, current) => {
+    const update = recordRef.current;
+    if (!update) return null;
+    const profile = { ...(current.profile || {}) };
+    const patch = {};
+    for (const key of keys) {
+      if (profile[key] === undefined) continue;
+      Object.assign(patch, profileRecordPatch(key, profile[key]));
+      delete profile[key];
+      typedForRecord.current.delete(key);
+    }
+    if (!Object.keys(patch).length) return null;
+    update(patch);
+    return { ...current, profile };
+  }, []);
+  const commitToRecord = useCallback((key) => {
+    if (!typedForRecord.current.has(key)) return;
+    const next = writeToRecord([key], formRef.current);
+    if (next) change(() => next);
+  }, [writeToRecord, change]);
+  useEffect(() => () => {
+    // Closing with a box still focused: write it to the company first.
+    const next = writeToRecord([...typedForRecord.current], dirtyRef.current || formRef.current);
+    if (next) dirtyRef.current = next;
+    flush();
+  }, [writeToRecord, flush]);
 
   const merged = useMemo(() => mergeProfile(row.profile, form.profile), [row.profile, form.profile]);
   const committee = useMemo(
@@ -579,7 +616,11 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
         profile={merged.values}
         typed={merged.typed}
         tracker={row.profile}
-        onChange={(key, value) => change(prev => ({ ...prev, profile: { ...(prev.profile || {}), [key]: value } }))}
+        onChange={(key, value) => {
+          if (PROFILE_RECORD_FIELDS[key] && onUpdateRecord) typedForRecord.current.add(key);
+          change(prev => ({ ...prev, profile: { ...(prev.profile || {}), [key]: value } }));
+        }}
+        onCommit={commitToRecord}
         onReset={key => change((prev) => {
           const next = { ...(prev.profile || {}) };
           delete next[key];

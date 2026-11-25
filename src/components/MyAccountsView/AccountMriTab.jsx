@@ -48,7 +48,7 @@ const siteListSlug = company => String(company || '').toLowerCase().replace(/[^a
 
 // `isListed(row)` says whether the Strategic Accounts list names the row's
 // company; those rows are drawn in the list's red, as on the Accounts view.
-export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts, oppsRecords, targetAccountsData, settings, updateSettings, updateSettingsPath, onSelect }) {
+export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts, oppsRecords, targetAccountsData, settings, updateSettings, updateSettingsPath, onSelect, onUpdate }) {
   // The Deals subtab's agreements and its client-name mapping, which the
   // Fee, Set-up and Contract term rows read. Re-read when either changes.
   const [deals, setDeals] = useState(() => ({ list: loadDealsList().data || [], map: loadDealClientMap() }));
@@ -338,6 +338,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
           onSave={next => saveForm(openRow.company, next)}
           onClose={() => setOpenId(null)}
           onOpenCompany={openRow.record && onSelect ? () => onSelect(openRow.record) : null}
+          onUpdateRecord={openRow.record?.id && onUpdate ? patch => onUpdate(openRow.record.id, patch) : null}
           settings={settings}
           updateSettings={updateSettings}
         />
