@@ -99,7 +99,7 @@ export function mriStage(status) {
  */
 export function revenueInBillions(raw) {
   const s = text(raw).toLowerCase().replace(/,/g, '');
-  const m = s.match(/(\d+(?:\.\d+)?)\s*(billion|bn|b|million|mm|mn|m|thousand|k)?\b/);
+  const m = s.match(/(\d+(?:\.\d+)?|\.\d+)\s*(billion|bn|b|million|mm|mn|m|thousand|k)?\b/);
   if (!m) return null;
   const n = Number(m[1]);
   if (!Number.isFinite(n)) return null;
@@ -109,7 +109,8 @@ export function revenueInBillions(raw) {
   else if (/^m/.test(unit)) dollars = n * 1e6;
   else if (unit) dollars = n * 1e3;
   else if (n >= 1e6) dollars = n;
-  else return null;
+  // A bare small number is billions: the company's field is Revenue ($B).
+  else dollars = n * 1e9;
   return Math.round(dollars / 1e6) / 1e3;
 }
 
@@ -341,14 +342,16 @@ export function upsellOpportunities(servicesExplored, responsible = '', tryingAg
 }
 
 // The Revenue field as the "Annual revenue / profit" row reads it: a bare
-// number ("1630000000") as dollars with commas, anything worded ("$1.6B",
-// "1.6 billion") as it was typed.
+// number of a million or more ("1630000000") as dollars with commas, a
+// smaller one (".5", "40.6") as billions, since the company's field is
+// Revenue ($B), and anything worded ("$1.6B", "1.6 billion") as typed.
 export function revenueAsText(raw) {
   const s = text(raw);
   const plain = s.replace(/[$,\s]/g, '');
-  if (!/^\d+(\.\d+)?$/.test(plain)) return s;
-  const [whole, cents] = plain.split('.');
-  return `$${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${cents ? `.${cents}` : ''}`;
+  if (!/^(\d+(\.\d+)?|\.\d+)$/.test(plain)) return s;
+  const [whole, cents] = String(Number(plain) < 1e6 ? Number(plain) : plain).split('.');
+  const amount = `$${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${cents ? `.${cents}` : ''}`;
+  return Number(plain) < 1e6 ? `${amount}B` : amount;
 }
 
 const money = n => (n == null || !Number.isFinite(Number(n)) ? '' : `$${Math.round(Number(n)).toLocaleString('en-US')}`);

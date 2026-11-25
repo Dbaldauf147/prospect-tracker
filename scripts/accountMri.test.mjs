@@ -21,8 +21,13 @@ eq(revenueInBillions('$1.5B'), 1.5, 'billions');
 eq(revenueInBillions('850M'), 0.85, 'millions');
 eq(revenueInBillions('$4,200,000,000'), 4.2, 'spelled out in dollars');
 eq(revenueInBillions('2.3 billion'), 2.3, 'word unit');
-eq(revenueInBillions('4.2'), null, 'bare number has no scale');
+eq(revenueInBillions('4.2'), 4.2, 'bare number is billions (the field is Revenue ($B))');
+eq(revenueInBillions('$.5B'), 0.5, 'a decimal with no leading zero');
+eq(revenueInBillions('.5'), 0.5, 'a bare decimal is billions');
 eq(revenueInBillions(''), null, 'blank');
+eq(revenueAsText('.5'), '$0.5B', 'annual revenue: a bare decimal is billions');
+eq(revenueAsText('1630000000'), '$1,630,000,000', 'annual revenue: a bare big number is dollars');
+eq(revenueAsText('$1.6B'), '$1.6B', 'annual revenue: worded, as typed');
 
 eq(mriTier('Tier 1'), 'Tier I', 'tier 1');
 eq(mriTier('Tier 3'), 'Tier III', 'tier 3');
@@ -239,8 +244,8 @@ eq(ws.getCell('C5').style.fill?.fgColor?.argb, ws.getCell('C21').style.fill?.fgC
 }
 eq(
   ['1630000000', '$1,630,000,000', '1.6B', '$1.6 billion', '', '1234.5'].map(revenueAsText),
-  ['$1,630,000,000', '$1,630,000,000', '1.6B', '$1.6 billion', '', '$1,234.5'],
-  'annual revenue text: bare numbers as dollars',
+  ['$1,630,000,000', '$1,630,000,000', '1.6B', '$1.6 billion', '', '$1,234.5B'],
+  'annual revenue text: big bare numbers as dollars, small ones as billions',
 );
 
 // A blank profile leaves the sheet exactly as it was.

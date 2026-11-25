@@ -149,7 +149,7 @@ import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm, matchesCdm } from '../../utils/cdmMatch';
 import { coverageFromSettings, salespeopleForVertical, isCoverageVertical } from '../../utils/salesCoverage';
-import { mriSlug, formatMoneyInput } from '../../utils/accountMriForm';
+import { mriSlug, formatMoneyInput, revenueBillionsText } from '../../utils/accountMriForm';
 import { buildTargetTierResolver, tierMismatch, targetVerticalFor, targetVerticalAgrees, withTargetVerticalEquivalent } from '../../utils/targetTier';
 import { normalizeTierText } from '../../utils/tierText';
 import { targetAccountRows, suggestTargetMatches, mappedTargetNames, othersMappedToTarget, targetRowFlags } from '../../utils/targetAccountMatch';
@@ -11882,8 +11882,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div className={styles.sectionHead}>Scale</div>
 
             <div>
-              <label className={styles.label}>Revenue</label>
-              <CommitOnBlurInput className={styles.input} value={fields.revenue ?? ''} onCommit={v => set('revenue', v)} placeholder="e.g. $1.5B" />
+              <label className={styles.label}>Revenue ($B)</label>
+              <CommitOnBlurInput className={styles.input} value={fields.revenue ?? ''} onCommit={v => set('revenue', revenueBillionsText(v))} placeholder="e.g. 1.5" />
             </div>
 
             {mriSlug(prospect?.company) && (
