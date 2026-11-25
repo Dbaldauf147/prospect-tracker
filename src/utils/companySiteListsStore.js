@@ -30,6 +30,7 @@ import {
 } from './firestoreRest.js';
 import { viaSdkOrRest } from './firestoreClientHealth.js';
 import { SITE_LISTS_KEY, isStorableSlug } from './companySiteListRouting';
+import { foldSiteListDocs, partCountOf, partDocId, partOwner, splitSiteListEntry } from './siteListParts.js';
 
 const COL = 'userSettings';
 
@@ -71,9 +72,11 @@ const NO_FIELDS = ['_idsOnly'];
 // settings key always exposed.
 export function subscribeToCompanySiteLists(userId, onChange, onError) {
   return onSnapshot(listsCol(userId), (snap) => {
-    const out = {};
-    snap.forEach((d) => { out[d.id] = d.data(); });
-    onChange(out);
+    const docs = {};
+    snap.forEach((d) => { docs[d.id] = d.data(); });
+    // A list too big for one document is stored in parts (siteListParts);
+    // callers get it back whole.
+    onChange(foldSiteListDocs(docs));
   }, (err) => {
     console.error('companySiteLists subscription error:', err);
     onError?.(err);
@@ -84,25 +87,66 @@ export function subscribeToCompanySiteLists(userId, onChange, onError) {
 // `slugs` is null). Used on the stale-write path so the auto-merge in
 // useUserSettings still sees what the other device wrote.
 export async function readCompanySiteLists(userId, slugs = null) {
-  const out = {};
+  const docs = {};
   if (slugs == null) {
     await viaSdkOrRest(async () => {
       const snap = await getDocs(listsCol(userId));
-      snap.forEach((d) => { out[d.id] = d.data(); });
+      snap.forEach((d) => { docs[d.id] = d.data(); });
     }, async () => {
-      for (const { id, data } of await restListDocs(listColPath(userId))) out[id] = data;
+      for (const { id, data } of await restListDocs(listColPath(userId))) docs[id] = data;
     });
-    return out;
+    return foldSiteListDocs(docs);
   }
   const wanted = [...new Set(slugs)].filter(isStorableSlug);
-  await Promise.all(wanted.map((slug) => viaSdkOrRest(async () => {
-    const snap = await getDoc(listDoc(userId, slug));
-    if (snap.exists()) out[slug] = snap.data();
-  }, async () => {
-    const data = await restGetDoc(listDocPath(userId, slug));
-    if (data) out[slug] = data;
-  })));
-  return out;
+  await Promise.all(wanted.map(async (slug) => {
+    const data = await readListDoc(userId, slug);
+    if (!data) return;
+    docs[slug] = data;
+    const ids = Array.from({ length: partCountOf(data) }, (_, i) => partDocId(slug, i));
+    await Promise.all(ids.map(async (id) => {
+      const part = await readListDoc(userId, id);
+      if (part) docs[id] = part;
+    }));
+  }));
+  return foldSiteListDocs(docs);
+}
+
+// One document in the collection, or null when it does not exist.
+async function readListDoc(userId, id) {
+  return viaSdkOrRest(async () => {
+    const snap = await getDoc(listDoc(userId, id));
+    return snap.exists() ? snap.data() : null;
+  }, () => restGetDoc(listDocPath(userId, id)));
+}
+
+const setListDoc = (userId, id, data) => viaSdkOrRest(
+  () => setDoc(listDoc(userId, id), data),
+  () => restSetDoc(listDocPath(userId, id), data),
+);
+const deleteListDoc = (userId, id) => viaSdkOrRest(
+  () => deleteDoc(listDoc(userId, id)),
+  () => restDeleteDoc(listDocPath(userId, id)),
+);
+
+// Store one company's list, in parts when it is too big for one document
+// (siteListParts). The parts go first and the company's own document last,
+// since that is what says which parts belong to it; then any parts left
+// over from a bigger list before are removed. `previousParts` is how many
+// the stored list had, when the caller already knows (a replace-all has
+// just listed them); otherwise it is read.
+async function writeSiteList(userId, slug, entry, previousParts = null) {
+  const before = previousParts ?? partCountOf(await readListDoc(userId, slug));
+  const { main, parts } = splitSiteListEntry(slug, entry);
+  for (let i = 0; i < parts.length; i += 1) await setListDoc(userId, partDocId(slug, i), parts[i]);
+  await setListDoc(userId, slug, main);
+  for (let i = parts.length; i < before; i += 1) await deleteListDoc(userId, partDocId(slug, i));
+}
+
+// Remove one company's list and any parts it was stored in.
+async function deleteSiteList(userId, slug) {
+  const before = partCountOf(await readListDoc(userId, slug));
+  await deleteListDoc(userId, slug);
+  for (let i = 0; i < before; i += 1) await deleteListDoc(userId, partDocId(slug, i));
 }
 
 // Apply the operations produced by splitSiteListUpdates / splitSiteListPaths.
@@ -145,17 +189,11 @@ export async function applySiteListOps(userId, ops) {
         throw err;
       }
     } else if (op.value == null) {
-      await viaSdkOrRest(
-        () => deleteDoc(listDoc(userId, op.slug)),
-        () => restDeleteDoc(listDocPath(userId, op.slug)),
-      );
+      await deleteSiteList(userId, op.slug);
       clearLocalOnly(`siteList:${op.slug}`);
     } else {
       try {
-        await viaSdkOrRest(
-          () => setDoc(listDoc(userId, op.slug), op.value),
-          () => restSetDoc(listDocPath(userId, op.slug), op.value),
-        );
+        await writeSiteList(userId, op.slug, op.value);
         clearLocalOnly(`siteList:${op.slug}`);
       } catch (err) {
         // The save alerts; this keeps a row on the Issues tab after the
@@ -202,30 +240,42 @@ async function patchViaSdk(ref, paths) {
 
 // The whole key was written: store every company in the map and drop any
 // company absent from it.
-async function replaceAllViaSdk(userId, map) {
-  const existing = await getDocs(listsCol(userId));
+// Both transports share this; they differ only in how the stored ids are
+// listed. A part document goes with its company: kept when the company is,
+// and a kept company's own parts are trimmed by writeSiteList.
+async function replaceAll(userId, map, existingIds) {
   const keep = new Set(Object.keys(map).filter(isStorableSlug));
   for (const [slug, entry] of Object.entries(map)) {
     if (!isStorableSlug(slug) || !entry || typeof entry !== 'object') continue;
-    await setDoc(listDoc(userId, slug), entry);
+    // Counted from the listing rather than read: a part the stored list no
+    // longer points at is cleared too.
+    await writeSiteList(userId, slug, entry, maxPartIndex(existingIds, slug));
   }
-  for (const d of existing.docs) {
-    if (!keep.has(d.id)) await deleteDoc(d.ref);
+  for (const id of existingIds) {
+    if (!keep.has(partOwner(id) || id)) await deleteListDoc(userId, id);
   }
+}
+
+// One past the highest part index stored for `slug`, from a listing of ids.
+function maxPartIndex(ids, slug) {
+  let n = 0;
+  for (const id of ids) {
+    if (partOwner(id) !== slug) continue;
+    n = Math.max(n, Number(id.slice(id.lastIndexOf('-') + 1)) + 1);
+  }
+  return n;
+}
+
+async function replaceAllViaSdk(userId, map) {
+  const existing = await getDocs(listsCol(userId));
+  await replaceAll(userId, map, existing.docs.map(d => d.id));
 }
 
 async function replaceAllViaRest(userId, map) {
   // Ids only: the sweep needs to know which companies are stored, not what
   // is in them, and their rows are the largest thing this app holds.
   const existing = await restListDocs(listColPath(userId), { fieldPaths: NO_FIELDS });
-  const keep = new Set(Object.keys(map).filter(isStorableSlug));
-  for (const [slug, entry] of Object.entries(map)) {
-    if (!isStorableSlug(slug) || !entry || typeof entry !== 'object') continue;
-    await restSetDoc(listDocPath(userId, slug), entry);
-  }
-  for (const { id } of existing) {
-    if (!keep.has(id)) await restDeleteDoc(listDocPath(userId, id));
-  }
+  await replaceAll(userId, map, existing.map(d => d.id));
 }
 
 // Move a legacy `companySiteLists` map off the settings document.

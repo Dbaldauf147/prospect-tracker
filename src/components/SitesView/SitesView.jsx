@@ -38,6 +38,7 @@ import {
 } from '../../utils/siteMassEdit';
 import { SummaryFieldEditModal } from './SummaryFieldEditModal.jsx';
 import { mergeIntoSiteList, ESTIMATED_COLUMN } from '../../utils/siteListMerge';
+import { siteListBytes, SITE_LIST_LIMIT_BYTES } from '../../utils/siteListSize';
 import { downloadPrwSiteList } from '../../utils/prwSiteListExport';
 import { UTILITY_LOOKUP_HANDOFF_EVENT, hasPendingHandoff, takePendingHandoff } from '../../utils/utilityLookupHandoff';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport, readSheetNames } from '../../utils/xlsxParse';
@@ -6508,18 +6509,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       rows: merged.rows,
       uploadedAt: new Date().toISOString(),
     };
-    // Each company's list is its own Firestore document, so the ~1 MiB
-    // cap applies to this company alone rather than to every company's
-    // list at once (it used to be one map on the settings document, and
-    // the limit was shared). Skip rather than fail the whole save when
-    // one company's rows won't fit — and say that the list the company
-    // already had is untouched, since that is the difference between
-    // "nothing was added" and "everything is gone".
-    if (JSON.stringify(entry).length > 900_000) {
+    // A list too big for one Firestore document is stored in parts
+    // (utils/siteListParts), so the 1 MiB document cap no longer stops a
+    // big portfolio. What is left is the app's own ceiling on one
+    // company's list (utils/siteListSize). Skip rather than fail the whole
+    // save past it, and say that the list the company already had is
+    // untouched, since that is the difference between "nothing was added"
+    // and "everything is gone".
+    if (siteListBytes(entry) > SITE_LIST_LIMIT_BYTES) {
+      const mb = (siteListBytes(entry) / (1024 * 1024)).toFixed(1);
+      const limitMb = Math.round(SITE_LIST_LIMIT_BYTES / (1024 * 1024));
       return {
         note: existingRows.length
-          ? ` Site list not updated: ${merged.rows.length.toLocaleString()} sites is too many to store for one company, so the ${existingRows.length.toLocaleString()} already saved are unchanged.`
-          : ' Site list not updated: too many sites to store for one company.',
+          ? ` Site list not updated: ${merged.rows.length.toLocaleString()} sites come to ${mb} MB, over the ${limitMb} MB one company's list can hold, so the ${existingRows.length.toLocaleString()} already saved are unchanged.`
+          : ` Site list not updated: ${merged.rows.length.toLocaleString()} sites come to ${mb} MB, over the ${limitMb} MB one company's list can hold.`,
         total: activeSiteListCount({ headers: existingHeaders, rows: existingRows }),
         accounts: siteListFacts({ headers: existingHeaders, rows: existingRows }).accounts || 0,
         equipment: siteListFacts({ headers: existingHeaders, rows: existingRows }).equipment || 0,
@@ -6858,9 +6861,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const nameMapNote = nameMapUnavailable
         ? ' The Utility Name Mapping table could not be read, so the three Utility Mapping sheets are empty - the rest of the analysis is complete.'
         : '';
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${energyNote}${mandateNote}${deregNote}${savingsNote}${exposureNote}${siteList.note}${nameMapNote}${savedOverRest ? ' (saved over a plain web request - the app\'s usual database connection is not getting through on this network.)' : ''}` });
+      // A site list that did not save is not a routine success: it stays on
+      // screen, in red, until it is dismissed, rather than vanishing four
+      // seconds after a save whose one visible effect (the company's site
+      // list) did not happen.
+      const siteListFailed = /^ Site list (not updated|could not)/.test(siteList.note);
+      setSaveStatus({ state: siteListFailed ? 'error' : 'success', dismissable: siteListFailed, message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${energyNote}${mandateNote}${deregNote}${savingsNote}${exposureNote}${siteList.note}${nameMapNote}${savedOverRest ? ' (saved over a plain web request - the app\'s usual database connection is not getting through on this network.)' : ''}` });
       setSavePickerSearch(null);
-      setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
+      if (!siteListFailed) setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
       console.error('Save indicative analysis failed:', err);
       // A hang and a failure are different problems and read differently:
@@ -17178,6 +17186,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             {saveStatus.state === 'saving' && saveStartedRef.current > 0
               && Date.now() - saveStartedRef.current >= 5000
               && ` (${Math.round((Date.now() - saveStartedRef.current) / 1000)}s)`}
+            {saveStatus.dismissable && (
+              <button
+                type="button"
+                onClick={() => setSaveStatus({ state: 'idle', message: '' })}
+                title="Dismiss"
+                style={{ marginLeft: 8, padding: 0, border: 'none', background: 'none', color: 'inherit', fontFamily: 'inherit', fontSize: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}
+              >
+                Dismiss
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -210,7 +210,9 @@ function fresh() {
   const result = await savePathUpdates('u1', { 'companySiteLists.veris-residential': entry }, { expectedAt: 5 });
 
   ok(result.viaRest === true, 'the save reports it went over HTTPS');
-  const list = restCalls.find((c) => c.url.includes('/companySiteLists/veris-residential'));
+  // A GET goes first (how many parts the stored list had, siteListParts);
+  // the write is the PATCH.
+  const list = restCalls.find((c) => c.method === 'PATCH' && c.url.includes('/companySiteLists/veris-residential'));
   ok(!!list, 'the company\'s list document is written over HTTPS');
   ok(list.method === 'PATCH' && maskOf(list).length === 0,
     'as a whole-document write - the entry IS the document');
@@ -228,7 +230,7 @@ function fresh() {
   fs.failOn(/^userSettings\/u1/, wedgedError());
 
   await savePathUpdates('u1', { 'companySiteLists.veris-residential': null }, {});
-  const del = restCalls.find((c) => c.url.includes('/companySiteLists/veris-residential'));
+  const del = restCalls.find((c) => c.method === 'DELETE' && c.url.includes('/companySiteLists/veris-residential'));
   ok(del?.method === 'DELETE', 'the list document is deleted over HTTPS');
 }
 
