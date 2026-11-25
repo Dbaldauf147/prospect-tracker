@@ -18,6 +18,9 @@ import {
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
+import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { useContactEditSettings } from '../../hooks/useContactEditSettings';
+import { findCommitteeContact } from '../../utils/accountMriContact';
 
 // The MRI tool's own look: warm paper, ink, one brick red for the scores.
 const INK = '#1F1D1A';
@@ -373,7 +376,9 @@ const cellInput = { ...inputStyle, padding: '0.3rem 0.45rem', fontSize: '0.8rem'
 
 // One of the form's list tables, edited in place. Drawn by the shared
 // DataTable so its columns carry the house column formatting.
-function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, updateSettings, exportFileName, emptyMessage }) {
+// `onOpenRow`, when given, puts an open button beside the first column's
+// box (the buying committee's Name opens that person's contact popup).
+function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, updateSettings, exportFileName, emptyMessage, onOpenRow }) {
   // Latest rows for the cell handlers, so the columns need not be rebuilt
   // (and every input remounted) on each keystroke.
   const rowsRef = useRef(rows);
@@ -407,13 +412,26 @@ function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, u
             </select>
           );
         }
-        return (
+        const input = (
           <input
             type={c.type === 'date' ? 'date' : c.type === 'number' ? 'number' : 'text'}
             value={value}
             onChange={e => patch(r.id, c.key, e.target.value)}
             style={{ ...cellInput, ...missingOutline(value) }}
           />
+        );
+        if (!onOpenRow || c.key !== def.columns[0].key || !(r.name || r.email)) return input;
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>{input}</div>
+            <button
+              type="button"
+              data-mri-open-contact
+              onClick={() => onOpenRow(r)}
+              title={`Open ${r.name || r.email}'s contact`}
+              style={{ flex: '0 0 auto', border: `1px solid ${LINE}`, background: FIELD, color: INK, borderRadius: 2, padding: '0.2rem 0.4rem', fontSize: '0.78rem', cursor: 'pointer', lineHeight: 1.2 }}
+            >↗</button>
+          </div>
         );
       },
     })),
@@ -423,7 +441,7 @@ function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, u
         <button type="button" onClick={() => remove(r.id)} title="Remove this row" style={{ border: 'none', background: 'none', color: MUTED, fontSize: '1rem', cursor: 'pointer', lineHeight: 1 }}>×</button>
       ),
     },
-  ], [def, patch, remove]);
+  ], [def, patch, remove, onOpenRow]);
 
   const toolbarActions = useMemo(() => [
     ...(actions || []),
@@ -593,7 +611,11 @@ function SitesTab({ sites, company, settings, updateSettings }) {
  * profile (the tracker's tab 1), committee (its decision makers), sites }.
  * `form` is what is saved for it and `onSave(next)` saves it.
  */
-export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenCompany, onUpdateRecord, serviceOptions = [], settings, updateSettings }) {
+export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenCompany, onUpdateRecord, serviceOptions = [], settings, updateSettings, hubspotContacts = [], prospects = [] }) {
+  // The buying committee's contact popup, opened from a stakeholder's Name.
+  const [openContact, setOpenContact] = useState(null);
+  const contactEditSettings = useContactEditSettings({ settings, updateSettings });
+  const openCommitteeContact = useCallback((r) => setOpenContact(findCommitteeContact(hubspotContacts, r)), [hubspotContacts]);
   const [tab, setTab] = useState('profile');
   const [form, setForm] = useState(() => savedForm || {});
   const [busy, setBusy] = useState(false);
@@ -680,7 +702,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   const setEvidence = useCallback(rows => setKey('evidence', rows), [setKey]);
   const setClosePlan = useCallback(rows => setKey('closePlan', rows), [setKey]);
 
-  const grid = (name, rows, onChange, addLabel, emptyMessage, actions) => (
+  const grid = (name, rows, onChange, addLabel, emptyMessage, actions, onOpenRow) => (
     <EditGrid
       tableId={`account-mri-popup-${name}`}
       exportFileName={`${row.company} ${addLabel.replace(/^\+ Add /, '')}`}
@@ -692,6 +714,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
       actions={actions}
       settings={settings}
       updateSettings={updateSettings}
+      onOpenRow={onOpenRow}
     />
   );
 
@@ -763,7 +786,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
     body = (
       <div>
         <div style={{ marginBottom: '0.5rem' }}><span style={sectionTitle}>Key people & buying committee</span><span style={sectionHint}>from Opportunity Plan › Key People</span></div>
-        {grid('committee', committee, setCommittee, '+ Add stakeholder', 'No stakeholders yet. Tag decision makers on the company, or add one here.', committeeActions)}
+        {grid('committee', committee, setCommittee, '+ Add stakeholder', 'No stakeholders yet. Tag decision makers on the company, or add one here.', committeeActions, openCommitteeContact)}
         <div style={{ fontSize: '0.72rem', color: MUTED, marginTop: '0.5rem' }}>
           Starts as the contacts tagged Decision Maker on the company. Once you edit the list it is kept as you leave it for this Account MRI.
         </div>
@@ -846,6 +869,17 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '1.1rem 1.4rem 1.6rem' }}>{body}</div>
       </div>
+      {openContact && createPortal(
+        <ContactEditModal
+          prospects={prospects}
+          contact={openContact}
+          onSave={(_updated, opts) => { if (!opts?.silent) setOpenContact(null); }}
+          onClose={() => setOpenContact(null)}
+          {...contactEditSettings}
+          allContacts={hubspotContacts}
+        />,
+        document.body,
+      )}
     </div>,
     document.body,
   );
