@@ -607,24 +607,73 @@ export function setNoActiveOpportunity(opportunity = {}, on) {
   const o = opportunity || {};
   if (on) return { ...noActiveOpportunityValues(), noActive: true, beforeNoActive: o.noActive ? o.beforeNoActive : o };
   // Unticked by hand is kept as noActive: false, so the box isn't ticked
-  // again on its own (withOpportunityDefault).
+  // again on its own (withNoActiveDefaults).
   return { ...(o.beforeNoActive || {}), noActive: false };
 }
 
-/**
- * The form with "No active opportunity" ticked on its own when the company
- * and its portfolio companies have no live opp (`liveOpps` from
- * accountLiveOpps; null while the opps haven't loaded, which ticks
- * nothing). Only while nobody has touched the box or typed on the tab:
- * ticked or unticked by hand, or a field filled in, and the form is left as
- * it is. The auto-ticked tab carries noActiveAuto, and is never saved.
- */
-export function withOpportunityDefault(form, liveOpps) {
+// Tab 6 with no active opportunity: every rating Unknown (a rating, so the
+// tab reads as answered, and a score of 0) and no decision steps or yellow
+// lights. What was there is kept under `beforeNoActive`, as on tab 4.
+export function noActiveDealHealthValues() {
+  return {
+    buy: Object.fromEntries(BUY_STATEMENTS.map(st => [st.key, 'Unknown'])),
+    ours: Object.fromEntries(OURS_STATEMENTS.map(st => [st.key, 'Unknown'])),
+    decisionGrid: [],
+    yellowLights: [],
+  };
+}
+export function setNoActiveDealHealth(dealHealth = {}, on) {
+  const d = dealHealth || {};
+  if (on) return { ...noActiveDealHealthValues(), noActive: true, beforeNoActive: d.noActive ? d.beforeNoActive : d };
+  return { ...(d.beforeNoActive || {}), noActive: false };
+}
+
+// Tab 7 with no active opportunity: one activity saying so. The tab is a
+// list, so the box and what was there sit beside it on the form.
+export const NO_ACTIVE_CLOSE_PLAN_ROW = Object.freeze({
+  id: 'no-active', what: NO_ACTIVE_OPPORTUNITY, when: '', who: '-', endInMind: '-', results: '-', done: '-',
+});
+export function setNoActiveClosePlan(form = {}, on) {
   const f = form || {};
-  const o = f.opportunity || {};
+  if (on) {
+    return {
+      closePlan: [{ ...NO_ACTIVE_CLOSE_PLAN_ROW }],
+      closePlanNoActive: true,
+      closePlanBeforeNoActive: f.closePlanNoActive ? f.closePlanBeforeNoActive : (f.closePlan || []),
+    };
+  }
+  return { closePlan: f.closePlanBeforeNoActive || [], closePlanNoActive: false, closePlanBeforeNoActive: null };
+}
+
+const hasRows = rows => Array.isArray(rows) && rows.some(r => Object.entries(r || {}).some(([k, v]) => k !== 'id' && !isBlank(v)));
+
+/**
+ * The form with "No active opportunity" ticked on its own, on tabs 4
+ * (Opportunity), 6 (Deal Health) and 7 (Close Plan), when the company and
+ * its portfolio companies have no live opp (`liveOpps` from
+ * accountLiveOpps; null while the opps haven't loaded, which ticks
+ * nothing). Each tab on its own terms, and only while nobody has touched
+ * its box or filled anything in on it: ticked or unticked by hand, or
+ * something entered, and that tab is left as it is. An auto-ticked tab
+ * carries noActiveAuto (closePlanNoActiveAuto on tab 7) and is never saved.
+ */
+export function withNoActiveDefaults(form, liveOpps) {
+  const f = form || {};
   if (!liveOpps || liveOpps.own?.length || liveOpps.portfolio?.length) return f;
-  if (o.noActive !== undefined || OPPORTUNITY_FIELDS.some(fl => !isBlank(o[fl.key]))) return f;
-  return { ...f, opportunity: { ...noActiveOpportunityValues(), noActive: true, noActiveAuto: true } };
+  let out = f;
+  const o = f.opportunity || {};
+  if (o.noActive === undefined && !OPPORTUNITY_FIELDS.some(fl => !isBlank(o[fl.key]))) {
+    out = { ...out, opportunity: { ...noActiveOpportunityValues(), noActive: true, noActiveAuto: true } };
+  }
+  const d = f.dealHealth || {};
+  const rated = [d.buy, d.ours].some(g => Object.values(g || {}).some(v => !isBlank(v)));
+  if (d.noActive === undefined && !rated && !hasRows(d.decisionGrid) && !hasRows(d.yellowLights)) {
+    out = { ...out, dealHealth: { ...noActiveDealHealthValues(), noActive: true, noActiveAuto: true } };
+  }
+  if (f.closePlanNoActive === undefined && !hasRows(f.closePlan)) {
+    out = { ...out, closePlan: [{ ...NO_ACTIVE_CLOSE_PLAN_ROW }], closePlanNoActive: true, closePlanNoActiveAuto: true };
+  }
+  return out;
 }
 
 // A no-opportunity value as the read-only field shows it.
@@ -821,7 +870,8 @@ export function tabProgress({ form = {}, profile = {}, committee = [], sites = [
     opportunity: share(OPPORTUNITY_FIELDS.filter(f => !isBlank(form.opportunity?.[f.key])).length, OPPORTUNITY_FIELDS.length),
     sites: sites.length ? 100 : 0,
     dealHealth: share(deal.buy.rated + deal.ours.rated, BUY_STATEMENTS.length + OURS_STATEMENTS.length),
-    closePlan: share(steps.filter(r => r.done === 'Yes').length, steps.length),
+    // No active opportunity answers the tab: there is nothing to close.
+    closePlan: form.closePlanNoActive ? 100 : share(steps.filter(r => r.done === 'Yes').length, steps.length),
   };
 }
 
