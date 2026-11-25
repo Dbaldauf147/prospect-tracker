@@ -27,6 +27,7 @@ import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
 import { mappedTargetNames } from '../../utils/targetAccountMatch';
 import { isPrimaryPoc } from '../../utils/attendeeRoles';
+import { withContactLocalFields } from '../../utils/contactCompanyOverride';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { sentimentFor } from '../../utils/contactSentiment';
 import { companyRosterContacts } from '../../utils/companyRoster';
@@ -68,10 +69,17 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
   // Primary Point of Contact for tab 1, and anyone marked Champion or
   // Detractor for those counts), so the roster rule runs over those rather
   // than over every contact for every account.
+  // My Accounts reads the HubSpot cache straight from IndexedDB, so each
+  // contact's local fields (the Company pin above all) are laid over it
+  // here, as App does for the company card. Without that, a contact pinned
+  // to the account, like its Primary Point of Contact, showed on the card
+  // and was missing here.
   const contactSentiment = settings?.contactSentiment;
+  const contactLocalFields = settings?.contactLocalFields;
   const taggedContacts = useMemo(
-    () => (hubspotContacts || []).filter(c => isPrimaryPoc(c) || isDecisionMakerContact(c) || sentimentFor(contactSentiment, c?.id ?? c?.vid)),
-    [hubspotContacts, contactSentiment],
+    () => (withContactLocalFields(hubspotContacts || [], contactLocalFields) || [])
+      .filter(c => isPrimaryPoc(c) || isDecisionMakerContact(c) || sentimentFor(contactSentiment, c?.id ?? c?.vid)),
+    [hubspotContacts, contactLocalFields, contactSentiment],
   );
   // Each company's entry date on the Target Accounts List, for "Assigned since".
   const entryDates = useMemo(() => targetEntryDates(targetAccountsData), [targetAccountsData]);
