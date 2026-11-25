@@ -574,6 +574,35 @@ export const OPPORTUNITY_SECTIONS = [
 ];
 export const OPPORTUNITY_FIELDS = OPPORTUNITY_SECTIONS.flatMap(s => s.fields);
 
+// What tab 4 holds when the account has no active opportunity: the name
+// says so, every number is 0 and everything else is "-", so the tab reads
+// as answered rather than left blank.
+export const NO_ACTIVE_OPPORTUNITY = 'No Active Opportunity';
+export function noActiveOpportunityValues() {
+  const out = {};
+  for (const f of OPPORTUNITY_FIELDS) {
+    if (f.key === 'name') out[f.key] = NO_ACTIVE_OPPORTUNITY;
+    else if (f.type === 'money' || f.type === 'percent' || f.type === 'number') out[f.key] = '0';
+    else out[f.key] = '-';
+  }
+  return out;
+}
+
+// Ticking "No active opportunity" keeps what was typed under `beforeNoActive`
+// so unticking it brings that back.
+export function setNoActiveOpportunity(opportunity = {}, on) {
+  const o = opportunity || {};
+  if (on) return { ...noActiveOpportunityValues(), noActive: true, beforeNoActive: o.noActive ? o.beforeNoActive : o };
+  return { ...(o.beforeNoActive || {}) };
+}
+
+// A no-opportunity value as the read-only field shows it.
+export function noActiveDisplay(field, value) {
+  if (field.type === 'money') return `$${value}`;
+  if (field.type === 'percent') return `${value}%`;
+  return String(value ?? '');
+}
+
 // ── Tab 6 ────────────────────────────────────────────────────────────────
 export const BUY_STATEMENTS = [
   { row: 5, key: 'businessCase', label: 'Strong business case', meaning: 'Key stakeholders articulated and verified prioritized business issues with quantifiable evidence; constraints are manageable.' },
