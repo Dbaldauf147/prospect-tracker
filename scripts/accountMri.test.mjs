@@ -174,6 +174,9 @@ eq(contractFields([agreements[2]]).contractTerm, 'No contract', 'only expired co
 eq(contractFields([], { known: false }), { contractTerm: '', fee: '', setup: '' }, 'deals not loaded: blank, not No contract');
 eq(contractFields([{ 'Agreement Name': 'A' }]).contractTerm, 'Active, no end date on file', 'active, undated');
 eq(accountMriProfile({ record: { company: 'X' }, deals: [] }).contractTerm, 'No contract', 'profile: no contract');
+eq(accountMriProfile({ record: { company: 'X' }, deals: [] }).earlyOut, 'No', 'early out No with no contract');
+eq(accountMriProfile({ record: { company: 'X' }, deals: agreements }).earlyOut, '', 'early out left to fill with a contract');
+eq(accountMriProfile({ record: { company: 'X' }, deals: [], dealsKnown: false }).earlyOut, '', 'early out blank when deals not loaded');
 eq(accountMriProfile({ record: { company: 'X' }, deals: agreements }).fee.split('\n')[0], '$150,000 / yr (2 active contracts)', 'profile reads deals');
 eq(accountMriProfile({ record: { company: 'X' } }).existingClient, '', 'no status, no client answer');
 eq(accountMriProfile({ record: { company: 'X', status: 'Qualifying' } }).existingClient, 'No', 'not a client');
