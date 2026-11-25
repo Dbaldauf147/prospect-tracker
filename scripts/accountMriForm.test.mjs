@@ -14,6 +14,7 @@ import {
   climateCommitmentLevel, disclosureLevel, trackerSignals, mergeSignals, withTrackerSignals, climateTargetSummary, trackerNotes, disclosureFrameworkList,
   profileRecordPatch,
   footprintLevel, spreadLevel,
+  footprintFromServices, trackerFootprint, mergeFootprint,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -177,6 +178,26 @@ eq(
   ['$1,350,000', '$1,350,000', '$1,234.5', '$1,234.56', '$0.5', '$0', '$7', '-$2,500', '', '', '', '$123'],
   'money input formatting',
 );
+// Schneider footprint from the services assigned to a body system.
+{
+  const st = { 'Bill payment': 'Sold', 'Audits': 'Not Sold', 'GHG': 'Qualifying', 'EAC procurement': '-', 'RA dashboards': 'Renewal' };
+  eq([
+    footprintFromServices(['Bill payment', 'Audits'], st),
+    footprintFromServices(['Audits', 'GHG'], st),
+    footprintFromServices(['GHG', 'EAC procurement'], st),
+    footprintFromServices(['Never heard of it'], st),
+    footprintFromServices(['RA dashboards'], st),
+    footprintFromServices(['bill PAYMENT'], st),
+    footprintFromServices([], st),
+  ], ['SE incumbent', 'Competitor-held', 'Not yet served', 'Not yet served', 'SE incumbent', 'SE incumbent', ''], 'footprint: sold wins, then not sold, else not yet served');
+  const fp = trackerFootprint({ heart: ['Bill payment'], lungs: ['Audits'], brain: [] }, st);
+  eq(fp, { heart: 'SE incumbent', lungs: 'Competitor-held' }, 'footprint per body system; none assigned, none set');
+  eq(mergeFootprint(fp, { heart: 'SE partial', lungs: '' }), { heart: 'SE partial' }, 'a footprint picked by hand wins; cleared stays blank');
+  const cells = mriFormExport(withTrackerSignals({}, {}, {}, fp)).cells;
+  const d2 = Object.values(cells).flat().filter(c => ['D36', 'D37'].includes(c.ref)).map(c => c.value);
+  eq(d2, ['SE incumbent', 'Competitor-held'], 'the footprint exports; the service assignment does not');
+}
+
 // Skeleton: Footprint scale from the site count, Geographic spread from the site list.
 eq(['', '0', '12', '49', '50', '100', '101', '2,000', 641.8, 'n/a'].map(footprintLevel),
   ['', '', 'Low', 'Low', 'Moderate', 'Moderate', 'Strong', 'Strong', 'Strong', ''], 'footprint scale by site count');

@@ -349,10 +349,50 @@ export function mergeSignals(tracker = {}, saved = {}) {
   return diagnosisSignals({ ...(tracker || {}), ...(saved || {}) });
 }
 
+// Schneider footprint from the services assigned to each body system
+// (settings.mriSystemServices: system key -> service names, the same for
+// every company) and how far this company has got with them on its Services
+// board (accountServiceStatuses):
+//   SE incumbent     any of them Sold (or up for Renewal, so sold before)
+//   Competitor-held  else any of them Not Sold
+//   Not yet served   else (not explored yet, or still being worked)
+// A system with no services assigned gets nothing. The assignment itself is
+// a tracker setting, never written to the export.
+const SOLD_STATUSES = new Set(['sold', 'renewal']);
+export function footprintFromServices(names, statuses = {}) {
+  const list = (names || []).map(n => String(n ?? '').trim()).filter(Boolean);
+  if (!list.length) return '';
+  const byName = new Map(Object.entries(statuses || {}).map(([k, v]) => [k.trim().toLowerCase(), String(v ?? '').trim().toLowerCase()]));
+  const read = list.map(n => byName.get(n.toLowerCase()) || '');
+  if (read.some(s => SOLD_STATUSES.has(s))) return 'SE incumbent';
+  if (read.includes('not sold')) return 'Competitor-held';
+  return 'Not yet served';
+}
+
+/** Each body system's footprint from its assigned services, for one company. */
+export function trackerFootprint(systemServices, statuses) {
+  const out = {};
+  for (const system of BODY_SYSTEMS) {
+    const v = footprintFromServices(systemServices?.[system.key], statuses);
+    if (v) out[system.key] = v;
+  }
+  return out;
+}
+
+// Each body system's footprint as shown: the services' reading, then what
+// was picked by hand. A footprint cleared by hand is saved as '' and stays
+// blank.
+export function mergeFootprint(tracker = {}, saved = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries({ ...(tracker || {}), ...(saved || {}) })) if (v) out[k] = v;
+  return out;
+}
+
 // The saved form with the tracker's Diagnosis ratings (and Intel notes,
-// trackerNotes) laid under what was picked or typed, for the progress
-// figures and the export (which add the defaults).
-export function withTrackerSignals(form, tracker, notes = {}) {
+// trackerNotes, and footprints, trackerFootprint) laid under what was
+// picked or typed, for the progress figures and the export (which add the
+// defaults).
+export function withTrackerSignals(form, tracker, notes = {}, footprint = {}) {
   const f = form || {};
   const d = f.diagnosis || {};
   return {
@@ -361,6 +401,7 @@ export function withTrackerSignals(form, tracker, notes = {}) {
       ...d,
       signals: { ...(tracker || {}), ...(d.signals || {}) },
       notes: { ...(notes || {}), ...(d.notes || {}) },
+      footprint: mergeFootprint(footprint, d.footprint),
     },
   };
 }
