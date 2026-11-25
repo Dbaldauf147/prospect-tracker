@@ -241,6 +241,17 @@ export function upsellOpportunities(servicesExplored, responsible = '') {
   return lines.join('\n');
 }
 
+// The Revenue field as the "Annual revenue / profit" row reads it: a bare
+// number ("1630000000") as dollars with commas, anything worded ("$1.6B",
+// "1.6 billion") as it was typed.
+export function revenueAsText(raw) {
+  const s = text(raw);
+  const plain = s.replace(/[$,\s]/g, '');
+  if (!/^\d+(\.\d+)?$/.test(plain)) return s;
+  const [whole, cents] = plain.split('.');
+  return `$${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${cents ? `.${cents}` : ''}`;
+}
+
 const money = n => (n == null || !Number.isFinite(Number(n)) ? '' : `$${Math.round(Number(n)).toLocaleString('en-US')}`);
 const dateText = d => (d instanceof Date && !Number.isNaN(d.getTime())
   ? d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
@@ -290,7 +301,7 @@ function moneySummary(active, key, suffix) {
  *                 term ("Jan 1, 2025 – Mar 31, 2027") and name; "No
  *                 contract" when the company has no active agreement
  *   fee / setup   Recurring Revenue / Setup summed, with a line for each
- *                 agreement when there are several; "0" with No contract
+ *                 agreement when there are several; "$0" with No contract
  *
  * `known` says the Deals list is loaded at all: with nothing loaded every
  * company would read "No contract", so the term is left blank instead.
@@ -298,7 +309,7 @@ function moneySummary(active, key, suffix) {
 export function contractFields(deals, { known = true } = {}) {
   const active = (deals || []).filter(d => !isInactiveAgreement(d));
   // No contract means nothing is billed, so Fee and Set-up read 0.
-  if (!active.length) return known ? { contractTerm: 'No contract', fee: '0', setup: '0' } : { contractTerm: '', fee: '', setup: '' };
+  if (!active.length) return known ? { contractTerm: 'No contract', fee: '$0', setup: '$0' } : { contractTerm: '', fee: '', setup: '' };
   let soonest = null;
   let soonestEnd = null;
   for (const d of active) {
@@ -377,7 +388,7 @@ export function accountMriProfile({ record, tier = '', contacts = [], deals = nu
     sites: Number.isFinite(sites) && sites > 0 ? sites : null,
     // Someone at a portfolio company is never this account's main contact.
     mainContact: mainContactText(contacts.filter(c => !isPortfolioCompanyContact(c, p))),
-    revenueText: text(p.revenue),
+    revenueText: revenueAsText(p.revenue),
     // The competitor on the account is who they buy from today, so it fills
     // Current provider too until somebody types something else there.
     currentProvider: competitorText,
@@ -432,8 +443,11 @@ export function fillProfileSheet(sheetXml, profile, { column = 'C' } = {}) {
     // A date the popup took ("2026-11-23") is stored as the day number the
     // cell's date format reads; anything else in that row goes across as text.
     const day = f.kind === 'date' ? isoDateSerial(value) : null;
-    const numeric = f.kind === 'number' || day != null;
-    xml = setCell(xml, ref, day ?? value, numeric);
+    // The popup keeps dollar rows as "$1,630" and counts as "2,000"; the
+    // cell takes the plain number.
+    const plain = f.kind === 'number' ? String(value).replace(/[$,\s]/g, '') : value;
+    const numeric = (f.kind === 'number' && plain !== '' && Number.isFinite(Number(plain))) || day != null;
+    xml = setCell(xml, ref, day ?? (numeric ? plain : value), numeric);
     if (!numeric) xml = fitRowHeight(xml, f.row, value);
     written.push(ref);
   }

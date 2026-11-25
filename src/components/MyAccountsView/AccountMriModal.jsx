@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, mriFormExport, formatMoneyInput,
+  addMissingDecisionMakers, tabProgress, mriFormExport, formatMoneyInput, formatNumberInput,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -43,16 +43,17 @@ const pct = n => `${Math.round(n * 100)}%`;
 // A money box that formats as it is typed: "$1,350,000". The caret is put
 // back after the same number of digits it followed, so typing or deleting
 // in the middle doesn't throw it to the end when a comma comes or goes.
-function MoneyInput({ value, onChange }) {
+function MoneyInput({ value, onChange, prefix = '$' }) {
   const ref = useRef(null);
   const caretDigits = useRef(null);
-  const shown = formatMoneyInput(value);
+  const format = v => (prefix === '$' ? formatMoneyInput(v) : formatNumberInput(v, prefix));
+  const shown = format(value);
   useLayoutEffect(() => {
     const el = ref.current;
     const want = caretDigits.current;
     if (!el || want == null || document.activeElement !== el) return;
     caretDigits.current = null;
-    let pos = el.value.indexOf('$') + 1;
+    let pos = prefix ? el.value.indexOf(prefix) + 1 : (el.value.startsWith('-') ? 1 : 0);
     for (let seen = 0; pos < el.value.length && seen < want; pos++) {
       if (/[\d.]/.test(el.value[pos])) seen++;
     }
@@ -63,12 +64,12 @@ function MoneyInput({ value, onChange }) {
       ref={ref}
       type="text"
       inputMode="decimal"
-      placeholder="$0"
+      placeholder={`${prefix}0`}
       value={shown}
       onChange={e => {
         const before = e.target.value.slice(0, e.target.selectionStart ?? e.target.value.length);
         caretDigits.current = (before.match(/[\d.]/g) || []).length;
-        onChange(formatMoneyInput(e.target.value));
+        onChange(format(e.target.value));
       }}
       style={inputStyle}
     />
@@ -96,6 +97,8 @@ function Field({ field, value, onChange, hint, onReset }) {
     control = <input type="date" {...common} />;
   } else if (field.type === 'money') {
     control = <MoneyInput value={value} onChange={onChange} />;
+  } else if (field.type === 'count') {
+    control = <MoneyInput value={value} onChange={onChange} prefix="" />;
   } else if (field.type === 'number' || field.type === 'percent') {
     control = <input type="number" step="any" {...common} />;
   } else {

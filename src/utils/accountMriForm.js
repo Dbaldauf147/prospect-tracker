@@ -49,9 +49,9 @@ const PROFILE_INPUT = {
   stage: { type: 'select', list: 'stage' },
   assignedSince: { type: 'date' },
   hq: { placeholder: 'City, State' },
-  revenueB: { type: 'number' },
-  sites: { type: 'number' },
-  energySpend: { type: 'number' },
+  revenueB: { type: 'money' },
+  sites: { type: 'count' },
+  energySpend: { type: 'money' },
   background: { type: 'textarea' },
   services: { type: 'textarea' },
   fee: { type: 'textarea' },
@@ -399,6 +399,12 @@ export function dateSerial(iso) {
  * amount() strips the "$" and commas back off, so the export is unchanged.
  */
 export function formatMoneyInput(raw) {
+  return formatNumberInput(raw, '$');
+}
+
+// A number as typed, grouped with commas and led by `prefix` ('$' for money,
+// '' for a count): "2000" -> "2,000". '' when there is no digit.
+export function formatNumberInput(raw, prefix = '') {
   const s = String(raw ?? '').trim();
   const negative = s.startsWith('-');
   const cleaned = s.replace(/[^\d.]/g, '');
@@ -407,7 +413,17 @@ export function formatMoneyInput(raw) {
   const cents = dot === -1 ? null : cleaned.slice(dot + 1).replace(/\./g, '').slice(0, 2);
   if (!whole && cents == null) return '';
   const grouped = (whole || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return `${negative ? '-' : ''}$${grouped}${cents == null ? '' : `.${cents}`}`;
+  return `${negative ? '-' : ''}${prefix}${grouped}${cents == null ? '' : `.${cents}`}`;
+}
+
+// Tab 1 values as the Account MRI table shows them, matching the popup:
+// dollar rows with "$" and commas, counts with commas, the rest as they are.
+const PROFILE_MONEY = new Set(['revenueB', 'energySpend']);
+export function profileDisplayValue(key, value) {
+  if (value == null || value === '') return '';
+  if (PROFILE_MONEY.has(key)) return formatMoneyInput(value) || String(value);
+  if (key === 'sites') return formatNumberInput(value) || String(value);
+  return String(value);
 }
 
 const amount = v => {
