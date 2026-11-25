@@ -109,7 +109,7 @@ const form = {
   closePlan: [{ what: 'Workshop', done: 'Yes' }, { what: 'Proposal' }, {}],
 };
 eq(tabProgress({ form, profile: m.values, committee: dms, sites: [] }), {
-  profile: Math.round((5 / MRI_PROFILE_FIELDS.length) * 100), diagnosis: Math.round((16 / 28) * 100), committee: 100, opportunity: Math.round((2 / OPPORTUNITY_FIELDS.length) * 100), sites: 0, dealHealth: 11, closePlan: 50,
+  profile: Math.round((5 / MRI_PROFILE_FIELDS.length) * 100), diagnosis: Math.round((17 / 28) * 100), committee: 100, opportunity: Math.round((2 / OPPORTUNITY_FIELDS.length) * 100), sites: 0, dealHealth: 11, closePlan: 50,
 }, 'progress per tab');
 eq(tabProgress({}).closePlan, 0, 'nothing saved');
 eq(mriStageProgress(tabProgress({})).text, '1 - 0%', 'stage progress: nothing saved is stage 1');
@@ -159,7 +159,7 @@ await out.xlsx.load(await zip.generateAsync({ type: 'nodebuffer', compression: '
 const o = n => out.worksheets[n - 1];
 const iso = v => (v instanceof Date ? v.toISOString().slice(0, 10) : v);
 eq([o(1).getCell('C5').value, o(1).getCell('C8').value, iso(o(1).getCell('C13').value), o(1).getCell('C17').value], ['BlackRock', 'Keith McHugh', '2026-11-23', 310], 'tab 1: typed rows, a real date and a real number');
-eq([o(2).getCell('D4').value, o(2).getCell('D31').value, o(2).getCell('D5').value, o(2).getCell('D35').value, o(2).getCell('E41').value, o(2).getCell('A46').value], ['Strong', 'Low', null, 'SE partial', 'Leases most plant', 'From the 10-K: net zero by 2030.'], 'tab 2: ratings, footprint, notes, raw intel');
+eq([o(2).getCell('D4').value, o(2).getCell('D31').value, o(2).getCell('D5').value, o(2).getCell('D35').value, o(2).getCell('E41').value, o(2).getCell('A46').value], ['Strong', 'Low', 'Strong', 'SE partial', 'Leases most plant', 'From the 10-K: net zero by 2030.'], 'tab 2: ratings, footprint, notes, raw intel');
 eq(o(2).getCell('E4').value.formula.startsWith('IF(D4='), true, 'tab 2 score formulas untouched');
 eq(['A', 'B', 'E', 'F', 'G', 'H', 'I', 'J'].map(c => o(3).getCell(`${c}6`).value), ['Ann Lee', 'CFO', 'Heart', 'Budget Holder', 'Neutral (Non-Committal)', 'Decider', '3 - Neutral', 'Dana Reyes'], 'tab 3: a stakeholder with every dropdown');
 eq(o(3).getCell('A32').value, 'Person 25', 'tab 3: the committee ran past its entry rows');
@@ -272,6 +272,14 @@ eq(diagnosisSignals({ 'brain.0': 'Low' })['brain.0'], 'Low', 'a rating with no d
 const tab2 = mriFormExport({}).cells['xl/worksheets/sheet2.xml'];
 eq((tab2 || []).length, 15 + BODY_SYSTEMS.length, 'an empty form writes only the default ratings and notes on tab 2');
 eq(tabProgress({ form: {} }).diagnosis, Math.round((15 / 28) * 100), 'diagnosis progress counts the defaults');
+
+// Exec / board ownership of sustainability follows Public climate / net-zero commitment.
+eq(diagnosisSignals({ 'brain.0': 'Strong' })['brain.1'], 'Strong', 'exec ownership matches the climate commitment');
+eq(mergeSignals({ 'brain.0': 'Moderate' }, {})['brain.1'], 'Moderate', 'it follows the rating read from Targets');
+eq(mergeSignals({ 'brain.0': 'Moderate' }, { 'brain.0': 'Low' })['brain.1'], 'Low', 'it follows a climate rating picked by hand');
+eq(mergeSignals({ 'brain.0': 'Strong' }, { 'brain.1': 'Absent' })['brain.1'], 'Absent', 'a rating picked for it wins');
+eq('brain.1' in mergeSignals({ 'brain.0': 'Strong' }, { 'brain.1': '' }), false, 'cleared by hand stays cleared');
+eq('brain.1' in diagnosisSignals({}), false, 'nothing to match, nothing shown');
 
 // Brain's Intel notes: the kind of targets the company has.
 eq(climateTargetSummary([
