@@ -392,13 +392,31 @@ export function climateTargetSummary(climateTargets) {
 // of targets it has, Immune's the disclosure frameworks it reports to
 // (`frameworks` as trackerSignals takes them). Only notes the tracker has
 // something for are given.
-export function trackerNotes(record, { frameworks = null } = {}) {
+export function trackerNotes(record, { frameworks = null, siteList = null } = {}) {
   const out = {};
+  const skeleton = siteFootprintNote(record, siteList);
+  if (skeleton) out.skeleton = skeleton;
   const brain = climateTargetSummary(record?.climateTargets);
   if (brain) out.brain = brain;
   const immune = disclosureFrameworkList([...(record?.frameworks || []), ...(frameworks || [])]);
   if (immune) out.immune = immune;
   return out;
+}
+
+// Skeleton's Intel notes: how many sites and where, "2,000 sites across 3
+// countries" (or "... across 12 states" when they are all in one country).
+// The count is the company's Sites field, else its site list's; where they
+// are comes from the site list (siteGeography). '' when neither says.
+const plural = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+export function siteFootprintNote(record, siteList) {
+  const geo = siteGeography(siteList);
+  const field = Number(String(record?.numberOfSites ?? '').replace(/[,\s]/g, ''));
+  const count = Number.isFinite(field) && field > 0 ? Math.round(field) : geo.sites;
+  const where = geo.countries > 1 ? plural(geo.countries, 'country', 'countries')
+    : geo.states ? plural(geo.states, 'state', 'states')
+      : geo.countries === 1 ? '1 country' : '';
+  if (!count) return '';
+  return where ? `${plural(count, 'site', 'sites')} across ${where}` : plural(count, 'site', 'sites');
 }
 
 // Immune's Intel notes: which of CDP, GRESB, NZAM and UN PRI the company
@@ -409,7 +427,7 @@ export function disclosureFrameworkList(frameworks) {
 }
 
 // Where each tracker Intel note comes from, for the tag beside the box.
-export const NOTE_SOURCE = { brain: 'Targets', immune: 'Frameworks' };
+export const NOTE_SOURCE = { brain: 'Targets', immune: 'Frameworks', skeleton: 'Sites' };
 
 // Tab 2's ratings as shown: the defaults (DEFAULT_SIGNALS), then the
 // tracker's ratings, then what was picked by hand. A sign cleared by hand is
