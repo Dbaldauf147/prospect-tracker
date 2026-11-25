@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { leadNameKey } from '../../utils/marketingLeadsImport';
@@ -16,7 +16,7 @@ import { computeNewBfoOpps, computeNewBfoMissingData } from '../../utils/newBfoO
 import { computeAppDescriptionOpps } from '../../utils/appDescriptionOpps';
 import { computeCloseNotSoldOpps, hasBfoOppNameIndex, detectBfoUrl, resolveOppForRow } from '../../utils/closeNotSoldOpps';
 import { BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, BFO_ACTIVITY_EVENT } from '../../utils/bfoActivityStore';
-import { buildActivityAddressLines, ACTIVITY_PROMPT_LIMIT } from '../../utils/activityAddressLines';
+import { buildActivityAddressLines, activityEntryCount, ACTIVITY_PROMPT_LIMIT } from '../../utils/activityAddressLines';
 import { saveSentEmailLog } from '../../utils/sentEmailLog';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
 import { findRecoverableLinks, applyRecoveredLinks, ledgerRows, LEAD_LINK_LEDGER_KEY } from '../../utils/leadLinks';
@@ -3142,7 +3142,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   //      Opps sheet carries one, else its Account.
   // Each company identifier maps through the Table View bfoCompanyName
   // lookup so the BFO-side name stays consistent with Opps 2.
-  const resolveBfoCompanyName = (e) => {
+  const resolveBfoCompanyName = useCallback((e) => {
     for (const addr of (e.recipients || [])) {
       const co = companyByEmail.get(addr);
       const v = co ? (bfoCompanyByNorm.get(normalizeCompany(co)) || '') : '';
@@ -3156,7 +3156,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
         || bfoCompanyByNorm.get(normalizeCompany(opp.account || '')) || '';
     }
     return '';
-  };
+  }, [companyByEmail, bfoCompanyByNorm, oppIndex]);
 
   // Opps that don't yet exist in BFO and need a fresh Guided Opportunity
   // created. Computed by the shared util so the Agents table, the red
@@ -3610,6 +3610,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       markedMeetings: markedMeetingOpps,
       calls: calledOpps,
       emails: todaysOutbound,
+      accountOf: resolveBfoCompanyName,
       limit: limitPromptActivity ? ACTIVITY_PROMPT_LIMIT : null,
     });
     const activityBlock = activityLines.join('\n');
@@ -3700,7 +3701,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     const suffixSection = `===== Update BFO Activity =====\n${bfoSuffix}`;
     return base ? `${base}\n\n${suffixSection}` : suffixSection;
   }, [
-    aiPrompt, limitPromptActivity, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
+    aiPrompt, limitPromptActivity, resolveBfoCompanyName, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
     stageChangePrompt, appDescriptionPrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
     bfoPrepPrompt, todaysOutbound, calledOpps, allTodaysMeetings, markedMeetingOpps, newBfoOpps, closeDateOpps,
     amountUpdateOpps, stageChangeOpps, appDescriptionReady, closeNotSoldOpps, bfoPrepOpps,
@@ -4613,17 +4614,21 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       </section>
 
       {(() => {
-        const allAddressLines = buildActivityAddressLines({
+        const activityInput = {
           meetings: allTodaysMeetings,
           markedMeetings: markedMeetingOpps,
           calls: calledOpps,
           emails: todaysOutbound,
-        });
+          // A touch with no BFO opportunity is logged on its BFO Account.
+          accountOf: resolveBfoCompanyName,
+        };
+        const allAddressLines = buildActivityAddressLines(activityInput);
         // "Limit prompt activity to 25": the first 25 in the block's own
-        // order (meetings, then calls, then emails), the rest left for the
-        // next run.
-        const addressLines = limitPromptActivity ? allAddressLines.slice(0, ACTIVITY_PROMPT_LIMIT + 1) : allAddressLines;
-        const heldBack = allAddressLines.length - addressLines.length;
+        // order (meetings, then calls, then emails; opportunities, then
+        // accounts), the rest left for the next run.
+        const addressLines = limitPromptActivity ? buildActivityAddressLines({ ...activityInput, limit: ACTIVITY_PROMPT_LIMIT }) : allAddressLines;
+        const totalEntries = activityEntryCount(allAddressLines);
+        const heldBack = totalEntries - activityEntryCount(addressLines);
         const addressBlock = addressLines.join('\n');
         const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
         const onCopy = async () => {
@@ -4639,11 +4644,11 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <section className={styles.section}>
             <h2 className={styles.sectionHeader}>AI Prompt (Activity)</h2>
             <p className={styles.subnote}>
-              The past 2 business days&rsquo; BFO addresses (sent emails, calls, and meetings marked on the Opps tab) are appended automatically. When an email&rsquo;s external recipient matches a Marketing Lead (Contacts tab), that lead&rsquo;s Salesforce Link is appended too so the touch is logged on the lead as well. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
+              The past 2 business days&rsquo; BFO addresses (sent emails, calls, and meetings marked on the Opps tab) are appended automatically. A touch with no BFO opportunity is listed by its BFO Company Name instead, so it is logged on that BFO Account (one task per account, and none for an account already getting one through an opportunity). When an email&rsquo;s external recipient matches a Marketing Lead (Contacts tab), that lead&rsquo;s Salesforce Link is appended too so the touch is logged on the lead as well. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
             </p>
             {heldBack > 0 && (
               <p className={styles.subnote}>
-                Limited to {ACTIVITY_PROMPT_LIMIT}: this prompt carries the first {ACTIVITY_PROMPT_LIMIT} of {allAddressLines.length - 1} addresses, and {heldBack} {heldBack === 1 ? 'is' : 'are'} left out. Untick &ldquo;Limit prompt activity to {ACTIVITY_PROMPT_LIMIT}&rdquo; at the top of the page to send them all.
+                Limited to {ACTIVITY_PROMPT_LIMIT}: this prompt carries the first {ACTIVITY_PROMPT_LIMIT} of {totalEntries} activities, and {heldBack} {heldBack === 1 ? 'is' : 'are'} left out. Untick &ldquo;Limit prompt activity to {ACTIVITY_PROMPT_LIMIT}&rdquo; at the top of the page to send them all.
               </p>
             )}
             {revealedPrompts.activity && (
