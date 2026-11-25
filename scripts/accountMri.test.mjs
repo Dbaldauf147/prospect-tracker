@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs';
 import {
   MRI_PROFILE_FIELDS, MRI_PROFILE_SHEET_PATH, accountMriProfile, fillProfileSheet,
   fillTableSheet, fillAccountMriWorkbook, buyingCommitteeRows, siteUtilityRows, MRI_COMMITTEE_TABLE, MRI_SITES_TABLE,
-  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, isPortfolioCompanyContact, mainContactText, mriFileName, revenueAsText,
+  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, accountTryingAgainServices, isPortfolioCompanyContact, mainContactText, mriFileName, revenueAsText,
 } from '../src/utils/accountMri.js';
 
 let passed = 0, failed = 0;
@@ -41,6 +41,21 @@ eq(upsellOpportunities(board), 'Qualifying: IDM', 'no salesperson, no responsibl
 eq(upsellOpportunities({ Audits: 'Exploring', Q: 'Quoted' }, 'Dana Reyes'), '-', 'other in-flight statuses are not upsell');
 eq(upsellOpportunities({ A: 'Sold', RECs: 'Not Sold' }, 'Dana Reyes'), '-', 'nothing qualifying or renewing: a dash');
 eq(upsellOpportunities({}, 'Dana Reyes'), '-', 'no services at all: a dash');
+eq(upsellOpportunities({ 'Strategic sourcing': 'Not Sold' }, 'Dana Reyes', ['Strategic sourcing']), 'Trying again: Strategic sourcing\nResponsible: Dana Reyes', 'a Trying again service is an upsell');
+eq(upsellOpportunities({ IDM: 'Qualifying', EV: 'Not Sold' }, '', ['IDM', 'EV']), 'Qualifying: IDM\nTrying again: EV', 'trying again after qualifying, nothing listed twice');
+eq(
+  accountTryingAgainServices({
+    company: 'Northwind',
+    servicesExplored: { 'Strategic sourcing': 'Not Sold', Audits: 'Not Sold', IDM: '-' },
+    oppRows: [
+      { Account: 'Northwind', Stage: 'Quoted', Scope: 'Strategic sourcing, IDM' },
+      { Account: 'Northwind', Stage: 'Not Sold', Scope: 'Audits' },
+    ],
+    services: ['Strategic sourcing', 'Audits', 'IDM'],
+  }),
+  ['Strategic sourcing'],
+  'trying again: a saved status and a live opp naming the service',
+);
 eq(
   accountServiceStatuses({
     company: 'Northwind',

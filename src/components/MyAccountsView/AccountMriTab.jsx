@@ -17,7 +17,7 @@
 // answers in this table and in the export.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, isPortfolioCompanyContact, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
+import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, accountTryingAgainServices, isPortfolioCompanyContact, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
@@ -160,7 +160,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     // Already matched above, so each is handed over under the one name the
     // status reader matches on again.
     const oppAccount = String(record.company || r.company || '').trim();
-    const serviceStatuses = accountServiceStatuses({
+    const serviceArgs = {
       company: oppAccount,
       servicesExplored: record.servicesExplored,
       oppRows: companyOpps.map(o => ({ ...o, Account: oppAccount })),
@@ -168,7 +168,8 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       serviceOverrides: serviceOverrides || {},
       hidden: hiddenServices,
       renames: serviceRenames,
-    });
+    };
+    const serviceStatuses = accountServiceStatuses(serviceArgs);
     const companyDeals = dealsForCompany(deals.list, deals.map, record.company, record.aliases);
     // What the tracker says, then what the popup has saved over it.
     const trackerProfile = accountMriProfile({
@@ -176,6 +177,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       tier: r.tier,
       contacts,
       serviceStatuses,
+      tryingAgain: accountTryingAgainServices(serviceArgs),
       deals: companyDeals,
       dealsKnown: deals.list.length > 0,
       entryDate: entryDateFor(entryDates, {
