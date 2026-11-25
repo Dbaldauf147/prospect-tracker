@@ -21,7 +21,7 @@ import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, isPortfol
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, withTrackerSignals } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -111,6 +111,20 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
   const serviceOverrides = settings?.serviceOverrides;
   const hiddenServices = settings?.hiddenServices;
   const serviceRenames = settings?.serviceRenames;
+  // The services each Diagnosis body system is about, for its footprint.
+  const systemServices = settings?.mriSystemServices;
+  // The services as the board names them (renamed, hidden ones left out):
+  // what the popup offers to assign to a body system.
+  const serviceOptions = useMemo(() => {
+    const hide = new Set((hiddenServices || []).map(n => String(n).trim().toLowerCase()));
+    const out = [];
+    for (const n of serviceNames) {
+      if (hide.has(String(n).trim().toLowerCase())) continue;
+      const shown = String(serviceRenames?.[n] || n).trim();
+      if (shown && !out.includes(shown)) out.push(shown);
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [serviceNames, hiddenServices, serviceRenames]);
   const oppsByAccount = useMemo(() => {
     const map = new Map();
     for (const o of oppsRecords || []) {
@@ -176,6 +190,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     );
     const form = (savedForms || {})[mriSlug(r.company)] || null;
     const notes = trackerNotes(record);
+    const footprint = trackerFootprint(systemServices, serviceStatuses);
     const profile = mergeProfile(trackerProfile, form?.profile).values;
     const siteList = (siteLists || {})[siteListSlug(record.company)];
     const sites = siteUtilityRows(siteList);
@@ -184,7 +199,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
     const stage = mriStageProgress(tabProgress({
-      form: withTrackerSignals(form, signals, notes),
+      form: withTrackerSignals(form, signals, notes, footprint),
       profile,
       committee: committeeRows(form?.committee, trackerCommittee),
       sites,
@@ -200,12 +215,14 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       trackerSignals: signals,
       trackerReasons: trackerSignalReasons(record, signalInputs),
       trackerNotes: notes,
+      trackerFootprint: footprint,
+      serviceStatuses,
       committee: committeeRows(form?.committee, trackerCommittee).filter(c => c.name || c.email),
       sites,
       profile,
       stage,
     };
-  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, settings, prospects, frameworkFlags]);
+  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, systemServices, settings, prospects, frameworkFlags]);
 
   // The company whose Account MRI popup is open.
   const [openId, setOpenId] = useState(null);
@@ -312,7 +329,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
         sites: one.sites,
         // The tracker's ratings and notes, and the defaults, go out even for
         // a company nothing has been saved for yet.
-        extra: mriFormExport(withTrackerSignals(one.form, one.trackerSignals, one.trackerNotes)),
+        extra: mriFormExport(withTrackerSignals(one.form, one.trackerSignals, one.trackerNotes, one.trackerFootprint)),
       });
     } catch (err) {
       setError(err?.message || 'The export failed.');
@@ -360,7 +377,8 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       {openRow && (
         <AccountMriModal
           key={openRow.id}
-          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerReasons: openRow.trackerReasons, trackerNotes: openRow.trackerNotes }}
+          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerReasons: openRow.trackerReasons, trackerNotes: openRow.trackerNotes, trackerFootprint: openRow.trackerFootprint, serviceStatuses: openRow.serviceStatuses }}
+          serviceOptions={serviceOptions}
           form={openRow.form}
           onSave={next => saveForm(openRow.company, next)}
           onClose={() => setOpenId(null)}

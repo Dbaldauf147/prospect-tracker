@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, withTrackerSignals, signalReason, SIGNAL_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
+  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, signalReason, SIGNAL_SOURCE, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -189,7 +189,61 @@ function Segmented({ options, value, onChange, fill, why = '' }) {
   );
 }
 
-function DiagnosisTab({ diagnosis, tracker = {}, trackerReasons = {}, trackerNoteFor = {}, onChange }) {
+// The services a body system is about, under its Schneider footprint: each
+// with this company's status, and a pick-list to change them. The list is
+// the same for every company (settings.mriSystemServices) and is not part
+// of the export.
+const STATUS_INK = { sold: SAGE, renewal: SAGE, 'not sold': BRICK };
+function SystemServices({ system, assigned, options, statuses, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const statusOf = (name) => {
+    const hit = Object.entries(statuses || {}).find(([k]) => k.trim().toLowerCase() === name.trim().toLowerCase());
+    const s = String(hit?.[1] || '').trim();
+    return s && s !== '-' ? s : 'Not explored';
+  };
+  const chosen = new Set(assigned.map(n => n.toLowerCase()));
+  const shown = options.filter(o => o.toLowerCase().includes(search.trim().toLowerCase()));
+  const toggle = (name) => onChange(chosen.has(name.toLowerCase())
+    ? assigned.filter(n => n.toLowerCase() !== name.toLowerCase())
+    : [...assigned, name]);
+  return (
+    <div style={{ marginTop: '0.45rem', fontSize: '0.74rem', color: MUTED }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontWeight: 600 }}>Services:</span>
+        {assigned.length ? assigned.map(n => {
+          const st = statusOf(n);
+          return (
+            <span key={n} title={`${n}: ${st} for this company`} style={{ border: `1px solid ${LINE}`, background: '#fff', borderRadius: 10, padding: '1px 8px', color: INK }}>
+              {n} <span style={{ color: STATUS_INK[st.toLowerCase()] || MUTED, fontWeight: 600 }}>{st}</span>
+            </span>
+          );
+        }) : <span>none assigned</span>}
+        {onChange && (
+          <button type="button" onClick={() => setOpen(o => !o)} title={`Choose the services that belong to ${system.name}. The same for every company; not exported.`} style={{ ...ghostButton, padding: '0.15rem 0.5rem', fontSize: '0.7rem' }}>
+            {open ? 'Done' : 'Assign services'}
+          </button>
+        )}
+      </div>
+      {open && (
+        <div style={{ marginTop: 6, border: `1px solid ${LINE}`, background: '#fff', padding: 6 }}>
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search services..." style={{ ...inputStyle, padding: '0.3rem 0.45rem', fontSize: '0.78rem' }} />
+          <div style={{ maxHeight: 180, overflowY: 'auto', marginTop: 4 }}>
+            {shown.length ? shown.map(o => (
+              <label key={o} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 2px', color: INK, cursor: 'pointer' }}>
+                <input type="checkbox" checked={chosen.has(o.toLowerCase())} onChange={() => toggle(o)} />
+                <span style={{ flex: 1 }}>{o}</span>
+                <span style={{ color: MUTED }}>{statusOf(o)}</span>
+              </label>
+            )) : <div style={{ padding: 4 }}>No services match</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiagnosisTab({ diagnosis, tracker = {}, trackerReasons = {}, trackerNoteFor = {}, trackerFootprintFor = {}, systemServices = {}, serviceOptions = [], serviceStatuses = {}, onAssignServices, onChange }) {
   const signals = mergeSignals(tracker, diagnosis.signals);
   // Why each sign shows what it shows, for its hover text.
   const why = key => signalReason(key, { saved: diagnosis.signals || {}, tracker, reasons: trackerReasons, signals, labelOf: k => SIGN_LABEL[k] || k });
@@ -200,7 +254,8 @@ function DiagnosisTab({ diagnosis, tracker = {}, trackerReasons = {}, trackerNot
     // as '' when cleared, so that rating doesn't come straight back.
     // Intel notes have a default too (DEFAULT_INTEL_NOTE), so an emptied box
     // is kept as '' as well.
-    const keepBlank = (group === 'signals' && (DEFAULT_SIGNALS[key] || tracker[key] || SIGNAL_FOLLOWS[key])) || group === 'notes';
+    const keepBlank = (group === 'signals' && (DEFAULT_SIGNALS[key] || tracker[key] || SIGNAL_FOLLOWS[key])) || group === 'notes'
+      || (group === 'footprint' && trackerFootprintFor[key]);
     if (value === '' && !keepBlank) delete next[key]; else next[key] = value;
     onChange({ ...diagnosis, [group]: next });
   };
@@ -241,8 +296,16 @@ function DiagnosisTab({ diagnosis, tracker = {}, trackerReasons = {}, trackerNot
               <div style={{ marginTop: '0.8rem' }}>
                 <Field
                   field={{ label: 'Schneider footprint', type: 'select', list: 'footprint' }}
-                  value={diagnosis.footprint?.[system.key] || ''}
+                  hint={trackerFootprintFor[system.key] && diagnosis.footprint?.[system.key] === undefined ? 'from Services' : ''}
+                  value={mergeFootprint(trackerFootprintFor, diagnosis.footprint)[system.key] || ''}
                   onChange={v => set('footprint', system.key, v)}
+                />
+                <SystemServices
+                  system={system}
+                  assigned={systemServices?.[system.key] || []}
+                  options={serviceOptions}
+                  statuses={serviceStatuses}
+                  onChange={onAssignServices ? list => onAssignServices(system.key, list) : null}
                 />
               </div>
               <div style={{ marginTop: '0.7rem' }}>
@@ -492,7 +555,7 @@ function SitesTab({ sites, company, settings, updateSettings }) {
  * profile (the tracker's tab 1), committee (its decision makers), sites }.
  * `form` is what is saved for it and `onSave(next)` saves it.
  */
-export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenCompany, onUpdateRecord, settings, updateSettings }) {
+export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenCompany, onUpdateRecord, serviceOptions = [], settings, updateSettings }) {
   const [tab, setTab] = useState('profile');
   const [form, setForm] = useState(() => savedForm || {});
   const [busy, setBusy] = useState(false);
@@ -561,7 +624,8 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   // The form with the tracker's Diagnosis ratings filled in where none was picked.
   const signalsFromTracker = row.trackerSignals;
   const notesFromTracker = row.trackerNotes;
-  const effectiveForm = useMemo(() => withTrackerSignals(form, signalsFromTracker, notesFromTracker), [form, signalsFromTracker, notesFromTracker]);
+  const footprintFromTracker = row.trackerFootprint;
+  const effectiveForm = useMemo(() => withTrackerSignals(form, signalsFromTracker, notesFromTracker, footprintFromTracker), [form, signalsFromTracker, notesFromTracker, footprintFromTracker]);
   const progress = useMemo(
     () => tabProgress({ form: effectiveForm, profile: merged.values, committee, sites: row.sites }),
     [effectiveForm, merged, committee, row.sites],
@@ -638,7 +702,20 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
       />
     );
   } else if (tab === 'diagnosis') {
-    body = <DiagnosisTab diagnosis={form.diagnosis || {}} tracker={row.trackerSignals || {}} trackerReasons={row.trackerReasons || {}} trackerNoteFor={row.trackerNotes || {}} onChange={next => setKey('diagnosis', next)} />;
+    body = (
+      <DiagnosisTab
+        diagnosis={form.diagnosis || {}}
+        tracker={row.trackerSignals || {}}
+        trackerReasons={row.trackerReasons || {}}
+        trackerNoteFor={row.trackerNotes || {}}
+        trackerFootprintFor={row.trackerFootprint || {}}
+        systemServices={settings?.mriSystemServices || {}}
+        serviceOptions={serviceOptions}
+        serviceStatuses={row.serviceStatuses || {}}
+        onAssignServices={updateSettings ? (key, list) => updateSettings(s => ({ mriSystemServices: { ...(s?.mriSystemServices || {}), [key]: list } })) : null}
+        onChange={next => setKey('diagnosis', next)}
+      />
+    );
   } else if (tab === 'committee') {
     body = (
       <div>
