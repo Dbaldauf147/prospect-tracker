@@ -21,7 +21,7 @@ import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, isPortfol
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, withTrackerSignals } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerNotes, withTrackerSignals } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -152,12 +152,13 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     );
     const form = (savedForms || {})[mriSlug(r.company)] || null;
     const signals = trackerSignals(record);
+    const notes = trackerNotes(record);
     const profile = mergeProfile(trackerProfile, form?.profile).values;
     const sites = siteUtilityRows((siteLists || {})[siteListSlug(record.company)]);
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
     const stage = mriStageProgress(tabProgress({
-      form: withTrackerSignals(form, signals),
+      form: withTrackerSignals(form, signals, notes),
       profile,
       committee: committeeRows(form?.committee, trackerCommittee),
       sites,
@@ -171,6 +172,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       trackerProfile,
       trackerCommittee,
       trackerSignals: signals,
+      trackerNotes: notes,
       committee: committeeRows(form?.committee, trackerCommittee).filter(c => c.name || c.email),
       sites,
       profile,
@@ -281,7 +283,9 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
         profile: one.profile,
         committee: one.committee,
         sites: one.sites,
-        extra: one.form ? mriFormExport(one.form) : null,
+        // The tracker's ratings and notes, and the defaults, go out even for
+        // a company nothing has been saved for yet.
+        extra: mriFormExport(withTrackerSignals(one.form, one.trackerSignals, one.trackerNotes)),
       });
     } catch (err) {
       setError(err?.message || 'The export failed.');
@@ -327,7 +331,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       {openRow && (
         <AccountMriModal
           key={openRow.id}
-          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites }}
+          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerNotes: openRow.trackerNotes }}
           form={openRow.form}
           onSave={next => saveForm(openRow.company, next)}
           onClose={() => setOpenId(null)}
