@@ -197,6 +197,29 @@ const STATUS_INK = { sold: SAGE, renewal: SAGE, 'not sold': BRICK };
 function SystemServices({ system, assigned, options, statuses, onChange }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  // The chips sit on one line: those that don't fit are hidden behind a
+  // "+N more" button, which shows them all until "Show less".
+  const [expanded, setExpanded] = useState(false);
+  const [hiddenCount, setHiddenCount] = useState(0);
+  const [lineHeight, setLineHeight] = useState(22);
+  const chipsRef = useRef(null);
+  useLayoutEffect(() => {
+    const box = chipsRef.current;
+    if (!box) return undefined;
+    const measure = () => {
+      const chips = [...box.children];
+      if (!chips.length) { setHiddenCount(0); return; }
+      const top = chips[0].offsetTop;
+      setLineHeight(chips[0].offsetHeight);
+      setHiddenCount(chips.filter(c => c.offsetTop > top + 1).length);
+    };
+    measure();
+    // Chip widths settle once the web font is in, without the box resizing.
+    document.fonts?.ready?.then(measure);
+    const ro = new ResizeObserver(measure);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [assigned, statuses, expanded]);
   const statusOf = (name) => {
     const hit = Object.entries(statuses || {}).find(([k]) => k.trim().toLowerCase() === name.trim().toLowerCase());
     const s = String(hit?.[1] || '').trim();
@@ -209,18 +232,33 @@ function SystemServices({ system, assigned, options, statuses, onChange }) {
     : [...assigned, name]);
   return (
     <div style={{ marginTop: '0.45rem', fontSize: '0.74rem', color: MUTED }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontWeight: 600 }}>Services:</span>
-        {assigned.length ? assigned.map(n => {
-          const st = statusOf(n);
-          return (
-            <span key={n} title={`${n}: ${st} for this company`} style={{ border: `1px solid ${LINE}`, background: '#fff', borderRadius: 10, padding: '1px 8px', color: INK }}>
-              {n} <span style={{ color: STATUS_INK[st.toLowerCase()] || MUTED, fontWeight: 600 }}>{st}</span>
-            </span>
-          );
-        }) : <span>none assigned</span>}
+      <div style={{ display: 'flex', flexWrap: expanded ? 'wrap' : 'nowrap', alignItems: 'flex-start', gap: 6 }}>
+        <span style={{ fontWeight: 600, lineHeight: `${lineHeight}px` }}>Services:</span>
+        <div
+          ref={chipsRef}
+          style={expanded
+            ? { display: 'contents' }
+            : { flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, maxHeight: lineHeight, overflow: 'hidden' }}
+        >
+          {assigned.length ? assigned.map(n => {
+            const st = statusOf(n);
+            return (
+              <span key={n} title={`${n}: ${st} for this company`} style={{ border: `1px solid ${LINE}`, background: '#fff', borderRadius: 10, padding: '1px 8px', color: INK, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {n} <span style={{ color: STATUS_INK[st.toLowerCase()] || MUTED, fontWeight: 600 }}>{st}</span>
+              </span>
+            );
+          }) : <span style={{ lineHeight: `${lineHeight}px` }}>none assigned</span>}
+        </div>
+        {(hiddenCount > 0 || expanded) && (
+          <button
+            type="button"
+            onClick={() => setExpanded(x => !x)}
+            title={expanded ? 'Show the services on one line' : assigned.slice(assigned.length - hiddenCount).join(', ')}
+            style={{ ...ghostButton, padding: '0.15rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+          >{expanded ? 'Show less' : `+${hiddenCount} more`}</button>
+        )}
         {onChange && (
-          <button type="button" onClick={() => setOpen(o => !o)} title={`Choose the services that belong to ${system.name}. The same for every company; not exported.`} style={{ ...ghostButton, padding: '0.15rem 0.5rem', fontSize: '0.7rem' }}>
+          <button type="button" onClick={() => setOpen(o => !o)} title={`Choose the services that belong to ${system.name}. The same for every company; not exported.`} style={{ ...ghostButton, padding: '0.15rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
             {open ? 'Done' : 'Assign services'}
           </button>
         )}
