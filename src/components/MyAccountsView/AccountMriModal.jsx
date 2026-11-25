@@ -942,7 +942,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
                     <Field
                       field={f}
                       value={values[f.key]}
-                      hint={row.trackerOpp?.[f.key] !== undefined && !String(form.opportunity?.[f.key] ?? '').trim() ? 'from Opps' : ''}
+                      hint={row.trackerOpp?.[f.key] !== undefined && !String(form.opportunity?.[f.key] ?? '').trim() ? `from ${row.trackerOppFrom?.[f.key] || 'Opps'}` : ''}
                       onChange={v => change(prev => ({ ...prev, opportunity: { ...(prev.opportunity || {}), [f.key]: v } }))}
                     />
                   )}
