@@ -18,6 +18,7 @@ import {
   trackerSignalReasons, signalReason,
   withNoActiveDefaults, setNoActiveOpportunity, NO_ACTIVE_OPPORTUNITY, revenueBillionsText,
   setNoActiveDealHealth, setNoActiveClosePlan, ENTERPRISE_FIELDS,
+  trackerOpportunity, withTrackerOpportunity, primaryOwnOpp,
 } from '../src/utils/accountMriForm.js';
 
 let passed = 0, failed = 0;
@@ -435,7 +436,7 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   eq(withNoActiveDefaults({ closePlanNoActive: false, closePlan: [] }, none).closePlanNoActive, false, 'close plan unticked by hand stays unticked');
 }
 
-// Tab 4's Enterprise efficiency: "-" unless a live opp is for Enterprise workshop.
+// Tab 4's Enterprise efficiency: "-" unless the opp is for Enterprise workshop.
 {
   const live = scope => ({ own: [{ scope }], portfolio: [] });
   const keys = ENTERPRISE_FIELDS.map(fl => fl.key);
@@ -443,10 +444,38 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   eq(keys.map(k => na[k]), ['-', '0', '-', '-', '-', '-', '-', '-', '-'], 'not Enterprise workshop: the section reads - (0 for the dollar field)');
   eq([na.enterpriseNa, na.name], [true, undefined], 'only the Enterprise efficiency section, flagged');
   eq(withNoActiveDefaults({}, live('Bill payment; Enterprise workshop')).opportunity, undefined, 'an Enterprise workshop opp: left blank to fill in');
-  eq(withNoActiveDefaults({}, { own: [{ scope: 'EV' }, { scope: 'enterprise workshop' }], portfolio: [] }).opportunity, undefined, 'any live opp for it counts, any casing');
+  eq(withNoActiveDefaults({}, live('ENTERPRISE WORKSHOP')).opportunity, undefined, 'any casing');
+  const two = scopeA => ({ own: [{ stage: 'Quoted', scope: scopeA }, { stage: 'Lead', scope: 'EV' }], portfolio: [] });
+  eq(withNoActiveDefaults({}, two('Enterprise workshop')).opportunity, undefined, 'the opp tab 4 is about (furthest along) decides: Enterprise workshop');
+  eq(withNoActiveDefaults({}, two('Audits')).opportunity.enterpriseNa, true, 'the opp tab 4 is about decides: not Enterprise workshop');
   eq(withNoActiveDefaults({ opportunity: { geography: 'US' } }, live('EV')).opportunity.geography, 'US', 'something typed there stands');
   eq(withNoActiveDefaults({}, { own: [], portfolio: [{ scope: 'EV' }] }).opportunity, undefined, 'only a portfolio company opp: left alone');
   eq(withNoActiveDefaults({}, null).opportunity, undefined, 'opps not loaded: left alone');
+}
+// Tab 4 filled from the account's own live opp.
+{
+  const { accountLiveOpps } = await import('../src/utils/accountMri.js');
+  const live = accountLiveOpps([
+    { _id: 1, Account: 'Blue Owl Capital', Stage: 'Not Started', 'BFO Link': '-', Source: 'Referral', 'Start Date': '2026-01-05' },
+    { _id: 2, Account: 'Blue Owl Capital', Stage: 'Quoted', 'BFO Link': 'Blue Owl - RA+ Climate Risk', Source: 'Inbound',
+      'Start Date': '11/4/2026', 'Quoted Amount': '$13,750', 'Close Date': '2027-03-31' },
+    { _id: 3, Account: 'Blue Owl Capital', Stage: 'Sold', 'BFO Link': 'Old one' },
+  ], { company: 'Blue Owl Capital' }, [], { likelihoodById: new Map([[2, 0.237]]) });
+  eq(live.own.map(o => o.id), [1, 2], 'own live opps carry their id');
+  eq(live.own[0].bfoName, '', 'a dash BFO name is no name');
+  eq(primaryOwnOpp(live).id, 2, 'the furthest-along own opp is the one');
+  const bfo = [{ name: 'blue owl -  RA+ climate risk', closeDate: '12/15/2026', probability: '40%' }];
+  eq(trackerOpportunity(live, bfo), {
+    name: 'Blue Owl - RA+ Climate Risk', owner: 'Dan Baldauf', planStarted: '2026-11-04', workingSince: '2026-11-04',
+    targetClose: '2026-12-15', odds: '24', revenue: '13750', cameFrom: 'Inbound',
+  }, 'tab 4 from the opp: BFO close date and the likelihood to close');
+  const noBfo = trackerOpportunity({ own: [{ ...live.own[1], likelihood: null }] }, []);
+  eq([noBfo.targetClose, noBfo.odds], ['2027-03-31', undefined], 'no BFO row: the opp\'s own close date, odds left blank');
+  eq(trackerOpportunity({ own: [], portfolio: [{}] }), {}, 'no own opp: nothing');
+  const t = trackerOpportunity(live, bfo);
+  eq(withTrackerOpportunity({ opportunity: { name: 'Typed', revenue: '' } }, t).opportunity.name, 'Typed', 'typed wins');
+  eq(withTrackerOpportunity({ opportunity: { revenue: '' } }, t).opportunity.revenue, '13750', 'blank is filled');
+  eq(withTrackerOpportunity({ opportunity: { noActive: true, name: NO_ACTIVE_OPPORTUNITY } }, t).opportunity.name, NO_ACTIVE_OPPORTUNITY, 'no active ticked: left alone');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

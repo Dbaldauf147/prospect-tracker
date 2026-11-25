@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, setNoActiveOpportunity, setNoActiveDealHealth, setNoActiveClosePlan, NO_ACTIVE_OPPORTUNITY, noActiveDisplay, BUY_STATEMENTS, OURS_STATEMENTS,
+  MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, setNoActiveOpportunity, withTrackerOpportunity, setNoActiveDealHealth, setNoActiveClosePlan, NO_ACTIVE_OPPORTUNITY, noActiveDisplay, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
   addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, withNoActiveDefaults, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, energyShareNote, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
@@ -470,15 +470,24 @@ function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, u
   );
 }
 
-// Live opps on the account's portfolio companies, shown on the tabs that
-// follow an opportunity (4, 6, 7) when there are any.
-function PortfolioOpps({ company, opps }) {
+// Live opps on the account itself and on its portfolio companies, shown on
+// the tabs that follow an opportunity (4, 6, 7) when there are any.
+function PortfolioOpps({ company, opps, own = [] }) {
+  return (
+    <>
+      <LiveOppsTable opps={own} title="Opportunities" hint={`live opps on ${company}`} />
+      <LiveOppsTable opps={opps} title="Portfolio company opportunities" hint={`live opps on ${company}'s portfolio companies`} />
+    </>
+  );
+}
+
+function LiveOppsTable({ opps, title, hint }) {
   if (!opps?.length) return null;
   return (
     <div style={{ marginBottom: '0.9rem', padding: '0.6rem 0.75rem', border: `1px solid ${LINE}`, background: FIELD }}>
       <div style={{ marginBottom: '0.4rem' }}>
-        <span style={sectionTitle}>Portfolio company opportunities</span>
-        <span style={sectionHint}>live opps on {company}'s portfolio companies</span>
+        <span style={sectionTitle}>{title}</span>
+        <span style={sectionHint}>{hint}</span>
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', color: INK }}>
         <thead>
@@ -556,7 +565,7 @@ function NoActiveNote({ text = 'None: no active opportunity.' }) {
   return <div style={{ padding: '0.7rem 0.8rem', border: `1px solid ${LINE}`, background: FIELD, fontSize: '0.8rem', color: MUTED }}>{text}</div>;
 }
 
-function DealHealthTab({ dealHealth, stage, onChange, grid, company, portfolioOpps = [] }) {
+function DealHealthTab({ dealHealth, stage, onChange, grid, company, portfolioOpps = [], ownOpps = [] }) {
   const noActive = !!dealHealth.noActive;
   const score = dealHealthScore(dealHealth, stage);
   const rate = (group, key, value) => {
@@ -568,7 +577,7 @@ function DealHealthTab({ dealHealth, stage, onChange, grid, company, portfolioOp
   const cell = { padding: '0.4rem 0.9rem', fontSize: '0.8rem', textAlign: 'center', border: `1px solid ${LINE}` };
   return (
     <div>
-      <PortfolioOpps company={company} opps={portfolioOpps} />
+      <PortfolioOpps company={company} opps={portfolioOpps} own={ownOpps} />
       <NoActiveBox
         checked={noActive}
         auto={!!dealHealth.noActiveAuto}
@@ -769,8 +778,8 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   }, [row.trackerNotes, merged.values]);
   const footprintFromTracker = row.trackerFootprint;
   const effectiveForm = useMemo(
-    () => withNoActiveDefaults(withTrackerSignals(form, signalsFromTracker, notesFromTracker, footprintFromTracker), row.liveOpps),
-    [form, signalsFromTracker, notesFromTracker, footprintFromTracker, row.liveOpps],
+    () => withNoActiveDefaults(withTrackerOpportunity(withTrackerSignals(form, signalsFromTracker, notesFromTracker, footprintFromTracker), row.trackerOpp), row.liveOpps),
+    [form, signalsFromTracker, notesFromTracker, footprintFromTracker, row.trackerOpp, row.liveOpps],
   );
   const progress = useMemo(
     () => tabProgress({ form: effectiveForm, profile: merged.values, committee, sites: row.sites }),
@@ -885,7 +894,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
     const portfolioOpps = row.liveOpps?.portfolio || [];
     body = (
       <div>
-        <PortfolioOpps company={row.company} opps={portfolioOpps} />
+        <PortfolioOpps company={row.company} opps={portfolioOpps} own={row.liveOpps?.own || []} />
         <NoActiveBox
           checked={noActive}
           auto={!!values.noActiveAuto}
@@ -899,7 +908,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
             <div>
               <span style={sectionTitle}>{s.title}</span>{s.hint && <span style={sectionHint}>{s.hint}</span>}
               {s.title === 'Enterprise efficiency' && values.enterpriseNa && !noActive && (
-                <span style={sectionHint}>set to - because no live opp on {row.company} has Enterprise workshop in its scope</span>
+                <span style={sectionHint}>set to - because this opportunity's scope doesn't include Enterprise workshop</span>
               )}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem 0.8rem', marginTop: '0.6rem' }}>
@@ -911,7 +920,12 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
                       <input type="text" readOnly disabled value={noActiveDisplay(f, values[f.key])} style={{ ...inputStyle, color: MUTED }} />
                     </div>
                   ) : (
-                    <Field field={f} value={values[f.key]} onChange={v => change(prev => ({ ...prev, opportunity: { ...(prev.opportunity || {}), [f.key]: v } }))} />
+                    <Field
+                      field={f}
+                      value={values[f.key]}
+                      hint={row.trackerOpp?.[f.key] !== undefined && !String(form.opportunity?.[f.key] ?? '').trim() ? 'from Opps' : ''}
+                      onChange={v => change(prev => ({ ...prev, opportunity: { ...(prev.opportunity || {}), [f.key]: v } }))}
+                    />
                   )}
                 </div>
               ))}
@@ -927,11 +941,11 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   } else if (tab === 'sites') {
     body = <SitesTab sites={row.sites} company={row.company} settings={settings} updateSettings={updateSettings} />;
   } else if (tab === 'dealHealth') {
-    body = <DealHealthTab dealHealth={effectiveForm.dealHealth || {}} stage={merged.values.stage} onChange={next => setKey('dealHealth', next)} grid={grid} company={row.company} portfolioOpps={row.liveOpps?.portfolio || []} />;
+    body = <DealHealthTab dealHealth={effectiveForm.dealHealth || {}} stage={merged.values.stage} onChange={next => setKey('dealHealth', next)} grid={grid} company={row.company} portfolioOpps={row.liveOpps?.portfolio || []} ownOpps={row.liveOpps?.own || []} />;
   } else {
     body = (
       <div>
-        <PortfolioOpps company={row.company} opps={row.liveOpps?.portfolio || []} />
+        <PortfolioOpps company={row.company} opps={row.liveOpps?.portfolio || []} own={row.liveOpps?.own || []} />
         <NoActiveBox
           checked={!!effectiveForm.closePlanNoActive}
           auto={!!effectiveForm.closePlanNoActiveAuto}

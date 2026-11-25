@@ -143,6 +143,10 @@ export function isPortfolioCompanyContact(contact, record) {
   return holdings.some(h => text(h?.companyName) && companiesMatch(company, text(h.companyName)));
 }
 
+// The Opps tab seeds BFO Opportunity Name ("BFO Link") with a dash and sheet
+// imports leave #N/A: neither is a name (as pipelineFunnelData's bfoOppNameOf).
+const BFO_NAME_BLANKS = new Set(['', '-', '#n/a', 'n/a']);
+
 /**
  * The live opps (stage not closed, see isActiveOppStage) on a company and
  * on its portfolio companies, for the Opportunity tab:
@@ -153,8 +157,13 @@ export function isPortfolioCompanyContact(contact, record) {
  *   self      the company as accountIsCompany reads it ({ company, companyAliases })
  *   holdings  its portfolio companies, each a name or a record (a record
  *             brings the names merged into it)
+ *   likelihoodById  opp _id -> likelihood to close (0..1), from
+ *             moveOnChancesById; optional
+ *
+ * The company's own opps carry more: { id, bfoName, source, startDate,
+ * likelihood } beside the five above.
  */
-export function accountLiveOpps(oppRows, self, holdings = []) {
+export function accountLiveOpps(oppRows, self, holdings = [], { likelihoodById = null } = {}) {
   const held = (holdings || []).map(h => (typeof h === 'string' ? { company: h } : h)).filter(h => text(h?.company));
   const own = [];
   const portfolio = [];
@@ -169,8 +178,21 @@ export function accountLiveOpps(oppRows, self, holdings = []) {
       amount: text(o['Quoted Amount']),
       closeDate: text(o['Close Date']),
     };
-    if (accountIsCompany(account, self)) own.push(opp);
-    else if (held.some(h => accountIsCompany(account, h))) portfolio.push(opp);
+    if (accountIsCompany(account, self)) {
+      // The company's own opp also fills the Opportunity tab
+      // (accountMriForm's trackerOpportunity), which reads these too.
+      const bfo = text(o['BFO Link']);
+      own.push({
+        ...opp,
+        id: o._id ?? null,
+        bfoName: BFO_NAME_BLANKS.has(bfo.toLowerCase()) ? '' : bfo,
+        source: text(o.Source),
+        startDate: text(o['Start Date']),
+        likelihood: o._id != null && likelihoodById?.has?.(o._id) ? likelihoodById.get(o._id) : null,
+      });
+      continue;
+    }
+    if (held.some(h => accountIsCompany(account, h))) portfolio.push(opp);
   }
   const byAccount = (a, b) => a.account.localeCompare(b.account);
   return { own, portfolio: portfolio.sort(byAccount) };
