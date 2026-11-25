@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs';
 import {
   MRI_PROFILE_FIELDS, MRI_PROFILE_SHEET_PATH, accountMriProfile, fillProfileSheet,
   fillTableSheet, fillAccountMriWorkbook, buyingCommitteeRows, siteUtilityRows, MRI_COMMITTEE_TABLE, MRI_SITES_TABLE,
-  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, accountTryingAgainServices, accountLiveOpps, isPortfolioCompanyContact, mainContactText, mriFileName, revenueAsText,
+  revenueInBillions, contractFields, ubmScope, mriTier, mriStage, plainMentions, servicesInScope, upsellOpportunities, accountServiceStatuses, accountTryingAgainServices, accountLiveOpps, isPortfolioCompanyContact, mainContactText, primaryPocNames, accountStanding, mriFileName, revenueAsText,
 } from '../src/utils/accountMri.js';
 
 let passed = 0, failed = 0;
@@ -336,6 +336,22 @@ eq(fillTableSheet(s3, MRI_COMMITTEE_TABLE, []).xml === s3, true, 'no decision ma
   eq(live.own.map(o => o.stage), ['Quoted'], 'live opps: the company\'s own, closed ones left out');
   eq(live.portfolio.map(o => o.account), ['Brookfield Properties', 'Old Name Co'], 'live opps: portfolio companies, by name or merged name');
   eq(live.portfolio[0], { account: 'Brookfield Properties', stage: 'Qualifying', scope: 'Audits', amount: '$40,000', closeDate: '2027-01-31' }, 'live opp row');
+}
+
+// Primary Point of Contact names and the champion / detractor counts.
+{
+  const acct = { company: 'Acme', aliases: '', portfolioCompanies: 'Acme Sub Holdings' };
+  const people = [
+    { id: 1, firstname: 'Zed', lastname: 'Ray', company: 'Acme', dans_tags: 'Primary Point of Contact' },
+    { id: 2, firstname: 'Amy', lastname: 'Lo', company: 'Acme', dans_tags: 'Decision Maker; Primary Point of Contact' },
+    { id: 3, firstname: 'Bo', lastname: 'Ng', company: 'Acme', dans_tags: 'Decision Maker' },
+    { id: 4, firstname: 'Cy', lastname: 'Po', company: 'Acme' },
+  ];
+  eq(primaryPocNames(people, acct), ['Amy Lo', 'Zed Ray'], 'primary POCs, A to Z');
+  eq(primaryPocNames([], acct), [], 'no primary POC');
+  const st = accountStanding(people, { 1: 'champion', 3: 'Champion', 4: 'detractor', 2: 'neutral' }, acct);
+  eq(st, { champions: ['Bo Ng', 'Zed Ray'], detractors: ['Cy Po'] }, 'champions and detractors');
+  eq(accountStanding(people, undefined, acct), { champions: [], detractors: [] }, 'nobody marked');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
