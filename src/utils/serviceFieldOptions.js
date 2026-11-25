@@ -21,7 +21,7 @@
 import { buildServiceRows } from './serviceRows.js';
 
 // The popup fields that pick from a menu, in popup order.
-export const SERVICE_OPTION_FIELDS = ['bfoTag', 'region', 'years', 'serviceType', 'productLine', 'sme', 'ktm'];
+export const SERVICE_OPTION_FIELDS = ['bfoTag', 'region', 'years', 'serviceType', 'productLine', 'sme', 'euSme', 'ktm'];
 
 const norm = (v) => String(v ?? '').trim();
 const keyOf = (v) => norm(v).toLowerCase();

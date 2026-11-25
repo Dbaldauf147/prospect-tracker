@@ -243,7 +243,7 @@ export function getEffectiveServiceMetadata(name, overrides) {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
       timelineDriven: '', rolloutTime: '', dependsOn: '', autoAdd: '', autoNa: '',
-      sme: '', ktm: '', contactTags: '', notes: '', excludeFromBiggestDeal: false,
+      sme: '', euSme: '', ktm: '', contactTags: '', notes: '', excludeFromBiggestDeal: false,
     };
   }
   const bfoTag = mergedBfoTag(seed, override);
@@ -273,9 +273,12 @@ export function getEffectiveServiceMetadata(name, overrides) {
     // boards read it — see src/utils/serviceAutoNa.js — and show an N/A
     // nobody typed rather than a blank row that looks unexplored.
     autoNa:           override?.autoNa           ?? seed?.autoNa           ?? '',
-    // Free text: the Schneider subject-matter expert for this service. No
-    // seed value — it's whoever the user names on the Services tab.
+    // Free text: the Schneider subject-matter expert for this service in
+    // NAM (shown as NAM SME). No seed value — it's whoever the user names on the Services tab.
     sme:              override?.sme              ?? seed?.sme              ?? '',
+    // The EU counterpart of the SME above (that one is the NAM SME). Free
+    // text with no seed, named on the Services tab.
+    euSme:            override?.euSme            ?? seed?.euSme            ?? '',
     // Free text, same as SME and with no seed value: whatever the user
     // records as this service's KTM on the Services tab.
     ktm:              override?.ktm              ?? seed?.ktm              ?? '',

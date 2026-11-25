@@ -72,5 +72,13 @@ check('renaming a seed value overrides the seed',
 check('renaming something nobody has writes nothing',
   serviceFieldOptionUpdates(s, 'rename', 'sme', 'Ghost', 'Other'), null);
 
+// EU SME is its own field beside the NAM SME, with its own menu.
+{
+  const eu = { ...base, serviceOverrides: { ...base.serviceOverrides, 'API/ETL': { sme: 'nicole popp', euSme: 'Lena Fischer' } } };
+  check('EU SME menu lists the EU SMEs', menu(eu, 'euSme').map(o => o.value), ['Lena Fischer']);
+  check('EU SME is read off the service', buildServiceRows(eu).find(r => r.name === 'API/ETL').meta.euSme, 'Lena Fischer');
+  check('the NAM SME menu is unchanged by it', menu(eu, 'sme').some(o => o.value === 'Lena Fischer'), false);
+}
+
 if (failures) { console.log(`\n${failures} failure(s)`); process.exit(1); }
 console.log('\nAll passed');
