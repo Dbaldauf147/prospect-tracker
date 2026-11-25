@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import {
   MRI_LISTS, MRI_TABS, PROFILE_SECTIONS, BODY_SYSTEMS, OPPORTUNITY_SECTIONS, setNoActiveOpportunity, withTrackerOpportunity, setNoActiveDealHealth, setNoActiveClosePlan, NO_ACTIVE_OPPORTUNITY, noActiveDisplay, BUY_STATEMENTS, OURS_STATEMENTS,
   WIN_LEVELS, WIN_MATRIX, MRI_TABLES, mergeProfile, systemScore, dealHealthScore, committeeRows,
-  addMissingDecisionMakers, tabProgress, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, withNoActiveDefaults, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, energyShareNote, PROFILE_RECORD_FIELDS, profileRecordPatch,
+  addMissingDecisionMakers, tabProgress, lateTabsWaiting, furthestLiveStage, LATE_TABS_FROM_STAGE, DEFAULT_SIGNALS, SIGNAL_FOLLOWS, diagnosisNotes, mriFormExport, formatMoneyInput, formatNumberInput, mergeSignals, mergeFootprint, withTrackerSignals, withNoActiveDefaults, signalReason, SIGNAL_SOURCE, NOTE_SOURCE, energyShareNote, PROFILE_RECORD_FIELDS, profileRecordPatch,
 } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { DataTable } from '../common/DataTable';
@@ -41,6 +41,7 @@ const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '0.5rem 0.
 const MISSING = '#DC2626';
 const isMissing = v => v == null || String(v).trim() === '';
 const missingOutline = v => (isMissing(v) ? { borderColor: MISSING, boxShadow: `0 0 0 1px ${MISSING}` } : null);
+const noOutline = () => null;
 const sectionTitle = { fontSize: '0.86rem', fontWeight: 700, color: INK };
 const sectionHint = { fontSize: '0.7rem', fontWeight: 600, color: MUTED, marginLeft: 8 };
 const sectionBox = { borderTop: `1px solid ${LINE}`, paddingTop: '0.9rem', marginTop: '1.1rem' };
@@ -382,7 +383,9 @@ const cellInput = { ...inputStyle, padding: '0.3rem 0.45rem', fontSize: '0.8rem'
 // DataTable so its columns carry the house column formatting.
 // `onOpenRow`, when given, puts an open button beside the first column's
 // box (the buying committee's Name opens that person's contact popup).
-function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, updateSettings, exportFileName, emptyMessage, onOpenRow }) {
+function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, updateSettings, exportFileName, emptyMessage, onOpenRow, optional = false }) {
+  // A table that isn't due yet (optional) leaves its blanks unflagged.
+  const outline = optional ? noOutline : missingOutline;
   // Latest rows for the cell handlers, so the columns need not be rebuilt
   // (and every input remounted) on each keystroke.
   const rowsRef = useRef(rows);
@@ -409,7 +412,7 @@ function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, u
         if (c.list) {
           const options = MRI_LISTS[c.list];
           return (
-            <select value={value} onChange={e => patch(r.id, c.key, e.target.value)} style={{ ...cellInput, ...missingOutline(value) }}>
+            <select value={value} onChange={e => patch(r.id, c.key, e.target.value)} style={{ ...cellInput, ...outline(value) }}>
               <option value="">-</option>
               {value && !options.includes(value) && <option value={value}>{value}</option>}
               {options.map(o => <option key={o} value={o}>{o}</option>)}
@@ -421,7 +424,7 @@ function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, u
             type={c.type === 'date' ? 'date' : c.type === 'number' ? 'number' : 'text'}
             value={value}
             onChange={e => patch(r.id, c.key, e.target.value)}
-            style={{ ...cellInput, ...missingOutline(value) }}
+            style={{ ...cellInput, ...outline(value) }}
           />
         );
         if (!onOpenRow || c.key !== def.columns[0].key || !(r.name || r.email)) return input;
@@ -445,7 +448,7 @@ function EditGrid({ tableId, def, rows, onChange, addLabel, actions, settings, u
         <button type="button" onClick={() => remove(r.id)} title="Remove this row" style={{ border: 'none', background: 'none', color: MUTED, fontSize: '1rem', cursor: 'pointer', lineHeight: 1 }}>×</button>
       ),
     },
-  ], [def, patch, remove, onOpenRow]);
+  ], [def, patch, remove, onOpenRow, outline]);
 
   const toolbarActions = useMemo(() => [
     ...(actions || []),
@@ -527,7 +530,7 @@ function NoActiveBox({ checked, auto, company, what, offText, onChange }) {
   );
 }
 
-function RatingBlock({ title, statements, list, ratings, block, onRate, disabled = false }) {
+function RatingBlock({ title, statements, list, ratings, block, onRate, disabled = false, optional = false }) {
   const th = { textAlign: 'left', fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: MUTED, padding: '0.35rem 0.5rem', borderBottom: `1px solid ${LINE}` };
   const td = { padding: '0.45rem 0.5rem', borderBottom: `1px solid ${LINE}`, fontSize: '0.8rem', color: INK, verticalAlign: 'top' };
   const tint = block.level === 'HIGH' ? SAGE : block.level === 'MED' ? AMBER : BRICK;
@@ -541,7 +544,7 @@ function RatingBlock({ title, statements, list, ratings, block, onRate, disabled
           <div key={`${s.key}l`} style={{ ...td, fontWeight: 600 }}>{s.label}</div>,
           <div key={`${s.key}m`} style={{ ...td, color: MUTED }}>{s.meaning}</div>,
           <div key={`${s.key}r`} style={td}>
-            <select value={ratings?.[s.key] || ''} disabled={disabled} onChange={e => onRate(s.key, e.target.value)} style={{ ...cellInput, ...(disabled ? { color: MUTED } : missingOutline(ratings?.[s.key])) }}>
+            <select value={ratings?.[s.key] || ''} disabled={disabled} onChange={e => onRate(s.key, e.target.value)} style={{ ...cellInput, ...(disabled ? { color: MUTED } : optional ? null : missingOutline(ratings?.[s.key])) }}>
               <option value="">-</option>
               {list.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
@@ -565,7 +568,17 @@ function NoActiveNote({ text = 'None: no active opportunity.' }) {
   return <div style={{ padding: '0.7rem 0.8rem', border: `1px solid ${LINE}`, background: FIELD, fontSize: '0.8rem', color: MUTED }}>{text}</div>;
 }
 
-function DealHealthTab({ dealHealth, stage, onChange, grid, company, portfolioOpps = [], ownOpps = [] }) {
+// Tabs 6 and 7 before any of the account's opps is quoted: nothing on them
+// is asked for yet, so the blanks stay "-" without being flagged.
+function NotDueNote({ stage }) {
+  return (
+    <div style={{ margin: '0 0 0.9rem', padding: '0.55rem 0.8rem', border: `1px solid ${LINE}`, background: FIELD, fontSize: '0.78rem', color: MUTED }}>
+      Not needed yet: the furthest opp is in {stage}. This tab is asked for once an opp reaches {LATE_TABS_FROM_STAGE}, so blanks here aren't flagged or counted.
+    </div>
+  );
+}
+
+function DealHealthTab({ dealHealth, stage, onChange, grid, company, portfolioOpps = [], ownOpps = [], waiting = '' }) {
   const noActive = !!dealHealth.noActive;
   const score = dealHealthScore(dealHealth, stage);
   const rate = (group, key, value) => {
@@ -586,9 +599,10 @@ function DealHealthTab({ dealHealth, stage, onChange, grid, company, portfolioOp
         offText="rates everything Unknown, with no decision steps or yellow lights"
         onChange={on => onChange(setNoActiveDealHealth(dealHealth, on))}
       />
-      <RatingBlock title="Will they buy? (Sales Probability Index)" statements={BUY_STATEMENTS} list={MRI_LISTS.agree} ratings={dealHealth.buy} block={score.buy} onRate={(k, v) => rate('buy', k, v)} disabled={noActive} />
+      {waiting && <NotDueNote stage={waiting} />}
+      <RatingBlock title="Will they buy? (Sales Probability Index)" statements={BUY_STATEMENTS} list={MRI_LISTS.agree} ratings={dealHealth.buy} block={score.buy} onRate={(k, v) => rate('buy', k, v)} disabled={noActive} optional={!!waiting} />
       <div style={{ marginTop: '1.1rem' }}>
-        <RatingBlock title="Will they buy ours?" statements={OURS_STATEMENTS} list={MRI_LISTS.advantage} ratings={dealHealth.ours} block={score.ours} onRate={(k, v) => rate('ours', k, v)} disabled={noActive} />
+        <RatingBlock title="Will they buy ours?" statements={OURS_STATEMENTS} list={MRI_LISTS.advantage} ratings={dealHealth.ours} block={score.ours} onRate={(k, v) => rate('ours', k, v)} disabled={noActive} optional={!!waiting} />
       </div>
       <div style={{ ...sectionBox, display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
         <div>
@@ -617,11 +631,11 @@ function DealHealthTab({ dealHealth, stage, onChange, grid, company, portfolioOp
       </div>
       <div style={sectionBox}>
         <div style={{ marginBottom: '0.5rem' }}><span style={sectionTitle}>Decision process & criteria</span><span style={sectionHint}>from Opportunity Plan › Decision Grid</span></div>
-        {noActive ? <NoActiveNote /> : grid('decisionGrid', dealHealth.decisionGrid || [], rows => onChange({ ...dealHealth, decisionGrid: rows }), '+ Add step', 'No decision steps yet')}
+        {noActive ? <NoActiveNote /> : grid('decisionGrid', dealHealth.decisionGrid || [], rows => onChange({ ...dealHealth, decisionGrid: rows }), '+ Add step', 'No decision steps yet', undefined, undefined, !!waiting)}
       </div>
       <div style={sectionBox}>
         <div style={{ marginBottom: '0.5rem' }}><span style={sectionTitle}>Yellow lights</span><span style={sectionHint}>from Opportunity Plan › Yellow Lights</span></div>
-        {noActive ? <NoActiveNote /> : grid('yellowLights', dealHealth.yellowLights || [], rows => onChange({ ...dealHealth, yellowLights: rows }), '+ Add yellow light', 'No yellow lights yet')}
+        {noActive ? <NoActiveNote /> : grid('yellowLights', dealHealth.yellowLights || [], rows => onChange({ ...dealHealth, yellowLights: rows }), '+ Add yellow light', 'No yellow lights yet', undefined, undefined, !!waiting)}
       </div>
     </div>
   );
@@ -782,9 +796,13 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
     [form, signalsFromTracker, notesFromTracker, footprintFromTracker, row.trackerOpp, row.liveOpps],
   );
   const progress = useMemo(
-    () => tabProgress({ form: effectiveForm, profile: merged.values, committee, sites: row.sites }),
-    [effectiveForm, merged, committee, row.sites],
+    () => tabProgress({ form: effectiveForm, profile: merged.values, committee, sites: row.sites, lateTabsWaiting: lateTabsWaiting(row.liveOpps) }),
+    [effectiveForm, merged, committee, row.sites, row.liveOpps],
   );
+  // Tabs 6 and 7 aren't due until an opp is quoted: the furthest stage so
+  // far, to say so, or '' once they are.
+  const waitingStage = lateTabsWaiting(row.liveOpps) ? furthestLiveStage(row.liveOpps) : '';
+  const LATE_TABS = new Set(['dealHealth', 'closePlan']);
 
   const setKey = useCallback((key, value) => change(prev => ({ ...prev, [key]: value })), [change]);
   const setCommittee = useCallback(rows => setKey('committee', rows), [setKey]);
@@ -792,7 +810,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   const setEvidence = useCallback(rows => setKey('evidence', rows), [setKey]);
   const setClosePlan = useCallback(rows => setKey('closePlan', rows), [setKey]);
 
-  const grid = (name, rows, onChange, addLabel, emptyMessage, actions, onOpenRow) => (
+  const grid = (name, rows, onChange, addLabel, emptyMessage, actions, onOpenRow, optional = false) => (
     <EditGrid
       tableId={`account-mri-popup-${name}`}
       exportFileName={`${row.company} ${addLabel.replace(/^\+ Add /, '')}`}
@@ -805,6 +823,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
       settings={settings}
       updateSettings={updateSettings}
       onOpenRow={onOpenRow}
+      optional={optional}
     />
   );
 
@@ -941,7 +960,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
   } else if (tab === 'sites') {
     body = <SitesTab sites={row.sites} company={row.company} settings={settings} updateSettings={updateSettings} />;
   } else if (tab === 'dealHealth') {
-    body = <DealHealthTab dealHealth={effectiveForm.dealHealth || {}} stage={merged.values.stage} onChange={next => setKey('dealHealth', next)} grid={grid} company={row.company} portfolioOpps={row.liveOpps?.portfolio || []} ownOpps={row.liveOpps?.own || []} />;
+    body = <DealHealthTab dealHealth={effectiveForm.dealHealth || {}} stage={merged.values.stage} onChange={next => setKey('dealHealth', next)} grid={grid} company={row.company} portfolioOpps={row.liveOpps?.portfolio || []} ownOpps={row.liveOpps?.own || []} waiting={waitingStage} />;
   } else {
     body = (
       <div>
@@ -954,10 +973,11 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
           offText={`replaces the activities with one reading "${NO_ACTIVE_OPPORTUNITY}"`}
           onChange={on => change(prev => ({ ...prev, ...setNoActiveClosePlan(prev, on) }))}
         />
+        {waitingStage && !effectiveForm.closePlanNoActive && <NotDueNote stage={waitingStage} />}
         <div style={{ marginBottom: '0.5rem' }}><span style={sectionTitle}>Activities to close</span><span style={sectionHint}>from Opportunity Plan › Close Plan</span></div>
         {effectiveForm.closePlanNoActive
           ? <NoActiveNote text={`${NO_ACTIVE_OPPORTUNITY}: nothing to close.`} />
-          : grid('closePlan', form.closePlan || [], setClosePlan, '+ Add activity', 'No activities yet')}
+          : grid('closePlan', form.closePlan || [], setClosePlan, '+ Add activity', 'No activities yet', undefined, undefined, !!waitingStage)}
       </div>
     );
   }
@@ -981,7 +1001,10 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
         <div role="tablist" style={{ display: 'flex', gap: '0.2rem', padding: '0 1.4rem', borderBottom: `1px solid ${LINE}`, overflowX: 'auto', flexShrink: 0 }}>
           {MRI_TABS.map((t, i) => {
             const on = t.key === tab;
-            const done = progress[t.key] >= 100;
+            // A tab that isn't due yet shows its number and "after Quoted",
+            // not a tick: nothing on it is done, it just isn't asked for.
+            const notDue = !!waitingStage && LATE_TABS.has(t.key);
+            const done = !notDue && progress[t.key] >= 100;
             return (
               <button
                 key={t.key}
@@ -993,7 +1016,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
               >
                 <span style={{ width: 19, height: 19, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.68rem', fontWeight: 700, background: done ? SAGE : 'transparent', color: done ? '#fff' : MUTED, border: done ? 'none' : `1px solid ${MUTED}` }}>{done ? '✓' : i + 1}</span>
                 {t.label}
-                {!done && <span style={{ fontSize: '0.66rem', color: MUTED, fontWeight: 500 }}>{progress[t.key]}%</span>}
+                {!done && <span style={{ fontSize: '0.66rem', color: MUTED, fontWeight: 500 }}>{notDue ? `after ${LATE_TABS_FROM_STAGE}` : `${progress[t.key]}%`}</span>}
               </button>
             );
           })}
