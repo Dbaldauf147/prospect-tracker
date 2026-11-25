@@ -528,7 +528,8 @@ eq(profileRecordPatch('revenueB', '$.5'), { revenue: '$0.5B' }, 'MRI Revenue ($B
   const at = (stage, extra = {}) => trackerOpportunity({ own: [{ stage, ...extra }], portfolio: [] }, []);
   eq(['Quoting', 'Quoted', 'Contracting', 'Agreement Sent'].map(st => at(st).milestones),
     ['Quote the customer', 'Progress to contracting', 'Send the client the agreement', 'Close the deal'], 'milestones: the next step for the stage');
-  eq([at('Qualifying').milestones, at('Repricing').milestones], [undefined, undefined], 'milestones: no step for other stages');
+  eq(at('Qualifying').milestones, 'Qualify the opportunity', 'milestones: Qualifying');
+  eq([at('Lead').milestones, at('Repricing').milestones], [undefined, undefined], 'milestones: no step for other stages');
   eq(at('Quoted', { scope: 'Bill payment, EaaS; Audits' }).nature, 'Services in scope: Bill payment, EaaS and Audits', 'nature: the services in scope');
   eq(at('Quoted', { scope: 'EaaS' }).nature, 'Services in scope: EaaS', 'nature: one service');
   eq(at('Quoted').nature, undefined, 'nature: no scope, left to fill in');
