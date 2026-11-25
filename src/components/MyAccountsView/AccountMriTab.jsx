@@ -196,7 +196,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     const frameworks = frameworkFlags.get(String(r.company || '').toLowerCase().trim());
     const signalInputs = { siteList, frameworks };
     const signals = trackerSignals(record, signalInputs);
-    const notes = trackerNotes(record, { frameworks, profile });
+    const notes = trackerNotes(record, { frameworks, profile, siteList });
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
     const stage = mriStageProgress(tabProgress({
