@@ -187,8 +187,19 @@ export function diagnosisSignals(saved = {}) {
   for (const [key, value] of Object.entries({ ...DEFAULT_SIGNALS, ...(saved || {}) })) {
     if (value) out[key] = value;
   }
+  // A sign that follows another reads whatever that one shows, until a
+  // rating is picked for it (or it is cleared by hand, saved as '').
+  for (const [key, source] of Object.entries(SIGNAL_FOLLOWS)) {
+    if (saved?.[key] !== undefined) continue;
+    if (out[source]) out[key] = out[source]; else delete out[key];
+  }
   return out;
 }
+
+// Signs rated the same as another sign until rated on their own:
+// "Exec / board ownership of sustainability" matches "Public climate /
+// net-zero commitment" (itself read from the Targets tab).
+export const SIGNAL_FOLLOWS = { 'brain.1': 'brain.0' };
 
 /**
  * One body system's reading: `sum` of its four ratings (Absent 0 to Strong
