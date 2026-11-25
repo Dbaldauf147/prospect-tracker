@@ -6,7 +6,7 @@
 // wrong the prompt still looks complete — it just logs the wrong touch,
 // and the meeting quietly disappears behind the follow-up email sent
 // after it. That is the bug these pin.
-import { buildActivityAddressLines, ACTIVITY_PROMPT_LIMIT } from '../src/utils/activityAddressLines.js';
+import { buildActivityAddressLines, activityEntryCount, ACCOUNT_HEADER, ACTIVITY_PROMPT_LIMIT } from '../src/utils/activityAddressLines.js';
 import { resolveOppForRow, detectBfoUrl } from '../src/utils/closeNotSoldOpps.js';
 
 let passed = 0, failed = 0;
@@ -142,6 +142,51 @@ eq(buildActivityAddressLines({ emails: [{ bfoUrl: URL_A, nextStepsType: 'called'
   eq(resolveOppForRow(index, '', null), null, 'nothing matched resolves to nothing');
   eq(resolveOppForRow(index, 'Nobody Knows This', null), null, 'an unknown name resolves to nothing');
   eq(resolveOppForRow(undefined, '', withUrl), withUrl, 'a missing index still returns the match');
+}
+
+// --- touches with no BFO opportunity go to the BFO Account -------------------
+{
+  // The Agents page of Nov 25: three opportunity addresses, and a long tail
+  // of webinar invites to companies with a BFO Company Name but no opp.
+  const BLK = 'https://bfo.example.com/opp/blackrock';
+  const REH = 'https://bfo.example.com/opp/rehlko';
+  const HOR = 'https://bfo.example.com/opp/horizon';
+  const bfo = { BlackRock: 'Blackrock, Inc.', Rehlko: 'Platinum Equity', Horizon: 'Horizon Organic Dairy', Winn: 'WinnCompanies', East: 'Eastgroup Properties', LCOR: 'LCOR Incorporated - Headquarters', Bozzuto: "Bozzuto's, Inc.", RLJ: 'RLJ Lodging Trust - Headquarters; RLJ Lodging' };
+  const accountOf = r => bfo[r.company] || '';
+  const lines = buildActivityAddressLines({
+    meetings: [{ bfoUrl: BLK, company: 'BlackRock' }],
+    calls: [{ bfoUrl: BLK, company: 'BlackRock' }, { bfoUrl: REH, company: 'Rehlko' }],
+    emails: [
+      { bfoUrl: REH, company: 'Rehlko', nextStepsType: 'email' },
+      { company: 'Winn', nextStepsType: 'email' },
+      { company: 'Winn', nextStepsType: 'email' },
+      { company: 'East', nextStepsType: 'email' },
+      // An opp is tagged but has no BFO link: still logged, on the account.
+      { company: 'LCOR', bfoOpp: 'SB - EFF - LCOR', nextStepsType: 'email' },
+      { company: 'Bozzuto', bfoOpp: 'ESS-SUS-US - greenbelt - Bozzuto', nextStepsType: 'email' },
+      { company: 'RLJ', nextStepsType: 'email' },
+      { company: 'Gmail', nextStepsType: 'email' },
+      { company: 'OrbiMed', status: 'BOUNCED', nextStepsType: 'email' },
+      { bfoUrl: HOR, company: 'Horizon', nextStepsType: 'email' },
+    ],
+    accountOf,
+  });
+  eq(lines, [
+    'BFO Address', `${BLK}: Type meeting`, `${REH}: Type called`, `${HOR}: Type email`,
+    '', ACCOUNT_HEADER,
+    'WinnCompanies: Type email', 'Eastgroup Properties: Type email', 'LCOR Incorporated - Headquarters: Type email',
+    "Bozzuto's, Inc.: Type email", 'RLJ Lodging Trust - Headquarters: Type email',
+  ], 'no opp: logged once on the BFO account; opp accounts, unknown companies left out');
+  eq(activityEntryCount(lines), 8, 'eight tasks');
+  eq(buildActivityAddressLines({ emails: [{ company: 'Rehlko', nextStepsType: 'email' }, { bfoUrl: REH, company: 'Rehlko', nextStepsType: 'email' }], accountOf }),
+    ['BFO Address', `${REH}: Type email`], 'an account already getting a task through its opp gets no second one');
+  eq(buildActivityAddressLines({ meetings: [{ company: 'Winn' }], emails: [{ company: 'Winn', nextStepsType: 'email' }], accountOf }).slice(-1),
+    ['WinnCompanies: Type meeting'], 'account: the strongest touch wins');
+  eq(buildActivityAddressLines({ emails: [{ company: 'Winn', nextStepsType: 'email' }] }), ['BFO Address'], 'no accountOf: as before');
+  const many = { emails: Array.from({ length: 30 }, (_, i) => ({ company: `C${i}`, nextStepsType: 'email' })), meetings: [{ bfoUrl: BLK, company: 'BlackRock' }], accountOf: r => (r.company.startsWith('C') ? `Acct ${r.company}` : '') };
+  const capped = buildActivityAddressLines({ ...many, limit: ACTIVITY_PROMPT_LIMIT });
+  eq([activityEntryCount(buildActivityAddressLines(many)), activityEntryCount(capped), capped[1], capped[capped.length - 1]],
+    [31, 25, `${BLK}: Type meeting`, 'Acct C23: Type email'], 'limit counts accounts too, opportunities first');
 }
 
 // --- the limit ----------------------------------------------------------------
