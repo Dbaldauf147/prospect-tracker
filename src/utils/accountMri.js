@@ -21,6 +21,8 @@ import { normalizeState } from './utilityRates.js';
 import { asDate, asNumber, isInactiveAgreement } from './dealsFormat.js';
 import { scopeServiceStatuses } from './scopeServiceStatus.js';
 import { isTryingAgain, TRYING_AGAIN } from './tryingAgain.js';
+import { isActiveOppStage } from './oppStages.js';
+import { accountIsCompany } from './companyAliases.js';
 import { companiesMatch } from './listFlags.js';
 import { exactCompanyKey } from './companyRoster.js';
 
@@ -138,6 +140,39 @@ export function isPortfolioCompanyContact(contact, record) {
   if (own.includes(exactCompanyKey(company))) return false;
   const holdings = Array.isArray(record?.portfolioCompanies) ? record.portfolioCompanies : [];
   return holdings.some(h => text(h?.companyName) && companiesMatch(company, text(h.companyName)));
+}
+
+/**
+ * The live opps (stage not closed, see isActiveOppStage) on a company and
+ * on its portfolio companies, for the Opportunity tab:
+ *   { own: [opp], portfolio: [opp] }, each opp
+ *   { account, stage, scope, amount, closeDate }.
+ *
+ *   oppRows   every Opps 2 row
+ *   self      the company as accountIsCompany reads it ({ company, companyAliases })
+ *   holdings  its portfolio companies, each a name or a record (a record
+ *             brings the names merged into it)
+ */
+export function accountLiveOpps(oppRows, self, holdings = []) {
+  const held = (holdings || []).map(h => (typeof h === 'string' ? { company: h } : h)).filter(h => text(h?.company));
+  const own = [];
+  const portfolio = [];
+  for (const o of oppRows || []) {
+    if (!isActiveOppStage(o?.Stage)) continue;
+    const account = text(o?.Account);
+    if (!account) continue;
+    const opp = {
+      account,
+      stage: text(o.Stage),
+      scope: text(o.Scope),
+      amount: text(o['Quoted Amount']),
+      closeDate: text(o['Close Date']),
+    };
+    if (accountIsCompany(account, self)) own.push(opp);
+    else if (held.some(h => accountIsCompany(account, h))) portfolio.push(opp);
+  }
+  const byAccount = (a, b) => a.account.localeCompare(b.account);
+  return { own, portfolio: portfolio.sort(byAccount) };
 }
 
 /** "Name · email · phone" for each contact tagged Primary Point of Contact. */

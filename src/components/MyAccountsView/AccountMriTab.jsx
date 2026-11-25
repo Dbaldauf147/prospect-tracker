@@ -17,11 +17,11 @@
 // answers in this table and in the export.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, accountTryingAgainServices, isPortfolioCompanyContact, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
+import { MRI_FILLED_FIELDS, accountMriProfile, accountServiceStatuses, accountTryingAgainServices, accountLiveOpps, isPortfolioCompanyContact, buyingCommitteeRows, siteUtilityRows } from '../../utils/accountMri';
 import { accountIsCompany } from '../../utils/companyAliases';
 import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals } from '../../utils/accountMriForm';
+import { mergeProfile, committeeRows, mriFormExport, mriSlug, tabProgress, mriStageProgress, profileDisplayValue, trackerSignals, trackerSignalReasons, trackerNotes, trackerFootprint, withTrackerSignals, withOpportunityDefault } from '../../utils/accountMriForm';
 import { downloadAccountMri } from '../../utils/accountMriDownload';
 import { AccountMriModal } from './AccountMriModal';
 import { targetEntryDates, entryDateFor } from '../../utils/targetEntryDate';
@@ -136,6 +136,17 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     return map;
   }, [oppsRecords]);
 
+  // Each company record by name, so a portfolio company's opps are matched
+  // on the names merged into it as well.
+  const prospectByName = useMemo(() => {
+    const map = new Map();
+    for (const p of prospects || []) {
+      const k = String(p?.company || '').trim().toLowerCase();
+      if (k && !map.has(k)) map.set(k, p);
+    }
+    return map;
+  }, [prospects]);
+
   const mriRows = useMemo(() => rows.map(r => {
     const record = r.record || { company: r.company, status: r.status, cdm: r.cdm };
     // The account's own people only: anyone the company card lists under
@@ -193,6 +204,12 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       { sentiment: settings?.contactSentiment },
     );
     const form = (savedForms || {})[mriSlug(r.company)] || null;
+    // Live opps on the company and its portfolio companies, for the
+    // Opportunity tab; null until the opps have loaded, so nothing is
+    // ticked "No active opportunity" for want of them.
+    const holdings = owned.filter(o => o.kind === 'holding')
+      .map(o => prospectByName.get(o.name.toLowerCase()) || o.name);
+    const liveOpps = (oppsRecords || []).length ? accountLiveOpps(oppsRecords, self, holdings) : null;
     const footprint = trackerFootprint(systemServices, serviceStatuses);
     const profile = mergeProfile(trackerProfile, form?.profile).values;
     const siteList = (siteLists || {})[siteListSlug(record.company)];
@@ -204,7 +221,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
     // The same per-tab progress the popup's tab strip shows, so this column
     // and the popup always agree.
     const stage = mriStageProgress(tabProgress({
-      form: withTrackerSignals(form, signals, notes, footprint),
+      form: withOpportunityDefault(withTrackerSignals(form, signals, notes, footprint), liveOpps),
       profile,
       committee: committeeRows(form?.committee, trackerCommittee),
       sites,
@@ -222,12 +239,13 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       trackerNotes: notes,
       trackerFootprint: footprint,
       serviceStatuses,
+      liveOpps,
       committee: committeeRows(form?.committee, trackerCommittee).filter(c => c.name || c.email),
       sites,
       profile,
       stage,
     };
-  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, systemServices, settings, prospects, frameworkFlags]);
+  }), [rows, isListed, taggedContacts, siteLists, savedForms, deals, entryDates, targetMap, oppsByAccount, serviceNames, serviceOverrides, hiddenServices, serviceRenames, systemServices, settings, prospects, frameworkFlags, oppsRecords, prospectByName]);
 
   // The company whose Account MRI popup is open.
   const [openId, setOpenId] = useState(null);
@@ -334,7 +352,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
         sites: one.sites,
         // The tracker's ratings and notes, and the defaults, go out even for
         // a company nothing has been saved for yet.
-        extra: mriFormExport(withTrackerSignals(one.form, one.trackerSignals, one.trackerNotes, one.trackerFootprint)),
+        extra: mriFormExport(withOpportunityDefault(withTrackerSignals(one.form, one.trackerSignals, one.trackerNotes, one.trackerFootprint), one.liveOpps)),
       });
     } catch (err) {
       setError(err?.message || 'The export failed.');
@@ -382,7 +400,7 @@ export function AccountMriTab({ rows, prospects = [], isListed, hubspotContacts,
       {openRow && (
         <AccountMriModal
           key={openRow.id}
-          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerReasons: openRow.trackerReasons, trackerNotes: openRow.trackerNotes, trackerFootprint: openRow.trackerFootprint, serviceStatuses: openRow.serviceStatuses }}
+          row={{ company: openRow.company, record: openRow.record, profile: openRow.trackerProfile, committee: openRow.trackerCommittee, sites: openRow.sites, trackerSignals: openRow.trackerSignals, trackerReasons: openRow.trackerReasons, trackerNotes: openRow.trackerNotes, trackerFootprint: openRow.trackerFootprint, serviceStatuses: openRow.serviceStatuses, liveOpps: openRow.liveOpps }}
           serviceOptions={serviceOptions}
           form={openRow.form}
           onSave={next => saveForm(openRow.company, next)}
