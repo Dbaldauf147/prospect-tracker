@@ -389,11 +389,27 @@ export function climateTargetSummary(climateTargets) {
 }
 
 // The tracker's own Intel notes for a company record: Brain's is the kind
-// of targets it has. Only notes the tracker has something for are given.
-export function trackerNotes(record) {
+// of targets it has, Immune's the disclosure frameworks it reports to
+// (`frameworks` as trackerSignals takes them). Only notes the tracker has
+// something for are given.
+export function trackerNotes(record, { frameworks = null } = {}) {
+  const out = {};
   const brain = climateTargetSummary(record?.climateTargets);
-  return brain ? { brain } : {};
+  if (brain) out.brain = brain;
+  const immune = disclosureFrameworkList([...(record?.frameworks || []), ...(frameworks || [])]);
+  if (immune) out.immune = immune;
+  return out;
 }
+
+// Immune's Intel notes: which of CDP, GRESB, NZAM and UN PRI the company
+// reports to ("GRESB, UN PRI"), '' when none of them.
+export function disclosureFrameworkList(frameworks) {
+  const have = new Set([...(frameworks || [])].map(f => String(f || '').trim().toUpperCase()));
+  return ['GRESB', 'CDP', 'UN PRI', 'NZAM'].filter(f => have.has(f)).join(', ');
+}
+
+// Where each tracker Intel note comes from, for the tag beside the box.
+export const NOTE_SOURCE = { brain: 'Targets', immune: 'Frameworks' };
 
 // Tab 2's ratings as shown: the defaults (DEFAULT_SIGNALS), then the
 // tracker's ratings, then what was picked by hand. A sign cleared by hand is
