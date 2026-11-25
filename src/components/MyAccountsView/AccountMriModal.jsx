@@ -788,7 +788,7 @@ export function AccountMriModal({ row, form: savedForm, onSave, onClose, onOpenC
         <div style={{ marginBottom: '0.5rem' }}><span style={sectionTitle}>Key people & buying committee</span><span style={sectionHint}>from Opportunity Plan › Key People</span></div>
         {grid('committee', committee, setCommittee, '+ Add stakeholder', 'No stakeholders yet. Tag decision makers on the company, or add one here.', committeeActions, openCommitteeContact)}
         <div style={{ fontSize: '0.72rem', color: MUTED, marginTop: '0.5rem' }}>
-          Starts as the contacts tagged Decision Maker on the company. Once you edit the list it is kept as you leave it for this Account MRI.
+          Starts as the contacts tagged Decision Maker or Primary Point of Contact on the company, with Level of support and Relationship from each contact's standing, Decision role Decider for decision makers, and Rel. owner Yes for the Primary Point of Contact. Once you edit the list it is kept as you leave it for this Account MRI.
         </div>
         <div style={sectionBox}>
           <div style={{ ...sectionTitle, marginBottom: '0.5rem' }}>Our pursuit team</div>

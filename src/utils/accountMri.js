@@ -14,6 +14,8 @@
 //
 // Imported with extensions so this loads under plain Node for the tests.
 import { isPrimaryPoc } from './attendeeRoles.js';
+import { isDecisionMakerContact } from './decisionMakerCoverage.js';
+import { sentimentFor, CHAMPION, DETRACTOR } from './contactSentiment.js';
 import { isActiveSiteStatus, pickSiteStatusColumn } from './siteStatus.js';
 import { normalizeState } from './utilityRates.js';
 import { asDate, asNumber, isInactiveAgreement } from './dealsFormat.js';
@@ -557,14 +559,40 @@ export function fillTableSheet(sheetXml, table, rows) {
   return { xml, written, added };
 }
 
-/** The decision makers as tab 3 rows, A to Z: name, title, email, phone. */
-export function buyingCommitteeRows(contacts) {
+// The contact popup's Champion / Neutral / Detractor as tab 3's Level of support.
+// Relationship follows the same standing.
+const SUPPORT_FROM_SENTIMENT = {
+  [CHAMPION]: 'Advocate (Champion)',
+  '': 'Neutral (Non-Committal)',
+  [DETRACTOR]: 'Adversary (Anti-Champion)',
+};
+const RELATIONSHIP_FROM_SENTIMENT = {
+  [CHAMPION]: '5 - Very Strong',
+  '': '3 - Neutral',
+  [DETRACTOR]: '1 - Very Weak',
+};
+
+/**
+ * The key people as tab 3 rows, A to Z: name, title, email, phone, plus
+ * what the contact already says about them:
+ *   support       the contact popup's standing (settings.contactSentiment)
+ *   relationship  the same standing: Very Strong, Neutral, Very Weak
+ *   decisionRole  Decider when tagged Decision Maker
+ *   relOwner      Yes for the Primary Point of Contact, else "-"
+ */
+export function buyingCommitteeRows(contacts, { sentiment = {} } = {}) {
   const out = [];
   for (const c of contacts || []) {
     const email = text(c?.email);
     const name = contactName(c) || email;
     if (!name) continue;
-    out.push({ name, title: text(c.jobtitle), email, phone: text(c.phone || c.mobilephone) });
+    const row = { name, title: text(c.jobtitle), email, phone: text(c.phone || c.mobilephone) };
+    const standing = sentimentFor(sentiment, c.id ?? c.vid);
+    row.support = SUPPORT_FROM_SENTIMENT[standing];
+    if (isDecisionMakerContact(c)) row.decisionRole = 'Decider';
+    row.relationship = RELATIONSHIP_FROM_SENTIMENT[standing];
+    row.relOwner = isPrimaryPoc(c) ? 'Yes' : '-';
+    out.push(row);
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
