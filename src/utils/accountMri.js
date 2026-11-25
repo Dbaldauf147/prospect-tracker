@@ -20,6 +20,7 @@ import { isActiveSiteStatus, pickSiteStatusColumn } from './siteStatus.js';
 import { normalizeState } from './utilityRates.js';
 import { asDate, asNumber, isInactiveAgreement } from './dealsFormat.js';
 import { scopeServiceStatuses } from './scopeServiceStatus.js';
+import { isTryingAgain, TRYING_AGAIN } from './tryingAgain.js';
 import { companiesMatch } from './listFlags.js';
 import { exactCompanyKey } from './companyRoster.js';
 
@@ -63,7 +64,7 @@ export const MRI_PROFILE_FIELDS = [
   { row: 28, key: 'ubm', label: 'UBM', source: 'Bill payment (service)' },
   { row: 29, key: 'contractTerm', label: 'Contract term', source: 'Soonest Expiration' },
   { row: 30, key: 'earlyOut', label: 'Early out', source: '' },
-  { row: 31, key: 'upsell', label: 'Potential upsell opportunities', source: 'Services (Qualifying, Renewal) and CDM' },
+  { row: 31, key: 'upsell', label: 'Potential upsell opportunities', source: 'Services (Qualifying, Renewal, Trying again) and CDM' },
 ];
 
 // The rows the tool fills: those with a tracker field behind them.
@@ -168,7 +169,27 @@ export function mainContactText(contacts) {
  *   hidden    settings.hiddenServices
  *   renames   settings.serviceRenames
  */
-export function accountServiceStatuses({ company, servicesExplored, oppRows, services = [], serviceOverrides = {}, hidden = [], renames = {} } = {}) {
+export function accountServiceStatuses(args = {}) {
+  const out = {};
+  for (const [name, r] of serviceReadings(args)) if (r.status) out[name] = r.status;
+  return out;
+}
+
+/**
+ * The services the company card's Services board paints purple "Trying
+ * again" (a saved status and a live opp naming the service, see
+ * tryingAgain.js), A to Z, by the name the board shows. Same arguments as
+ * accountServiceStatuses. The statuses themselves are left as they are, so
+ * Services in scope and the footprint read what they always did.
+ */
+export function accountTryingAgainServices(args = {}) {
+  const out = [];
+  for (const [name, r] of serviceReadings(args)) if (isTryingAgain(r.manual, r.auto)) out.push(name);
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+// Each service the board shows, as [shown name, scopeServiceStatuses reading].
+function serviceReadings({ company, servicesExplored, oppRows, services = [], serviceOverrides = {}, hidden = [], renames = {} } = {}) {
   const hide = new Set((hidden || []).map(n => text(n).toLowerCase()));
   const seen = new Set();
   const names = [];
@@ -179,7 +200,6 @@ export function accountServiceStatuses({ company, servicesExplored, oppRows, ser
     seen.add(k);
     names.push(text(n));
   }
-  const out = {};
   // The board reads a manual status by its own exact service name
   // (servicesExplored[item]); one saved under another spelling ("audits",
   // "Audits " left by an old rename) is not shown there, and the opp's
@@ -192,8 +212,7 @@ export function accountServiceStatuses({ company, servicesExplored, oppRows, ser
   const readings = scopeServiceStatuses({
     services: names, account: company, oppRows, manualStatuses, serviceOverrides,
   });
-  for (const [name, r] of readings) if (r.status) out[text(renames?.[name]) || name] = r.status;
-  return out;
+  return [...readings].map(([name, r]) => [text(renames?.[name]) || name, r]);
 }
 
 // The statuses the "Potential upsell opportunities" cell reads: services
@@ -228,17 +247,23 @@ export function servicesInScope(servicesExplored) {
 
 /**
  * The "Potential upsell opportunities & who is responsible" cell: a line per
- * status (Qualifying, Renewal) that has services, then the account's
- * salesperson as the one responsible (the tracker keeps no owner per
- * service). "-" when no service has either status, so the cell says there
+ * status (Qualifying, Renewal, then the board's Trying again) that has
+ * services, then the account's salesperson as the one responsible (the
+ * tracker keeps no owner per service). "-" when no service has any of them, so the cell says there
  * is nothing to upsell (and so no one responsible) rather than sitting blank.
  */
-export function upsellOpportunities(servicesExplored, responsible = '') {
+export function upsellOpportunities(servicesExplored, responsible = '', tryingAgain = []) {
   const lines = [];
+  const listed = new Set();
   for (const status of UPSELL_STATUSES) {
     const names = servicesWith(servicesExplored, [status]);
+    names.forEach(n => listed.add(n.toLowerCase()));
     if (names.length) lines.push(`${status}: ${names.join(', ')}`);
   }
+  // Back in play on a live opp after an earlier status; a service already
+  // on a line above isn't listed twice.
+  const retry = (tryingAgain || []).map(text).filter(n => n && !listed.has(n.toLowerCase()));
+  if (retry.length) lines.push(`${TRYING_AGAIN}: ${retry.join(', ')}`);
   if (!lines.length) return '-';
   const who = text(responsible);
   if (who) lines.push(`Responsible: ${who}`);
@@ -354,7 +379,7 @@ export function contractFields(deals, { known = true } = {}) {
  *              (accountServiceStatuses); the record's own manual statuses
  *              when not given
  */
-export function accountMriProfile({ record, tier = '', contacts = [], deals = null, dealsKnown = true, contracts = null, entryDate = '', serviceStatuses = null } = {}) {
+export function accountMriProfile({ record, tier = '', contacts = [], deals = null, dealsKnown = true, contracts = null, entryDate = '', serviceStatuses = null, tryingAgain = [] } = {}) {
   const p = record || {};
   const services = serviceStatuses || p.servicesExplored || {};
   const status = text(p.status);
@@ -405,7 +430,7 @@ export function accountMriProfile({ record, tier = '', contacts = [], deals = nu
     contractTerm: contract.contractTerm,
     // No contract means nothing to get out of early, so Early out reads No.
     earlyOut: contract.contractTerm === 'No contract' ? 'No' : '',
-    upsell: upsellOpportunities(services, p.cdm),
+    upsell: upsellOpportunities(services, p.cdm, tryingAgain),
   };
 }
 
